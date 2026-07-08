@@ -1,0 +1,63 @@
+{
+  "name": "jw-modbus-tool",
+  "version": "0.1.0",
+  "description": "Modern Modbus RTU diagnostic tool for JW Control.",
+  "author": "JW Control",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main/main.js",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:electron": "npm run build:main && electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build:main": "tsc -p tsconfig.electron.json",
+    "build": "npm run typecheck && npm run build:main && vite build",
+    "build:portable": "npm run build && electron-builder --win portable",
+    "build:installer": "npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2",
+    "vite": "^8.1.3",
+    "vitest": "^4.1.10"
+  },
+  "build": {
+    "appId": "com.jwcontrol.jwmodbustool",
+    "productName": "JW Modbus Tool",
+    "copyright": "Copyright (c) 2026 JW Control",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "dist/renderer/**/*",
+      "package.json",
+      "LICENSE",
+      "README.md",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "artifactName": "JW Modbus Tool-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

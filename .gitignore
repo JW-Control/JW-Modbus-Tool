@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+release/
+.agents/
+.env
+.env.*
+*.log
+*.tmp
+.DS_Store
