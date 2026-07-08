@@ -26,13 +26,14 @@ The first bundled preset is:
 
 1. Read inputs with FC2 start 0 quantity 8.
 2. Write `Q0_0` ON with FC5.
-3. Read output feedback with FC1.
+3. Read output feedback with FC1 and verify `Q0_0` ON.
 4. Write `Q0_0` OFF with FC5.
 5. Write pattern `0x55` with FC15.
-6. Read output feedback with FC1.
+6. Read output feedback with FC1 and verify `0x55`.
 7. Write pattern `0x00` with FC15.
-8. Read output feedback with FC1.
+8. Read output feedback with FC1 and verify all outputs OFF.
 9. Generate PASS/FAIL summary.
 
-The UI and report exporter are deferred until the protocol and serial layers are
-stable.
+The first development UI includes this sequence and a generated Markdown report
+string in the main-process result. Export/copy controls are deferred until the
+Bus Monitor and report surfaces are separated.

@@ -17,6 +17,9 @@ This repository is in the first implementation step. It currently includes:
 - Slave simulator response core for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
 - Serial port listing and basic connect/disconnect IPC through Electron main.
 - Minimal serial diagnostics panel for development validation.
+- Minimal Master RTU probe for JWPLC Basic: FC1, FC2, FC5, and FC15 with
+  TX/RX monitor output.
+- JWPLC validation sequence with PASS/FAIL summary.
 - Minimal tests for CRC, frame construction, exception responses, and slave behavior.
 - Base documentation and third-party policy.
 
@@ -45,13 +48,22 @@ npm run build
 
 ## Run in development
 
-Start the renderer dev server:
+Fast Windows startup:
+
+```powershell
+.\start-dev.bat
+```
+
+This starts the Vite dev server, waits for it, opens Electron, and stops the dev
+server when Electron exits.
+
+Renderer-only Vite development:
 
 ```powershell
 npm run dev
 ```
 
-Then start Electron from a second terminal:
+Electron development through the one-command runner:
 
 ```powershell
 npm run dev:electron
@@ -91,7 +103,9 @@ should be validated after the serial layer and renderer workflow are connected.
 ## Current limitations
 
 - No complete UI yet.
-- No Modbus request execution over serial yet.
+- FC1, FC2, FC5, and FC15 are wired to the serial UI so far.
+- FC3, FC4, FC6, and FC16 are implemented in the engine but not yet exposed in
+  the UI.
 - No local JSON persistence yet.
 - No log export yet.
 - No signed installer.

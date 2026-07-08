@@ -8,11 +8,12 @@
   "type": "module",
   "main": "dist-electron/main/main.js",
   "scripts": {
+    "start:dev": "node scripts/dev-runner.mjs",
     "dev": "vite --host 127.0.0.1",
-    "dev:electron": "npm run build:main && electron .",
+    "dev:electron": "node scripts/dev-runner.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build:main": "tsc -p tsconfig.electron.json",
+    "build:main": "tsc -p tsconfig.electron.json && node scripts/copy-preload.mjs",
     "build": "npm run typecheck && npm run build:main && vite build",
     "build:portable": "npm run build && electron-builder --win portable",
     "build:installer": "npm run build && electron-builder --win nsis"

@@ -12,5 +12,12 @@ contextBridge.exposeInMainWorld("jwModbus", {
     getConnectionState: () => ipcRenderer.invoke("serial:getConnectionState"),
     open: (config: unknown) => ipcRenderer.invoke("serial:open", config),
     close: () => ipcRenderer.invoke("serial:close")
+  },
+  modbus: {
+    readCoils: (command: unknown) => ipcRenderer.invoke("modbus:readCoils", command),
+    readDiscreteInputs: (command: unknown) => ipcRenderer.invoke("modbus:readDiscreteInputs", command),
+    writeSingleCoil: (command: unknown) => ipcRenderer.invoke("modbus:writeSingleCoil", command),
+    writeMultipleCoils: (command: unknown) => ipcRenderer.invoke("modbus:writeMultipleCoils", command),
+    runJwplcValidation: (command: unknown) => ipcRenderer.invoke("modbus:runJwplcValidation", command)
   }
 });

@@ -28,11 +28,17 @@ Electron main process, tests, and future simulation tools.
   - Unit ID mismatch is ignored.
   - Broadcast writes are applied without response.
   - Broadcast reads are ignored.
+- Minimal serial-backed Master RTU probe:
+  - FC1 Read Coils.
+  - FC2 Read Discrete Inputs.
+  - FC5 Write Single Coil.
+  - FC15 Write Multiple Coils.
+  - TX/RX hex summary and CRC status.
+  - JWPLC Basic validation sequence with PASS/FAIL summary.
 
 ## Deferred
 
-- Serial timing and timeout handling.
-- Retry orchestration.
+- Full serial timing and retry orchestration.
 - Rich decoded data views.
 - Float32, Int32, and endian display helpers.
 - Bus monitor persistence and export.

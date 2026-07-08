@@ -15,11 +15,15 @@ serial port without exposing Node.js APIs to the renderer.
 - Supports stop bits 1 or 2.
 - Returns structured IPC results instead of throwing raw errors into renderer
   code.
+- Sends one request frame and collects a response until the expected RTU length
+  is reached or timeout expires.
+- Provides the first serial-backed Master RTU actions used by the JWPLC Basic
+  probe: FC1, FC2, FC5, and FC15.
 
 ## Deferred
 
-- Read/write RTU transaction orchestration.
-- Timeouts and retries around serial responses.
+- Full read/write RTU transaction orchestration.
+- Retries around serial responses.
 - Bus monitor TX/RX event capture.
 - Serial-backed master and slave sessions.
 - Packaging validation for native serial bindings.

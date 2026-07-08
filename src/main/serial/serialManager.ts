@@ -1,4 +1,5 @@
 import { SerialPort } from "serialport";
+import { concatBytes } from "../../shared/modbus/byteUtils.js";
 import type {
   NormalizedSerialPortConfig,
   SerialConnectionState,
@@ -19,6 +20,17 @@ interface RawSerialPortDescriptor {
 
 interface SerialPortLister {
   list(): Promise<RawSerialPortDescriptor[]>;
+}
+
+export interface SerialTransactionOptions {
+  timeoutMs: number;
+  expectedResponseLength: (bytes: Uint8Array) => number | null;
+}
+
+export interface SerialTransactionResult {
+  request: Uint8Array;
+  response: Uint8Array;
+  elapsedMs: number;
 }
 
 export const supportedBaudRates = [9600, 19200, 38400, 57600, 115200] as const;
@@ -160,6 +172,82 @@ export class SerialManager {
     this.port = null;
     this.state = { connected: false };
     return this.getConnectionState();
+  }
+
+  async transact(request: Uint8Array, options: SerialTransactionOptions): Promise<SerialTransactionResult> {
+    const openPort = this.port;
+
+    if (!openPort?.isOpen) {
+      throw new Error("Serial port is not connected");
+    }
+
+    const startedAt = performance.now();
+    const chunks: Uint8Array[] = [];
+
+    return new Promise<SerialTransactionResult>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timed out waiting for RTU response after ${options.timeoutMs} ms`));
+      }, options.timeoutMs);
+
+      const cleanup = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimeout(timer);
+        openPort.off("data", onData);
+        openPort.off("error", onError);
+      };
+
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+
+      const onData = (chunk: Buffer) => {
+        chunks.push(Uint8Array.from(chunk));
+        const response = concatBytes(...chunks);
+        const expectedLength = options.expectedResponseLength(response);
+
+        if (expectedLength !== null && response.length >= expectedLength) {
+          cleanup();
+          resolve({
+            request,
+            response: response.slice(0, expectedLength),
+            elapsedMs: Math.round(performance.now() - startedAt)
+          });
+        }
+      };
+
+      openPort.on("data", onData);
+      openPort.on("error", onError);
+
+      openPort.flush((flushError) => {
+        if (flushError) {
+          cleanup();
+          reject(flushError);
+          return;
+        }
+
+        openPort.write(Buffer.from(request), (writeError) => {
+          if (writeError) {
+            cleanup();
+            reject(writeError);
+            return;
+          }
+
+          openPort.drain((drainError) => {
+            if (drainError) {
+              cleanup();
+              reject(drainError);
+            }
+          });
+        });
+      });
+    });
   }
 }
 

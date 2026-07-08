@@ -81,7 +81,8 @@ p {
 }
 
 select,
-button {
+button,
+input {
   min-height: 38px;
   border: 1px solid rgba(20, 32, 51, 0.18);
   border-radius: 6px;
@@ -93,6 +94,11 @@ button {
 select {
   min-width: 0;
   padding: 0 12px;
+}
+
+input {
+  width: 76px;
+  padding: 0 10px;
 }
 
 button {
@@ -115,5 +121,228 @@ select:disabled {
 @media (max-width: 720px) {
   .serial-controls {
     grid-template-columns: 1fr;
+  }
+}
+
+.master-panel {
+  margin-top: 24px;
+  display: grid;
+  gap: 16px;
+  border-top: 1px solid rgba(20, 32, 51, 0.1);
+  padding-top: 22px;
+}
+
+.master-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.master-header h2 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.master-header label {
+  display: grid;
+  gap: 6px;
+  color: var(--jw-color-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.probe-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+}
+
+.io-section {
+  display: grid;
+  gap: 10px;
+}
+
+.io-section header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.io-section h3,
+.validation-panel h3 {
+  margin: 0;
+  font-size: 0.94rem;
+  line-height: 1.2;
+}
+
+.io-section p,
+.validation-panel p {
+  font-size: 0.84rem;
+}
+
+.input-grid,
+.output-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(64px, 1fr));
+  gap: 8px;
+}
+
+.input-chip {
+  display: grid;
+  gap: 3px;
+  min-height: 54px;
+  border: 1px solid rgba(20, 32, 51, 0.14);
+  border-radius: 6px;
+  align-content: center;
+  padding: 8px;
+  background: #f8fafc;
+}
+
+.input-chip span {
+  color: var(--jw-color-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.input-chip strong {
+  color: var(--jw-color-text);
+  font-size: 0.9rem;
+}
+
+.input-chip.is-on {
+  border-color: rgba(22, 163, 74, 0.42);
+  background: rgba(22, 163, 74, 0.1);
+}
+
+.input-chip.is-on strong {
+  color: #15803d;
+}
+
+.output-button {
+  display: grid;
+  gap: 3px;
+  min-height: 58px;
+  align-content: center;
+  justify-items: start;
+  padding: 8px;
+  background: #ffffff;
+}
+
+.output-button span {
+  color: var(--jw-color-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.output-button strong {
+  color: var(--jw-color-text);
+  font-size: 0.9rem;
+}
+
+.output-button.is-on {
+  border-color: rgba(0, 94, 184, 0.42);
+  background: rgba(0, 94, 184, 0.08);
+}
+
+.output-button.is-on strong {
+  color: var(--jw-color-primary);
+}
+
+.validation-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(20, 32, 51, 0.14);
+  border-radius: 6px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.validation-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.validation-panel.is-pass {
+  border-color: rgba(22, 163, 74, 0.42);
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.validation-panel.is-fail {
+  border-color: rgba(220, 38, 38, 0.42);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.validation-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.validation-steps div {
+  display: grid;
+  gap: 2px;
+  border: 1px solid rgba(20, 32, 51, 0.1);
+  border-radius: 6px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.validation-steps strong {
+  font-size: 0.72rem;
+}
+
+.validation-steps span {
+  color: var(--jw-color-muted);
+  font-size: 0.78rem;
+}
+
+.monitor-list {
+  display: grid;
+  gap: 8px;
+}
+
+.monitor-list article {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(20, 32, 51, 0.12);
+  border-radius: 6px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.monitor-list header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--jw-color-text);
+  font-size: 0.84rem;
+}
+
+.monitor-list header span {
+  color: var(--jw-color-muted);
+}
+
+.monitor-list code {
+  overflow-x: auto;
+  color: #334155;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .input-grid,
+  .output-grid,
+  .validation-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .master-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

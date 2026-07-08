@@ -30,21 +30,21 @@ npm run build
 
 ## Run Electron in development
 
-Use two terminals. In the first:
+Fast Windows startup:
 
 ```powershell
-npm run dev
+.\start-dev.bat
 ```
 
-In the second:
+Equivalent npm script:
 
 ```powershell
 npm run dev:electron
 ```
 
-The Electron app loads `http://127.0.0.1:5173` by default while unpackaged.
-Serial COM access is available only in the Electron window, not in browser
-preview.
+The startup runner starts Vite, waits for `http://127.0.0.1:5173`, opens
+Electron, and stops Vite when Electron exits. Serial COM access is available only
+in the Electron window, not in browser preview.
 
 ## Build portable executable
 
