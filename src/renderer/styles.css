@@ -54,3 +54,66 @@ p {
   font-size: 1rem;
   line-height: 1.6;
 }
+
+.serial-panel {
+  margin-top: 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  border-top: 1px solid rgba(20, 32, 51, 0.1);
+  padding-top: 22px;
+}
+
+.serial-panel h2 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.serial-panel p {
+  font-size: 0.92rem;
+}
+
+.serial-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  gap: 10px;
+}
+
+select,
+button {
+  min-height: 38px;
+  border: 1px solid rgba(20, 32, 51, 0.18);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--jw-color-text);
+  font: inherit;
+}
+
+select {
+  min-width: 0;
+  padding: 0 12px;
+}
+
+button {
+  padding: 0 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--jw-color-primary);
+  color: var(--jw-color-primary);
+}
+
+button:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+@media (max-width: 720px) {
+  .serial-controls {
+    grid-template-columns: 1fr;
+  }
+}

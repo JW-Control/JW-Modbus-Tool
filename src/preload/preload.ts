@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld("jwModbus", {
     node: process.versions.node
   },
   serial: {
-    listPorts: () => ipcRenderer.invoke("serial:listPorts")
+    listPorts: () => ipcRenderer.invoke("serial:listPorts"),
+    getConnectionState: () => ipcRenderer.invoke("serial:getConnectionState"),
+    open: (config: unknown) => ipcRenderer.invoke("serial:open", config),
+    close: () => ipcRenderer.invoke("serial:close")
   }
 });

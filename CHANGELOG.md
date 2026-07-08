@@ -12,5 +12,7 @@ All notable changes to JW Modbus Tool will be documented in this file.
 - RTU frame parser and builder.
 - Master request encoders for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
 - Slave simulator response core for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
+- Serial port listing, validation, and basic Electron IPC open/close flow.
+- Minimal serial diagnostics panel for development.
 - JWPLC Basic Remote I/O preset data scaffold.
 - Base docs, build notes, and legal clean-room policy.

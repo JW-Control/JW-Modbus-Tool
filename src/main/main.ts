@@ -20,7 +20,7 @@ function createWindow(): void {
     }
   });
 
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? (app.isPackaged ? undefined : "http://127.0.0.1:5173");
 
   if (devServerUrl) {
     void window.loadURL(devServerUrl);

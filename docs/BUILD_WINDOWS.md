@@ -28,6 +28,24 @@ npm run typecheck
 npm run build
 ```
 
+## Run Electron in development
+
+Use two terminals. In the first:
+
+```powershell
+npm run dev
+```
+
+In the second:
+
+```powershell
+npm run dev:electron
+```
+
+The Electron app loads `http://127.0.0.1:5173` by default while unpackaged.
+Serial COM access is available only in the Electron window, not in browser
+preview.
+
 ## Build portable executable
 
 ```powershell

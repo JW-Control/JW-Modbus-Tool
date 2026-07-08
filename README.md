@@ -15,12 +15,14 @@ This repository is in the first implementation step. It currently includes:
 - RTU frame build/parse utilities.
 - Master request encoders for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
 - Slave simulator response core for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
+- Serial port listing and basic connect/disconnect IPC through Electron main.
+- Minimal serial diagnostics panel for development validation.
 - Minimal tests for CRC, frame construction, exception responses, and slave behavior.
 - Base documentation and third-party policy.
 
-The full dashboard UI, serial integration, persistence, log export, and Windows
-packaging validation are intentionally deferred until this foundation compiles
-and tests pass.
+The full dashboard UI, RTU request execution over serial, persistence, log
+export, and Windows packaging validation are intentionally deferred until this
+foundation compiles and tests pass.
 
 ## Install dependencies
 
@@ -43,17 +45,21 @@ npm run build
 
 ## Run in development
 
-Renderer-only Vite development:
+Start the renderer dev server:
 
 ```powershell
 npm run dev
 ```
 
-Electron development is scaffolded and will be expanded with the serial layer:
+Then start Electron from a second terminal:
 
 ```powershell
 npm run dev:electron
 ```
+
+The serial diagnostics panel only has access to COM ports in the Electron app.
+Browser preview is useful for layout checks but does not include the preload
+bridge.
 
 ## Windows packaging scripts
 
@@ -77,13 +83,15 @@ should be validated after the serial layer and renderer workflow are connected.
 - Modbus RTU only.
 - Clean-room TypeScript implementation.
 - Windows-first desktop architecture.
-- Minimal placeholder renderer while the protocol core is stabilized.
+- Minimal serial diagnostics renderer while the protocol and serial layers are
+  stabilized.
+- COM port listing through `serialport`.
+- Basic open/close serial session flow at 115200 8N1 from the diagnostics panel.
 
 ## Current limitations
 
 - No complete UI yet.
-- No serial port dependency has been added yet.
-- No COM port connection flow yet.
+- No Modbus request execution over serial yet.
 - No local JSON persistence yet.
 - No log export yet.
 - No signed installer.
