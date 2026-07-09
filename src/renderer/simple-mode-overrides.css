@@ -313,21 +313,36 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.sessionNameInput {
+.sessions .current h1 {
+  position: relative;
   width: min(420px, 100%);
+}
+
+.sessions .current h1 > svg {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.sessionNameInput {
+  width: 100%;
   min-height: 36px;
   border-color: transparent;
   background: transparent;
-  padding: 0;
+  padding: 0 34px 0 0;
   color: var(--text);
   font-size: 1.28rem;
   font-weight: 800;
+  cursor: text;
 }
 
 .sessionNameInput:focus {
   border-color: #00bfff55;
   background: #00bfff10;
-  padding: 0 8px;
+  padding: 0 36px 0 8px;
 }
 
 .sessions .sessionRows,
