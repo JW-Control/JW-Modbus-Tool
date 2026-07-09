@@ -260,8 +260,8 @@
   grid-column: 1 / 2;
   grid-row: 1;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .sessions .top button {
@@ -330,20 +330,31 @@
   padding: 0 8px;
 }
 
-.sessions .sessionRows {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 9px;
+.sessions .sessionRows,
+.sessions .sessionActivityScroll {
   min-height: 0;
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: #2d87aa #071d30;
 }
 
+.sessions .sessionRows {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.sessions .sessionActivityScroll {
+  flex: 1 1 auto;
+}
+
+.sessions .sessionActivityScroll .tr {
+  grid-template-columns: 36px minmax(140px, 1.15fr) 70px minmax(180px, 1.55fr) 88px !important;
+}
+
 .sessions .sessionlist > .note,
-.sessions .sessionlist .table,
-.sessions .timeline ol {
+.sessions .sessionlist .table {
   min-height: 0;
   overflow: auto;
   scrollbar-width: thin;
@@ -423,41 +434,22 @@
   grid-column: 1 / -1;
 }
 
-.sessions .timeline ol {
-  counter-reset: session-activity;
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  justify-content: flex-start;
-  gap: 8px;
-  margin: 0;
-  padding: 0 6px 0 0;
-  list-style: none;
-}
-
-.sessions .timeline li {
-  counter-increment: session-activity;
+.notesBox {
   display: grid;
-  grid-template-columns: 28px 72px 52px 1fr;
-  gap: 9px;
-  align-items: baseline;
-  min-height: 0;
-  padding: 2px 0;
-  line-height: 1.25;
-}
-
-.sessions .timeline li::before {
-  content: counter(session-activity) ".";
-  color: var(--muted);
-  font-weight: 700;
-}
-
-.sessions .timeline li span {
+  gap: 7px;
+  margin-top: 10px;
   color: var(--muted);
 }
 
-.sessions .timeline li strong {
-  color: var(--cyan);
+.notesBox textarea {
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid #2d5c75;
+  border-radius: 8px;
+  background: #071d30;
+  color: var(--text);
+  padding: 9px 10px;
+  font: inherit;
 }
 
 @media (max-height: 850px) {
