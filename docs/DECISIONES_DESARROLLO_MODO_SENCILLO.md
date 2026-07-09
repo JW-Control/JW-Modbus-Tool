@@ -83,6 +83,7 @@ Decisiones aplicadas:
 - Para `FC01` y `FC02`, los valores booleanos se muestran como chips:
   - `ON` en verde.
   - `OFF` en gris.
+- Los controles superiores deben verse alineados y compactos: etiqueta arriba, campo debajo, botón `Leer` a la misma altura de los campos.
 
 Decisión importante sobre rangos:
 
@@ -103,9 +104,12 @@ Decisiones aplicadas:
 - Incluye ahora el valor leído, no solo la dirección y cantidad.
 - Se agregó columna `Info` para revisar el detalle resumido de una actividad.
 
-Proyección funcional:
+Proyección funcional aprobada:
 
-- El botón `Info` debe abrir un panel/modal lateral con:
+- El botón `Info` debe abrir el detalle **dentro de la misma área de Actividad reciente**, ocupando todo ese panel.
+- Ese detalle debe tener botón `X` para cerrar y volver a la tabla de actividad.
+- No debe enviarse al panel lateral de ayuda porque agrupa la información de forma poco útil.
+- El detalle debe mostrar:
   - función ejecutada,
   - slave ID,
   - duración,
@@ -187,13 +191,14 @@ Implementado:
 - Actividad reciente con valores leídos.
 - Chips visuales para ON/OFF.
 - Estado `Desconectado` en rojo.
+- Alineación compacta del bloque superior de lectura rápida.
 
 Pendiente inmediato:
 
 - Validar `npm run typecheck`.
 - Ajustar cualquier error de TypeScript/React que salga en local.
 - Revisar visualmente el layout tras el nuevo botón `Info`.
-- Cablear el botón `Info` a un panel/modal real.
+- Cablear el botón `Info` a un detalle interno dentro del área `Actividad reciente`, con botón `X` para volver a la tabla.
 - Revisar si conviene mostrar dirección Modbus cruda y dirección de interfaz en paralelo.
 
 Pendiente medio plazo:
