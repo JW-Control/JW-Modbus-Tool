@@ -2,10 +2,11 @@
   overflow: hidden;
 }
 
-.devices {
+.devices,
+.devices.grid {
   height: 100%;
   min-height: 0;
-  grid-template-rows: minmax(340px, 340px) minmax(0, 1fr);
+  grid-template-rows: max-content minmax(0, 1fr) !important;
 }
 
 .devices > .card,
@@ -27,7 +28,7 @@
 
 .devices .connect,
 .devices .summary {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .devices .connect {
@@ -96,6 +97,7 @@
 .devices .detected .table {
   flex: 1 1 auto;
   min-height: 0;
+  max-height: 178px;
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: #2d87aa #071d30;
@@ -237,12 +239,17 @@
 }
 
 @media (max-height: 850px) {
-  .devices {
-    grid-template-rows: minmax(325px, 325px) minmax(0, 1fr);
+  .devices,
+  .devices.grid {
+    grid-template-rows: max-content minmax(0, 1fr) !important;
   }
 
   .devices .connect .field {
     margin: 4px 0;
+  }
+
+  .devices .detected .table {
+    max-height: 150px;
   }
 
   .quickbar {
