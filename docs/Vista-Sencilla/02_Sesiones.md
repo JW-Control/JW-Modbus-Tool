@@ -1,6 +1,6 @@
 # Vista Sencilla — 02 Sesiones
 
-Estado: **MVP funcional inicial aplicado**  
+Estado: **MVP funcional con sesiones en archivo aplicado**  
 Fecha: 2026-07-09  
 Rama: `feature/simple-mode-mvp`
 
@@ -10,7 +10,7 @@ Rama: `feature/simple-mode-mvp`
 
 La vista **Sesiones** permite crear, guardar, abrir y continuar diagnósticos Modbus sin perder contexto.
 
-Una sesión debe guardar:
+Una sesión guarda:
 
 - Conexión activa o última conexión usada.
 - Protocolo RTU/TCP.
@@ -25,11 +25,59 @@ Una sesión debe guardar:
 
 ---
 
+## Formato de archivo
+
+Se adopta el formato propio:
+
+```text
+.jwmodbus-session
+```
+
+El archivo se guarda como JSON legible con la estructura base:
+
+```json
+{
+  "format": "jwmodbus-session",
+  "version": 1,
+  "session": {
+    "id": "session-...",
+    "name": "Nueva_sesion_Modbus",
+    "createdAt": "...",
+    "updatedAt": "...",
+    "status": "Guardada",
+    "notes": "..."
+  },
+  "connection": {
+    "protocol": "RTU",
+    "port": "COM14",
+    "baudRate": 115200,
+    "dataBits": 8,
+    "parity": "none",
+    "stopBits": 1,
+    "timeoutMs": 1000
+  },
+  "devices": [],
+  "activeSlaveId": 2,
+  "stats": {},
+  "quickReads": [],
+  "registerSnapshot": [],
+  "activity": [],
+  "traffic": [],
+  "tests": [],
+  "registerMaps": [],
+  "templates": []
+}
+```
+
+`registerMaps` y `templates` quedan preparados para las vistas pendientes de Registros y Templates de dispositivo.
+
+---
+
 ## Referencia visual aprobada
 
 La referencia aprobada es la imagen dashboard de `Sencillo / Sesiones` generada previamente, con:
 
-- Acciones superiores grandes: `Nueva sesión`, `Abrir sesión`, `Guardar sesión`.
+- Acciones superiores grandes.
 - Tarjeta principal `Sesión actual`.
 - Panel `¿Qué guarda una sesión?`.
 - Panel `Resumen de la sesión actual` con tarjetas e íconos.
@@ -40,50 +88,51 @@ La referencia aprobada es la imagen dashboard de `Sencillo / Sesiones` generada 
 
 ## Estado real aplicado
 
-La vista real trabaja sobre sesión limpia y ahora tiene una persistencia mínima en frontend.
-
 Implementado:
 
 - Nombre editable de sesión.
 - `Nueva sesión` limpia el diagnóstico actual.
-- `Guardar sesión` guarda el estado actual en `localStorage`.
-- `Abrir sesión` abre la última sesión guardada.
-- `Sesiones recientes` muestra siempre la sesión actual como primera fila.
-- Las sesiones guardadas se muestran debajo de la sesión actual.
-- Las filas guardadas pueden abrirse desde la lista.
-- La conexión de `Sesión actual` muestra el puerto/parámetros reales cuando existe conexión.
-- El estado cambia entre `Limpia` y `Activa` según haya datos reales.
+- `Guardar` guarda sobre la ruta actual si la sesión ya tiene archivo.
+- `Guardar como` abre diálogo de guardado y crea/elige un archivo `.jwmodbus-session`.
+- `Abrir sesión` abre un selector real de archivos `.jwmodbus-session`.
+- `Sesiones recientes` guarda rutas recientes en `localStorage` como índice ligero.
+- Las sesiones recientes pueden abrirse desde su fila.
+- La sesión actual aparece siempre como primera fila.
+- La conexión de `Sesión actual` muestra puerto/parámetros reales cuando existe conexión.
+- Estado de sesión refinado: `Limpia`, `Activa sin guardar`, `Guardada`, `Modificada`.
+- Editor simple de notas de diagnóstico.
 - El resumen refleja dispositivos, registros leídos, pruebas, tráfico, notas y errores.
-- Actividad reciente usa los eventos reales generados desde Dispositivos.
+- Actividad reciente usa tabla compacta con scrollbar interno.
 
 ---
 
 ## Layout aplicado
 
-Cambios de layout:
-
-- `Nueva sesión`, `Abrir sesión` y `Guardar sesión` quedan como acciones superiores alineadas en la columna principal.
+- `Nueva sesión`, `Abrir sesión`, `Guardar` y `Guardar como` quedan como acciones superiores alineadas.
 - `Sesión actual` queda debajo de las acciones superiores.
 - `¿Qué guarda una sesión?` queda en la columna derecha, alineado con `Sesión actual`.
 - `Sesiones recientes` queda como panel grande en la columna izquierda.
 - `Resumen de la sesión actual` queda en la columna derecha.
-- `Actividad reciente` queda inmediatamente debajo del resumen, no pegada al borde inferior de la pantalla.
+- `Actividad reciente` queda inmediatamente debajo del resumen.
 - La vista queda contenida dentro de la altura disponible, sin scroll global innecesario.
 - Los paneles que puedan crecer usan scroll interno.
 
 ---
 
-## Criterio de avance
+## Actividad reciente
 
-Para esta vista no se deben introducir datos mock fijos que oculten el estado real.
+Se cambió de lista a tabla compacta.
 
-Reglas:
+Columnas:
 
-- Si no hay sesión abierta, mostrar sesión limpia.
-- Si hay datos generados desde Dispositivos, mostrarlos en el resumen.
-- Si no hay sesiones guardadas, mostrar mensaje vacío claro.
-- La sesión actual debe aparecer en `Sesiones recientes` aunque todavía no esté guardada.
-- El diseño debe acercarse a la referencia aprobada, pero respetando datos reales.
+```text
+# | Fecha/hora | Función | Descripción | Resultado
+```
+
+Orden:
+
+- Más reciente arriba.
+- Más antiguo abajo.
 
 ---
 
@@ -91,66 +140,38 @@ Reglas:
 
 ### Nueva sesión
 
-Acción actual:
+Limpia:
 
-- Limpia dispositivos detectados.
-- Limpia slave activo.
-- Limpia lecturas rápidas.
-- Limpia mapa de registros leído.
-- Limpia actividad reciente.
-- Limpia tráfico.
-- Reinicia contadores.
-- Reinicia pruebas a estado pendiente.
-- Mantiene la configuración de puerto visible para no obligar al usuario a reconfigurar todo.
-
-### Guardar sesión
-
-Acción actual:
-
-- Guarda una instantánea de la sesión actual en `localStorage`.
-- Si la sesión ya fue guardada, la actualiza.
-- Si es nueva, crea un ID interno.
-- La sesión guardada pasa a aparecer en recientes.
-
-Datos guardados ahora:
-
-- Nombre de sesión.
-- Fecha de guardado.
-- Puerto y parámetros seriales.
 - Dispositivos detectados.
 - Slave activo.
-- Estadísticas.
-- Actividad reciente con valores leídos.
-- Cantidad de tráfico capturado.
-- Notas: reservado en `0` para futura implementación.
+- Lecturas rápidas.
+- Mapa de registros leído.
+- Actividad reciente.
+- Tráfico.
+- Contadores.
+- Pruebas a estado pendiente.
+- Notas.
+- Ruta de archivo y firma de guardado.
+
+Mantiene la configuración visible de puerto para no obligar al usuario a reconfigurar todo.
+
+### Guardar
+
+- Si la sesión ya tiene archivo, sobrescribe ese archivo.
+- Si no tiene archivo, abre diálogo de guardado.
+- Actualiza estado a `Guardada`.
+- Actualiza recientes.
+
+### Guardar como
+
+- Siempre abre diálogo de guardado.
+- Permite duplicar/guardar la misma sesión con otro nombre/ruta.
 
 ### Abrir sesión
 
-Acción actual:
-
-- Abre la última sesión guardada.
-- También se puede abrir una sesión específica desde la fila de `Sesiones recientes`.
-
-Pendiente posterior:
-
-- Abrir desde archivo `.jwmodbus-session`.
-- Exportar/importar sesiones.
-- Guardado en carpeta de usuario usando backend Electron.
-
----
-
-## Sesión actual
-
-Muestra:
-
-- Nombre editable.
-- Estado: `Limpia` o `Activa`.
-- Rol: `PC Master`.
-- Protocolo: `RTU`.
-- Slave activo.
-- Conexión real: `COMx · baud · 8N1`, o `Sin puerto activo`.
-- Última actividad.
-- Botón ancho `Continuar sesión`.
+- Abre diálogo real de archivo.
+- Carga el `.jwmodbus-session` seleccionado.
+- Actualiza recientes.
 
 ---
 
@@ -167,48 +188,45 @@ Muestra:
 - Pruebas.
 - Errores.
 - Acción: `En curso` o `Abrir`.
-- Estado: `Limpia`, `Activa` o `Guardada`.
+- Estado.
+
+El índice de recientes se guarda en `localStorage`, pero el contenido real de la sesión vive en el archivo `.jwmodbus-session`.
 
 ---
 
-## Resumen de la sesión actual
+## Dependencias pendientes
 
-Usa tarjetas con íconos:
+Quedan preparadas, pero se completarán al cerrar las vistas correspondientes:
 
-- Dispositivos detectados.
-- Registros leídos.
-- Pruebas.
-- Tráfico capturado.
-- Notas.
-- Errores.
+### Registros
 
----
+- Nombres personalizados por dirección.
+- Tipos de dato.
+- Unidades.
+- Acceso R/W.
+- Escalas, offset y endianess.
+- Templates de dispositivo.
 
-## Actividad reciente
+### Pruebas
 
-Lista eventos reales de la sesión:
+- Planes de prueba editables reales.
+- Escenarios personalizados.
+- Resultados completos por ejecución.
+- Historial de pruebas.
+- Simulador slave.
 
-- Escaneo iniciado/finalizado.
-- Lecturas ejecutadas.
-- Errores o timeouts.
+### Tráfico Modbus
 
-El panel inicia justo debajo del resumen de la sesión actual y usa scroll interno si la lista crece.
+- Tramas crudas TX/RX.
+- Detalle hexadecimal.
+- Interpretación de excepciones.
+- Exportación de captura.
 
 ---
 
 ## Pendiente inmediato para cerrar Sesiones
 
-1. Validar visualmente la nueva distribución.
-2. Confirmar si el nombre editable debe persistir automáticamente o solo al guardar.
-3. Decidir si `Abrir sesión` debe abrir un selector/modal en vez de cargar la última guardada.
-4. Implementar exportar/importar archivo de sesión desde backend Electron.
-5. Añadir notas reales de diagnóstico.
-
----
-
-## Próximo trabajo sugerido
-
-1. Probar `Nueva sesión`, `Guardar sesión` y `Abrir sesión` en local.
-2. Revisar que la sesión actual aparezca correctamente en `Sesiones recientes`.
-3. Validar que la columna derecha ya no tenga el hueco entre resumen y actividad.
-4. Continuar con la vista `Pruebas` cuando Sesiones quede aceptada.
+1. Probar en local `Guardar`, `Guardar como`, `Abrir sesión` y abrir desde recientes.
+2. Validar visualmente la tabla de Actividad reciente.
+3. Correr `npm run typecheck` y corregir detalles de TypeScript si aparecen.
+4. Luego pasar a la vista `Pruebas`.
