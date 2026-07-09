@@ -251,7 +251,7 @@
   height: 100%;
   min-height: 0;
   grid-template-columns: minmax(0, 1.38fr) minmax(360px, .9fr) !important;
-  grid-template-rows: auto auto minmax(0, 1fr) minmax(150px, 170px) !important;
+  grid-template-rows: auto auto auto minmax(0, 1fr) !important;
   align-content: stretch;
   overflow: hidden;
 }
@@ -313,6 +313,34 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.sessionNameInput {
+  width: min(420px, 100%);
+  min-height: 36px;
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
+  color: var(--text);
+  font-size: 1.28rem;
+  font-weight: 800;
+}
+
+.sessionNameInput:focus {
+  border-color: #00bfff55;
+  background: #00bfff10;
+  padding: 0 8px;
+}
+
+.sessions .sessionRows {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2d87aa #071d30;
+}
+
 .sessions .sessionlist > .note,
 .sessions .sessionlist .table,
 .sessions .timeline ol {
@@ -327,6 +355,51 @@
   align-items: flex-start;
 }
 
+.sessions .sessionrow {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.45fr) repeat(4, minmax(80px, .55fr)) minmax(80px, .55fr) minmax(74px, .45fr);
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+  padding: 11px 12px;
+}
+
+.sessions .sessionrow span {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.sessions .sessionrow b {
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.sessions .sessionrow button {
+  min-height: 30px;
+  border: 1px solid #00bfff44;
+  border-radius: 7px;
+  background: #00bfff10;
+  color: var(--cyan);
+  font-size: .78rem;
+  justify-content: center;
+}
+
+.sessions .sessionrow button:disabled {
+  border-color: #2d5c75;
+  background: #ffffff08;
+  color: var(--muted);
+  opacity: 1;
+}
+
+.sessions .sessionrow em {
+  color: var(--green);
+  font-style: normal;
+  font-size: .78rem;
+  text-align: right;
+}
+
 .sessions .tiles {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
@@ -339,6 +412,21 @@
 .sessions .timeline ol {
   flex: 1 1 auto;
   padding-right: 6px;
+}
+
+.sessions .timeline li {
+  display: grid;
+  grid-template-columns: 72px 52px 1fr;
+  gap: 9px;
+  align-items: baseline;
+}
+
+.sessions .timeline li span {
+  color: var(--muted);
+}
+
+.sessions .timeline li strong {
+  color: var(--cyan);
 }
 
 @media (max-height: 850px) {
@@ -366,7 +454,7 @@
 
   .sessions,
   .sessions.grid {
-    grid-template-rows: auto auto minmax(0, 1fr) minmax(130px, 150px) !important;
+    grid-template-rows: auto auto auto minmax(0, 1fr) !important;
   }
 
   .sessions .current h1 {
