@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld("jwModbus", {
     writeMultipleRegisters: (command: unknown) => ipcRenderer.invoke("modbus:writeMultipleRegisters", command),
     runJwplcValidation: (command: unknown) => ipcRenderer.invoke("modbus:runJwplcValidation", command)
   },
+  sessions: {
+    saveFile: (request: unknown) => ipcRenderer.invoke("session:saveFile", request),
+    openFile: (request?: unknown) => ipcRenderer.invoke("session:openFile", request)
+  },
   reports: {
     copyMarkdown: (markdown: unknown) => ipcRenderer.invoke("report:copyMarkdown", markdown),
     saveMarkdown: (request: unknown) => ipcRenderer.invoke("report:saveMarkdown", request)
