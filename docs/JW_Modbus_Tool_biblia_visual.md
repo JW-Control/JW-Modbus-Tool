@@ -266,20 +266,9 @@ La versión aprobada es el layout tipo dashboard amigable con:
    - `Tráfico capturado 3.2 MB En total`.
    - `Notas 2 Guardadas`.
    - `Errores 0 Detectados`.
-7. Panel **Sesiones recientes** con lista compacta:
-   - `Lavadora_S200_Prueba_RTU`.
-   - `Variador_01_Lectura_RPM`.
-   - `HMI_Panel_Pruebas`.
-   - `Banco_Modbus_Taller`.
-   - Cada fila muestra dispositivos, pruebas, errores y acciones `Continuar`, `Ver resumen`, `Exportar`.
-8. Panel **Actividad reciente**:
-   - Conexión establecida.
-   - Slave activo seleccionado.
-   - Escaneo iniciado.
-   - Registros leídos correctamente.
+7. Panel **Sesiones recientes** con lista compacta.
+8. Panel **Actividad reciente**.
 9. Bloques laterales opcionales: `¿Nuevo aquí?`, licencia y versión.
-
-Esta versión combina la primera propuesta que gustó por su claridad con la segunda propuesta que aportaba métricas útiles como registros leídos, pruebas, tráfico capturado y notas.
 
 Por nivel:
 
@@ -301,22 +290,6 @@ PC como Master
 Secuencia de tramas
 ```
 
-La tabla de pasos debe permitir definir:
-
-- Habilitado.
-- Paso.
-- Slave ID.
-- Dispositivo.
-- Función.
-- Dirección.
-- Cantidad / valor.
-- Valor a escribir.
-- Tipo de dato.
-- Esperado.
-- Timeout.
-- Reintentos.
-- Resultado.
-
 #### Diseño final aprobado — Sencillo / Pruebas
 
 La versión aprobada es el layout tipo dashboard de pruebas con:
@@ -334,83 +307,106 @@ La versión aprobada es el layout tipo dashboard de pruebas con:
    - `Dirección`, `Cantidad/Valor`, `Esperado` y `Timeout` son campos editables/manuales.
    - Se debe poder agregar y eliminar pasos.
    - La columna `Resultado` debe actualizarse durante o después de la ejecución.
-5. La columna **Resultado** del plan muestra el estado resumido del último intento de cada paso:
-   - `Pendiente` o `—` antes de ejecutar.
-   - `En ejecución` durante la ejecución.
-   - `Aprobado` / `OK` cuando el paso cumple el criterio esperado.
-   - `Error`, `Timeout`, `Excepción` o `CRC error` cuando falla.
-6. El **Registro de ejecución** inferior guarda el detalle histórico:
-   - Hora.
-   - Paso.
-   - Slave.
-   - Función.
-   - Dirección.
-   - Cantidad/Valor.
-   - Resultado.
-   - Tiempo.
-   - Detalle.
-7. Panel lateral **Escenarios**:
-   - `Operación normal`.
-   - `Timeout detectado`.
-   - `Error CRC detectado`.
-   - `Excepción Modbus`.
-   - Acción `Gestionar escenarios` para añadir o administrar escenarios.
-8. Panel lateral **Simulador slave (PC como slave)**:
-   - Es secundario, no el foco principal.
-   - Incluye `Estado`, `Dirección slave`, `Puerto`, `Baud Rate`.
-   - Botón `Iniciar simulador slave`.
-   - Engranaje para ajustes futuros de la lógica real del simulador.
-9. KPIs inferiores atractivos:
-   - `Tasa de éxito` con indicador circular.
-   - `Latencia promedio`.
-   - `Errores`.
-   - `Pasos completados` con indicador circular.
-10. Panel **Registro de ejecución** debajo de los KPIs:
-    - Debe mostrar resultados detallados por paso.
-    - Debe incluir acciones `Limpiar registro` y `Exportar`.
+5. La columna **Resultado** del plan muestra el estado resumido del último intento de cada paso.
+6. El **Registro de ejecución** inferior guarda el detalle histórico.
+7. Panel lateral **Escenarios** con acción `Gestionar escenarios`.
+8. Panel lateral **Simulador slave (PC como slave)** secundario con engranaje para ajustes futuros.
+9. KPIs inferiores atractivos.
+10. Panel **Registro de ejecución** debajo de los KPIs.
 
 Relación entre tablas:
 
 - La tabla superior **Plan de pruebas** muestra la definición editable y el estado resumido actual por paso.
 - La tabla inferior **Registro de ejecución** muestra el historial detallado de cada ejecución.
 
-#### Ejemplo de pasos
-
-| Paso | Slave | Dispositivo | Función | Dirección | Cantidad/Valor | Esperado | Timeout | Resultado |
-|---:|---:|---|---|---:|---:|---|---:|---|
-| 1 | 1 | PLC_Principal | FC03 Read Holding Registers | 400000 | 10 | 10 regs | 1000 ms | — |
-| 2 | 1 | PLC_Principal | FC06 Write Single Register | 400010 | 1234 | OK | 1000 ms | — |
-| 3 | 2 | HMI_Panel | FC04 Read Input Registers | 100000 | 8 | 8 regs | 1000 ms | — |
-| 4 | 10 | Variador_01 | FC03 Read Holding Registers | 300000 | 5 | 5 regs | 1000 ms | — |
-
 ---
 
 ### 6.4 Registros
 
-**Objetivo:** leer y escribir datos Modbus en vivo.
+**Objetivo:** leer y escribir datos Modbus en vivo para el `Slave activo`.
 
-Las cuatro áreas Modbus a mostrar son:
+#### Diseño final aprobado — Sencillo / Registros
 
-| Área | Lectura | Escritura |
-|---|---|---|
-| Coils | FC01 | FC05 / FC15 |
-| Discrete Inputs | FC02 | No |
-| Input Registers | FC04 | No |
-| Holding Registers | FC03 | FC06 / FC16 |
+La versión aprobada es la segunda propuesta, con distribución tipo tablero técnico limpio:
 
-La vista debe mostrar pestañas:
+1. **Barra superior** estándar de JW Modbus Tool.
+2. **Menú lateral** con `Registros` activo.
+3. Encabezado superior:
+   - `Slave activo: PLC_Principal — ID 1`.
+   - Nota informativa: `Los registros se muestran en formato decimal`.
+4. Pestañas de áreas Modbus:
+   - `Coils (01)` — `Lectura/Escritura`.
+   - `Discrete Inputs (02)` — `Solo lectura`.
+   - `Input Registers (04)` — `Solo lectura`.
+   - `Holding Registers (03)` — `Lectura/Escritura`.
+5. Controles de lectura/polling:
+   - `Dirección inicial`.
+   - `Cantidad`.
+   - Botón `Leer`.
+   - `Autolectura`.
+   - `Intervalo`.
+   - Botón `Detener`.
+6. Tabla principal de registros:
+   - Columnas: `Dirección`, `Nombre`, `Valor`, `Tipo`, `Acceso`, `Estado`.
+   - Debe mostrar dirección decimal y, cuando ayude, equivalente hexadecimal entre paréntesis.
+   - El acceso debe resumirse como `R`, `W` o `R/W`.
+7. Panel lateral **Registro seleccionado**:
+   - Dirección seleccionada.
+   - Nombre asignado.
+   - Valor actual.
+   - Tipo asignado.
+   - Acceso.
+   - Tendencia de los últimos 60 s.
+   - Estadísticos mínimos: `Min`, `Máx`, `Prom`.
+8. Panel inferior **Actividad reciente**:
+   - `Inicio`.
+   - `Fin`.
+   - `Duración`.
+   - `Slave ID`.
+   - `Dispositivo`.
+   - `Función`.
+   - `Rango`.
+   - `Cantidad`.
+   - `Resultado`.
+   - `Tiempo de respuesta`.
+   - Enlace `Ver todo el historial`.
 
-1. `Coils (01)`
-2. `Discrete Inputs (02)`
-3. `Input Registers (04)`
-4. `Holding Registers (03)`
+#### Asignación de nombre, tipo y metadatos
 
-Debe existir parámetro explícito de frecuencia:
+El nombre de cada dirección, el tipo de dato y metadatos asociados no salen automáticamente de Modbus. Deben venir de un **Mapa de registros** asociado al `Slave activo` y guardado dentro de la sesión.
 
-- `Leer`.
-- `Autolectura`.
-- `Intervalo`.
-- `Detener`.
+La vista debe aclarar visualmente dónde se edita ese mapa:
+
+- Incluir una acción discreta `Editar mapa` o `Asignar nombre/tipo` cerca de la tabla principal o en el panel `Registro seleccionado`.
+- Al seleccionar una fila, el panel `Registro seleccionado` debe permitir editar o abrir edición de:
+  - `Nombre`.
+  - `Tipo`.
+  - `Unidad`.
+  - `Acceso` cuando aplique.
+  - `Escala / factor` si se requiere más adelante.
+  - `Descripción` opcional.
+- Si una dirección todavía no tiene metadatos, se puede mostrar un nombre genérico como `Reg_40000` y tipo por defecto `uint16`.
+- Al guardar, esos nombres/tipos quedan ligados al mapa del slave dentro de la sesión.
+
+Tipos sugeridos para el mapa:
+
+- `bool` para coils/discrete inputs.
+- `uint16`.
+- `int16`.
+- `uint32`.
+- `int32`.
+- `float32`.
+- `bitfield`.
+- `string`, si más adelante aplica.
+
+Acceso por defecto según área:
+
+| Área | Acceso por defecto |
+|---|---|
+| Coils | R/W |
+| Discrete Inputs | R |
+| Input Registers | R |
+| Holding Registers | R/W |
 
 ---
 
@@ -526,10 +522,15 @@ A partir de la revisión del modo sencillo, la generación debe hacerse **una vi
 
 ### Registros
 
-- Mostrar las cuatro áreas Modbus.
-- Añadir `Autolectura` e `Intervalo`.
-- Mostrar `Slave activo`.
-- Actividad reciente con inicio/fin/duración.
+- Mantener como final la segunda propuesta visual de `Sencillo / Registros`.
+- Mantener las cuatro pestañas de áreas Modbus con acceso visible.
+- Mantener `Slave activo: PLC_Principal — ID 1`.
+- Mantener `Leer`, `Autolectura`, `Intervalo` y `Detener`.
+- Mantener la tabla principal con `Dirección`, `Nombre`, `Valor`, `Tipo`, `Acceso`, `Estado`.
+- Mantener el panel `Registro seleccionado` con valor actual, tipo, acceso, tendencia y estadísticos.
+- Mantener `Actividad reciente` con inicio/fin/duración y tiempo de respuesta.
+- Aclarar que `Nombre`, `Tipo`, `Unidad`, `Acceso` y otros metadatos se asignan desde un **Mapa de registros** del slave activo.
+- Incluir acción `Editar mapa` o `Asignar nombre/tipo` para editar esos metadatos.
 
 ### Tráfico Modbus
 
@@ -549,12 +550,7 @@ Interfaz desktop realista de una herramienta industrial llamada `JW Modbus Tool`
 
 Generar una pantalla `Sencillo / Dispositivos` de `JW Modbus Tool`. La PC actúa como `PC Master`. `Conectar` abre el bus RTU/TCP. `Escanear` busca slaves disponibles. `Recargar` dentro de `Dispositivos detectados` refresca el último escaneo.
 
-Mantener el diseño aprobado de:
-
-- `1. Conectar`.
-- `2. Dispositivos detectados`.
-
-En `2. Dispositivos detectados`, mostrar `PLC_Principal — ID 1` como seleccionado y marcado como `SLAVE ACTIVO`, además de `HMI_Panel — ID 2` y `Variador_01 — ID 10`.
+Mantener el diseño aprobado de `1. Conectar` y `2. Dispositivos detectados`. En `2. Dispositivos detectados`, mostrar `PLC_Principal — ID 1` como seleccionado y marcado como `SLAVE ACTIVO`, además de `HMI_Panel — ID 2` y `Variador_01 — ID 10`.
 
 El panel `Resumen` debe parecer un verdadero resumen general de comunicación. Debe incluir `Solicitudes: 128`, `Respuestas: 126`, `Errores: 2`, `Timeouts: 0`, `Dispositivos encontrados: 3`, `Rango de escaneo: 1–10`, `Último escaneo: OK · 09/07/2026 01:02:15` y `Rol: PC Master`.
 
@@ -600,9 +596,24 @@ La vista final debe replicar la propuesta aprobada:
 
 Mantener la pantalla clara y amigable para modo sencillo, aunque con suficiente potencia técnica para validar slaves reales.
 
-### Sencillo / Registros
+### Sencillo / Registros — prompt vigente
 
-Pantalla `Sencillo / Registros`. Mostrar cuatro pestañas: `Coils (01)`, `Discrete Inputs (02)`, `Input Registers (04)`, `Holding Registers (03)`. Mostrar `Slave activo: PLC_Principal — ID 1`. Controles: dirección inicial, cantidad, `Leer`, `Autolectura`, `Intervalo 1 s`, `Detener`. Solo lectura en Discrete Inputs e Input Registers. Escritura solo en Coils y Holding Registers.
+Generar pantalla `Sencillo / Registros` de `JW Modbus Tool`, con el mismo tema oscuro azul petróleo, acentos cian y estilo de tarjetas de las vistas aprobadas. El menú lateral debe tener `Registros` activo. La barra inferior debe mantener `Conectado · COM3 · 115200 · 8N1 · Slave activo ID 1 · Sesión activa`.
+
+La vista final debe replicar la segunda propuesta aprobada:
+
+- Encabezado superior con `Slave activo: PLC_Principal — ID 1` y una nota `Los registros se muestran en formato decimal`.
+- Cuatro pestañas visibles: `Coils (01)`, `Discrete Inputs (02)`, `Input Registers (04)`, `Holding Registers (03)`. Mostrar debajo de cada pestaña si es `Lectura/Escritura` o `Solo lectura`.
+- `Holding Registers (03)` puede estar activa.
+- Controles superiores: `Dirección inicial 40000`, `Cantidad 10`, botón `Leer`, toggle `Autolectura`, selector `Intervalo 1 s`, botón `Detener`.
+- Tabla principal con columnas `Dirección`, `Nombre`, `Valor`, `Tipo`, `Acceso`, `Estado`. Usar ejemplos como `40000 Velocidad_Ref`, `40001 Estado_Variador`, `40002 Corriente_Salida`, `40003 Tension_DC`, `40004 Temp_Disipador`, `40008 Frecuencia_Salida`, `40009 Estado_Alarma`.
+- Panel lateral `Registro seleccionado` con dirección, nombre, valor actual, tipo, acceso, tendencia de últimos 60 s y estadísticos `Min`, `Máx`, `Prom`.
+- Incluir una acción visible pero discreta `Editar mapa` o `Asignar nombre/tipo`, idealmente cerca de la tabla o dentro del panel `Registro seleccionado`.
+- Aclarar visualmente que `Nombre`, `Tipo`, `Unidad`, `Acceso` y metadatos vienen del **Mapa de registros** del slave activo y se guardan en la sesión.
+- Si una dirección no tiene metadatos, sugerir que puede aparecer como `Reg_40000` con tipo por defecto `uint16`.
+- Panel inferior `Actividad reciente` con columnas `Inicio`, `Fin`, `Duración`, `Slave ID`, `Dispositivo`, `Función`, `Rango`, `Cantidad`, `Resultado`, `Tiempo de respuesta`, y enlace `Ver todo el historial`.
+
+Mantener la distribución exacta y limpia de la segunda propuesta aprobada. No sobrecargar la pantalla; la aclaración del mapa debe sentirse como una acción natural de edición, no como un bloque grande adicional.
 
 ### Sencillo / Tráfico Modbus
 
