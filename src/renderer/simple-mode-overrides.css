@@ -5,7 +5,7 @@
 .devices {
   height: 100%;
   min-height: 0;
-  grid-template-rows: minmax(305px, 305px) minmax(0, 1fr);
+  grid-template-rows: minmax(340px, 340px) minmax(0, 1fr);
 }
 
 .devices > .card,
@@ -27,9 +27,65 @@
 
 .devices .connect,
 .devices .summary {
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #2d87aa #071d30;
+  overflow: hidden;
+}
+
+.devices .connect {
+  padding: 12px;
+}
+
+.devices .connect > header,
+.devices .summary > header {
+  margin-bottom: 6px;
+}
+
+.devices .connect .radio {
+  gap: 22px;
+  margin: 4px 0 8px;
+}
+
+.devices .connect .field {
+  margin: 5px 0;
+  grid-template-columns: 1fr 1.08fr auto;
+  gap: 7px;
+}
+
+.devices .connect .field input,
+.devices .connect .field select,
+.devices .connect .field button {
+  height: 29px !important;
+  min-height: 29px !important;
+}
+
+.devices .connect .connection {
+  margin-top: 9px;
+  padding-top: 10px;
+}
+
+.devices .summary {
+  padding: 12px;
+}
+
+.devices .summary .kpis {
+  gap: 7px;
+  margin: 8px 0;
+}
+
+.devices .summary .kpi {
+  padding: 8px 10px;
+}
+
+.devices .summary .kpi b {
+  font-size: 1.55rem;
+}
+
+.devices .summary .kpi strong {
+  font-size: 1.24rem;
+}
+
+.devices .summary dt,
+.devices .summary dd {
+  padding: 7px 9px;
 }
 
 .devices .detected {
@@ -39,7 +95,10 @@
 
 .devices .detected .table {
   flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2d87aa #071d30;
 }
 
 .devicesLower {
@@ -179,7 +238,11 @@
 
 @media (max-height: 850px) {
   .devices {
-    grid-template-rows: minmax(285px, 285px) minmax(0, 1fr);
+    grid-template-rows: minmax(325px, 325px) minmax(0, 1fr);
+  }
+
+  .devices .connect .field {
+    margin: 4px 0;
   }
 
   .quickbar {
