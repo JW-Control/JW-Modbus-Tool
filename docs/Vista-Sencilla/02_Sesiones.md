@@ -1,6 +1,6 @@
 # Vista Sencilla — 02 Sesiones
 
-Estado: **primera pasada visual aplicada**  
+Estado: **MVP funcional inicial aplicado**  
 Fecha: 2026-07-09  
 Rama: `feature/simple-mode-mvp`
 
@@ -8,7 +8,7 @@ Rama: `feature/simple-mode-mvp`
 
 ## Objetivo
 
-La vista **Sesiones** debe permitir crear, abrir, guardar y continuar diagnósticos Modbus sin perder contexto.
+La vista **Sesiones** permite crear, guardar, abrir y continuar diagnósticos Modbus sin perder contexto.
 
 Una sesión debe guardar:
 
@@ -38,21 +38,27 @@ La referencia aprobada es la imagen dashboard de `Sencillo / Sesiones` generada 
 
 ---
 
-## Estado actual real
+## Estado real aplicado
 
-La vista real ya existe y trabaja sobre sesión limpia:
+La vista real trabaja sobre sesión limpia y ahora tiene una persistencia mínima en frontend.
 
-- Muestra `Nueva_sesion_Modbus`.
-- Muestra datos básicos de rol, protocolo, slave activo, conexión y última actividad.
-- El resumen ya refleja parte del estado real generado desde Dispositivos.
-- `Sesiones recientes` todavía no muestra historial persistente real.
-- `Actividad reciente` toma los eventos reales generados por escaneos y lecturas.
+Implementado:
+
+- Nombre editable de sesión.
+- `Nueva sesión` limpia el diagnóstico actual.
+- `Guardar sesión` guarda el estado actual en `localStorage`.
+- `Abrir sesión` abre la última sesión guardada.
+- `Sesiones recientes` muestra siempre la sesión actual como primera fila.
+- Las sesiones guardadas se muestran debajo de la sesión actual.
+- Las filas guardadas pueden abrirse desde la lista.
+- La conexión de `Sesión actual` muestra el puerto/parámetros reales cuando existe conexión.
+- El estado cambia entre `Limpia` y `Activa` según haya datos reales.
+- El resumen refleja dispositivos, registros leídos, pruebas, tráfico, notas y errores.
+- Actividad reciente usa los eventos reales generados desde Dispositivos.
 
 ---
 
-## Primera pasada aplicada
-
-Se aplicó una primera corrección visual de layout para acercar la vista real a la referencia aprobada sin alterar todavía la lógica de persistencia.
+## Layout aplicado
 
 Cambios de layout:
 
@@ -61,72 +67,113 @@ Cambios de layout:
 - `¿Qué guarda una sesión?` queda en la columna derecha, alineado con `Sesión actual`.
 - `Sesiones recientes` queda como panel grande en la columna izquierda.
 - `Resumen de la sesión actual` queda en la columna derecha.
-- `Actividad reciente` queda debajo del resumen, también en la columna derecha.
+- `Actividad reciente` queda inmediatamente debajo del resumen, no pegada al borde inferior de la pantalla.
 - La vista queda contenida dentro de la altura disponible, sin scroll global innecesario.
-- Los paneles que puedan crecer deberán usar scroll interno.
+- Los paneles que puedan crecer usan scroll interno.
 
 ---
 
 ## Criterio de avance
 
-Para depurar esta vista, no se deben introducir datos mock fijos que oculten el estado real.
+Para esta vista no se deben introducir datos mock fijos que oculten el estado real.
 
 Reglas:
 
 - Si no hay sesión abierta, mostrar sesión limpia.
 - Si hay datos generados desde Dispositivos, mostrarlos en el resumen.
 - Si no hay sesiones guardadas, mostrar mensaje vacío claro.
+- La sesión actual debe aparecer en `Sesiones recientes` aunque todavía no esté guardada.
 - El diseño debe acercarse a la referencia aprobada, pero respetando datos reales.
 
 ---
 
-## Layout objetivo para el MVP sencillo
+## Acciones superiores
 
-### Acciones superiores
+### Nueva sesión
 
-- `Nueva sesión`.
-- `Abrir sesión`.
-- `Guardar sesión`.
+Acción actual:
 
-### Sesión actual
+- Limpia dispositivos detectados.
+- Limpia slave activo.
+- Limpia lecturas rápidas.
+- Limpia mapa de registros leído.
+- Limpia actividad reciente.
+- Limpia tráfico.
+- Reinicia contadores.
+- Reinicia pruebas a estado pendiente.
+- Mantiene la configuración de puerto visible para no obligar al usuario a reconfigurar todo.
 
-Debe mostrar:
+### Guardar sesión
 
-- Nombre editable de sesión.
-- Estado: `Limpia`, `Activa` o `Guardada`.
-- Rol: `PC Master`.
-- Protocolo: `RTU` o `TCP`.
+Acción actual:
+
+- Guarda una instantánea de la sesión actual en `localStorage`.
+- Si la sesión ya fue guardada, la actualiza.
+- Si es nueva, crea un ID interno.
+- La sesión guardada pasa a aparecer en recientes.
+
+Datos guardados ahora:
+
+- Nombre de sesión.
+- Fecha de guardado.
+- Puerto y parámetros seriales.
+- Dispositivos detectados.
 - Slave activo.
-- Conexión.
+- Estadísticas.
+- Actividad reciente con valores leídos.
+- Cantidad de tráfico capturado.
+- Notas: reservado en `0` para futura implementación.
+
+### Abrir sesión
+
+Acción actual:
+
+- Abre la última sesión guardada.
+- También se puede abrir una sesión específica desde la fila de `Sesiones recientes`.
+
+Pendiente posterior:
+
+- Abrir desde archivo `.jwmodbus-session`.
+- Exportar/importar sesiones.
+- Guardado en carpeta de usuario usando backend Electron.
+
+---
+
+## Sesión actual
+
+Muestra:
+
+- Nombre editable.
+- Estado: `Limpia` o `Activa`.
+- Rol: `PC Master`.
+- Protocolo: `RTU`.
+- Slave activo.
+- Conexión real: `COMx · baud · 8N1`, o `Sin puerto activo`.
 - Última actividad.
 - Botón ancho `Continuar sesión`.
 
-### ¿Qué guarda una sesión?
+---
 
-Debe mantener bullets claros:
+## Sesiones recientes
 
-- Conexiones y dispositivos detectados.
-- Registros leídos y valores configurados.
-- Pruebas ejecutadas y resultados.
-- Tráfico Modbus capturado.
-- Notas y observaciones del diagnóstico.
+Muestra:
 
-### Sesiones recientes
-
-Debe mostrar, cuando exista persistencia:
-
+- La sesión actual como primera fila.
+- Sesiones guardadas debajo.
 - Nombre.
 - Fecha/hora.
 - Dispositivos.
+- Registros.
 - Pruebas.
 - Errores.
-- Acciones: `Continuar`, `Ver resumen`, `Exportar`.
+- Acción: `En curso` o `Abrir`.
+- Estado: `Limpia`, `Activa` o `Guardada`.
 
-Si no hay sesiones guardadas, debe mostrar mensaje vacío claro, sin inventar sesiones.
+---
 
-### Resumen de la sesión actual
+## Resumen de la sesión actual
 
-Debe usar tarjetas con íconos:
+Usa tarjetas con íconos:
 
 - Dispositivos detectados.
 - Registros leídos.
@@ -135,31 +182,33 @@ Debe usar tarjetas con íconos:
 - Notas.
 - Errores.
 
-### Actividad reciente
+---
 
-Debe listar eventos reales de la sesión:
+## Actividad reciente
 
-- Conexión establecida.
-- Slave seleccionado.
+Lista eventos reales de la sesión:
+
 - Escaneo iniciado/finalizado.
 - Lecturas ejecutadas.
 - Errores o timeouts.
+
+El panel inicia justo debajo del resumen de la sesión actual y usa scroll interno si la lista crece.
 
 ---
 
 ## Pendiente inmediato para cerrar Sesiones
 
-1. Revisar visualmente la primera pasada de layout.
-2. Ajustar alturas si algún panel se corta o queda demasiado vacío.
-3. Decidir si `Sesión actual` debe mostrar `Activa` cuando ya exista puerto conectado o actividad real, y `Limpia` solo cuando no haya actividad.
-4. Conectar `Conexión` al puerto real en vez de texto genérico `Según puerto activo`.
-5. Definir persistencia mínima para `Guardar sesión` / `Abrir sesión`.
+1. Validar visualmente la nueva distribución.
+2. Confirmar si el nombre editable debe persistir automáticamente o solo al guardar.
+3. Decidir si `Abrir sesión` debe abrir un selector/modal en vez de cargar la última guardada.
+4. Implementar exportar/importar archivo de sesión desde backend Electron.
+5. Añadir notas reales de diagnóstico.
 
 ---
 
 ## Próximo trabajo sugerido
 
-1. Validar visualmente esta primera pasada.
-2. Mantener los datos reales que vienen desde Dispositivos.
-3. Preparar estructura para persistencia de sesiones.
-4. Evitar mocks fijos salvo datos de ejemplo explícitos en documentación o storybook futuro.
+1. Probar `Nueva sesión`, `Guardar sesión` y `Abrir sesión` en local.
+2. Revisar que la sesión actual aparezca correctamente en `Sesiones recientes`.
+3. Validar que la columna derecha ya no tenga el hueco entre resumen y actividad.
+4. Continuar con la vista `Pruebas` cuando Sesiones quede aceptada.
