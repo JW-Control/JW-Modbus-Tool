@@ -5,7 +5,7 @@
 .devices {
   height: 100%;
   min-height: 0;
-  grid-template-rows: minmax(0, 245px) minmax(0, 1fr);
+  grid-template-rows: minmax(305px, 305px) minmax(0, 1fr);
 }
 
 .devices > .card,
@@ -13,6 +13,33 @@
 .quickPanel,
 .recentPanel {
   min-height: 0;
+}
+
+.devices > .card {
+  overflow: hidden;
+}
+
+.devices .connect,
+.devices .detected,
+.devices .summary {
+  height: 100%;
+}
+
+.devices .connect,
+.devices .summary {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2d87aa #071d30;
+}
+
+.devices .detected {
+  display: flex;
+  flex-direction: column;
+}
+
+.devices .detected .table {
+  flex: 1 1 auto;
+  overflow: auto;
 }
 
 .devicesLower {
@@ -152,7 +179,7 @@
 
 @media (max-height: 850px) {
   .devices {
-    grid-template-rows: minmax(0, 220px) minmax(0, 1fr);
+    grid-template-rows: minmax(285px, 285px) minmax(0, 1fr);
   }
 
   .quickbar {
