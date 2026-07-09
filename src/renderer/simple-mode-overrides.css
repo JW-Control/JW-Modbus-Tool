@@ -407,18 +407,49 @@
 
 .sessions .tiles article {
   min-height: 82px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  column-gap: 9px;
+  row-gap: 4px;
+}
+
+.sessions .tiles article svg {
+  margin-top: 2px;
+}
+
+.sessions .tiles article strong,
+.sessions .tiles article small {
+  grid-column: 1 / -1;
 }
 
 .sessions .timeline ol {
+  counter-reset: session-activity;
+  display: flex;
   flex: 1 1 auto;
-  padding-right: 6px;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 0 6px 0 0;
+  list-style: none;
 }
 
 .sessions .timeline li {
+  counter-increment: session-activity;
   display: grid;
-  grid-template-columns: 72px 52px 1fr;
+  grid-template-columns: 28px 72px 52px 1fr;
   gap: 9px;
   align-items: baseline;
+  min-height: 0;
+  padding: 2px 0;
+  line-height: 1.25;
+}
+
+.sessions .timeline li::before {
+  content: counter(session-activity) ".";
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .sessions .timeline li span {
