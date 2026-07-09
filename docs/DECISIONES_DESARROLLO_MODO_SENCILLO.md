@@ -21,7 +21,9 @@ Al iniciar una sesión limpia:
 
 ---
 
-## 2. Vista Dispositivos
+## 2. Vista Dispositivos — cerrada como primera versión real
+
+La vista **Dispositivos** queda cerrada como primera versión operativa del MVP sencillo. Ya no se está trabajando como mockup estático: la vista está conectada al backend real de Electron y a lecturas Modbus reales.
 
 ### 2.1 Panel `1. Conectar`
 
@@ -32,11 +34,13 @@ Decisiones aplicadas:
 - La lista de puertos se obtiene desde el backend real de Electron.
 - Se agregó botón de recarga de puertos junto al selector `Puerto`.
 - El label `Timeout` cambió a `Timeout (ms)`.
-- El estado de conexión debe ser visualmente claro:
+- El estado de conexión es visualmente claro:
   - `Conectado` en verde.
   - `Desconectado` en rojo.
+- Este panel **no debe tener scroll interno**.
+- La fila superior de la vista se dimensiona por contenido, no por altura fija, para evitar cortes.
 
-Pendiente:
+Pendiente posterior:
 
 - Mejorar la detección de puertos residuales de Windows si el backend sigue listando COM no físicos.
 - Mostrar metadatos útiles del puerto cuando existan: fabricante, serial, VID/PID.
@@ -47,12 +51,13 @@ Pendiente:
 
 Decisiones aplicadas:
 
-- Ya no se precargan dispositivos ficticios como `PLC_Principal`, `HMI_Panel` o `Variador_01`.
+- Ya no se precargan dispositivos ficticios como `PLC_Principal`, `HMI_Panel` o `Variador_01` en sesión limpia.
 - Al escanear, los dispositivos reales aparecen como `Slave ID X`.
 - Si el dispositivo no tiene nombre asignado, se muestra etiqueta `NOMBRE PEND.`.
 - El usuario o una plantilla futura deberá asignar nombres amigables.
+- Este panel sí puede tener **scroll interno** cuando aparezcan muchos slaves.
 
-Pendiente:
+Pendiente posterior:
 
 - Permitir renombrar un slave detectado desde la UI.
 - Guardar el nombre dentro de la sesión.
@@ -69,6 +74,8 @@ Decisiones aplicadas:
 - `Respuestas` aumenta solo con respuestas reales OK.
 - `Errores` y `Timeouts` no deben inflarse durante un escaneo normal cuando un ID no existe.
 - El escaneo 1–10 debe detectar slaves reales sin castigar como error cada ID que no responde.
+- Este panel **no debe tener scroll interno**.
+- Debe entrar completo en la fila superior sin cortarse.
 
 ---
 
@@ -83,7 +90,9 @@ Decisiones aplicadas:
 - Para `FC01` y `FC02`, los valores booleanos se muestran como chips:
   - `ON` en verde.
   - `OFF` en gris.
-- Los controles superiores deben verse alineados y compactos: etiqueta arriba, campo debajo, botón `Leer` a la misma altura de los campos.
+- Los controles superiores se ven alineados y compactos: etiqueta arriba, campo debajo, botón `Leer` a la misma altura de los campos.
+- La tabla tiene **scroll interno** cuando la lectura trae muchos registros o bits.
+- La vista general no debe crecer ni mostrar scroll global por esta tabla.
 
 Decisión importante sobre rangos:
 
@@ -91,8 +100,8 @@ Decisión importante sobre rangos:
 - Las **áreas de datos** también son conceptos estándar: coils, discrete inputs, input registers y holding registers.
 - Pero los **rangos exactos disponibles** dependen de cada slave.
 - La notación tipo `40000`, `30000`, `10000` es una convención de direccionamiento de interfaz/documentación, no una regla universal impuesta por el protocolo Modbus.
-- En el MVP se debe evitar presentar rangos específicos como si fueran universales.
-- El texto de ayuda debe decir que el rango real depende del mapa del dispositivo o del template aplicado.
+- En el MVP se evita presentar rangos específicos como si fueran universales.
+- El texto de ayuda dice que el rango real depende del mapa del dispositivo o del template aplicado.
 
 ---
 
@@ -101,22 +110,27 @@ Decisión importante sobre rangos:
 Decisiones aplicadas:
 
 - Se amplió visualmente respecto a la primera integración.
-- Incluye ahora el valor leído, no solo la dirección y cantidad.
-- Se agregó columna `Info` para revisar el detalle resumido de una actividad.
+- Incluye el valor leído, no solo la dirección y cantidad.
+- Se agregó columna `Info` para revisar el detalle de una actividad.
+- La columna `Fecha/hora` debe procurar verse completa y sin cortes innecesarios.
+- La tabla tiene **scroll interno** cuando hay muchas actividades.
+- La vista general no debe crecer ni mostrar scroll global por esta tabla.
 
-Proyección funcional aprobada:
+Detalle de `Info` aprobado:
 
-- El botón `Info` debe abrir el detalle **dentro de la misma área de Actividad reciente**, ocupando todo ese panel.
-- Ese detalle debe tener botón `X` para cerrar y volver a la tabla de actividad.
-- No debe enviarse al panel lateral de ayuda porque agrupa la información de forma poco útil.
-- El detalle debe mostrar:
+- El botón `Info` abre el detalle **dentro de la misma área de Actividad reciente**, ocupando todo ese panel.
+- El detalle tiene botón `X` para cerrar y volver a la tabla de actividad.
+- No se envía al panel lateral de ayuda porque agrupa la información de forma poco útil.
+- El detalle replica la tabla de `Lectura rápida`, pero con datos no editables:
   - función ejecutada,
   - slave ID,
+  - dirección inicial,
+  - cantidad,
   - duración,
-  - rango leído,
+  - resultado,
   - listado completo de valores,
-  - hex TX/RX si está disponible,
-  - error o excepción si corresponde.
+  - tipo y acceso cuando exista mapa,
+  - TX/RX y excepción en una etapa posterior.
 
 ---
 
@@ -177,7 +191,34 @@ Con templates, la UI puede restringir o sugerir direcciones sin fingir que todos
 
 ---
 
-## 4. Estado avanzado del MVP
+## 4. Siguiente vista: Sesiones
+
+Punto de partida visual:
+
+- Referencia aprobada: imagen dashboard de `Sencillo / Sesiones` con `Sesión actual`, `Sesiones recientes`, `Resumen de la sesión actual`, `Actividad reciente` y panel `¿Qué guarda una sesión?`.
+- Estado real actual: ya existe una pantalla funcional básica, pero todavía está más simple y no replica por completo el dashboard aprobado.
+
+Criterio para depuración:
+
+- Trabajar la vista **Sesiones** una pantalla a la vez, igual que se hizo con Dispositivos.
+- Mantener sesión limpia cuando no haya archivo abierto.
+- Mostrar datos reales generados desde la sesión actual cuando existan: dispositivos detectados, registros leídos, actividad reciente y errores.
+- Evitar datos mock fijos cuando la sesión sea limpia.
+- Preservar la idea visual de la propuesta aprobada, pero adaptada al estado real del MVP.
+
+Secciones esperadas en la versión final de Sesiones:
+
+1. Acciones superiores: `Nueva sesión`, `Abrir sesión`, `Guardar sesión`.
+2. Tarjeta `Sesión actual` con nombre editable, estado, rol, protocolo, slave activo, conexión y última actividad.
+3. Botón ancho `Continuar sesión`.
+4. Panel `¿Qué guarda una sesión?`.
+5. Panel `Sesiones recientes` con lista compacta y acciones por fila.
+6. Panel `Resumen de la sesión actual` con tarjetas con iconos.
+7. Panel `Actividad reciente` con eventos reales de la sesión.
+
+---
+
+## 5. Estado avanzado del MVP
 
 Implementado:
 
@@ -192,14 +233,15 @@ Implementado:
 - Chips visuales para ON/OFF.
 - Estado `Desconectado` en rojo.
 - Alineación compacta del bloque superior de lectura rápida.
+- Scroll interno en `Lectura rápida`, `Actividad reciente` y detalle de lectura.
+- Vista Dispositivos cerrada como primera versión real.
 
 Pendiente inmediato:
 
 - Validar `npm run typecheck`.
 - Ajustar cualquier error de TypeScript/React que salga en local.
-- Revisar visualmente el layout tras el nuevo botón `Info`.
-- Cablear el botón `Info` a un detalle interno dentro del área `Actividad reciente`, con botón `X` para volver a la tabla.
-- Revisar si conviene mostrar dirección Modbus cruda y dirección de interfaz en paralelo.
+- Revisar visualmente la columna `Fecha/hora` de `Actividad reciente` luego del ajuste de ancho.
+- Iniciar refinamiento de la vista `Sesiones`.
 
 Pendiente medio plazo:
 
@@ -216,12 +258,12 @@ Pendiente medio plazo:
 
 ---
 
-## 5. Criterio UX para próximos cambios
+## 6. Criterio UX para próximos cambios
 
 Trabajar una pantalla a la vez:
 
-1. Dispositivos.
-2. Sesiones.
+1. Dispositivos — cerrada como primera versión real.
+2. Sesiones — siguiente vista a depurar.
 3. Pruebas.
 4. Registros.
 5. Tráfico Modbus.
