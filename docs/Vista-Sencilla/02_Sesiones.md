@@ -1,6 +1,6 @@
 # Vista Sencilla — 02 Sesiones
 
-Estado: **siguiente vista a depurar**  
+Estado: **primera pasada visual aplicada**  
 Fecha: 2026-07-09  
 Rama: `feature/simple-mode-mvp`
 
@@ -40,14 +40,30 @@ La referencia aprobada es la imagen dashboard de `Sencillo / Sesiones` generada 
 
 ## Estado actual real
 
-La vista real ya existe, pero está simplificada respecto a la referencia:
+La vista real ya existe y trabaja sobre sesión limpia:
 
-- Usa sesión limpia.
 - Muestra `Nueva_sesion_Modbus`.
 - Muestra datos básicos de rol, protocolo, slave activo, conexión y última actividad.
-- El resumen ya refleja parte del estado real.
+- El resumen ya refleja parte del estado real generado desde Dispositivos.
 - `Sesiones recientes` todavía no muestra historial persistente real.
-- `Actividad reciente` existe, pero está más simple que la propuesta visual aprobada.
+- `Actividad reciente` toma los eventos reales generados por escaneos y lecturas.
+
+---
+
+## Primera pasada aplicada
+
+Se aplicó una primera corrección visual de layout para acercar la vista real a la referencia aprobada sin alterar todavía la lógica de persistencia.
+
+Cambios de layout:
+
+- `Nueva sesión`, `Abrir sesión` y `Guardar sesión` quedan como acciones superiores alineadas en la columna principal.
+- `Sesión actual` queda debajo de las acciones superiores.
+- `¿Qué guarda una sesión?` queda en la columna derecha, alineado con `Sesión actual`.
+- `Sesiones recientes` queda como panel grande en la columna izquierda.
+- `Resumen de la sesión actual` queda en la columna derecha.
+- `Actividad reciente` queda debajo del resumen, también en la columna derecha.
+- La vista queda contenida dentro de la altura disponible, sin scroll global innecesario.
+- Los paneles que puedan crecer deberán usar scroll interno.
 
 ---
 
@@ -106,7 +122,7 @@ Debe mostrar, cuando exista persistencia:
 - Errores.
 - Acciones: `Continuar`, `Ver resumen`, `Exportar`.
 
-Si no hay sesiones guardadas, debe mostrar mensaje vacío.
+Si no hay sesiones guardadas, debe mostrar mensaje vacío claro, sin inventar sesiones.
 
 ### Resumen de la sesión actual
 
@@ -131,9 +147,19 @@ Debe listar eventos reales de la sesión:
 
 ---
 
+## Pendiente inmediato para cerrar Sesiones
+
+1. Revisar visualmente la primera pasada de layout.
+2. Ajustar alturas si algún panel se corta o queda demasiado vacío.
+3. Decidir si `Sesión actual` debe mostrar `Activa` cuando ya exista puerto conectado o actividad real, y `Limpia` solo cuando no haya actividad.
+4. Conectar `Conexión` al puerto real en vez de texto genérico `Según puerto activo`.
+5. Definir persistencia mínima para `Guardar sesión` / `Abrir sesión`.
+
+---
+
 ## Próximo trabajo sugerido
 
-1. Ajustar layout para acercarlo a la referencia visual aprobada.
+1. Validar visualmente esta primera pasada.
 2. Mantener los datos reales que vienen desde Dispositivos.
 3. Preparar estructura para persistencia de sesiones.
 4. Evitar mocks fijos salvo datos de ejemplo explícitos en documentación o storybook futuro.
