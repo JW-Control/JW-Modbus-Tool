@@ -202,7 +202,7 @@ Debe volver al formato de la propuesta anterior, mostrando **lo leído**, no sol
 Debe incluir:
 
 - `Slave activo: PLC_Principal — ID 1`.
-- Tipo de función aplicada, por ejemplo `FC03 Read Holding Registers`.
+- Tipo de función aplicada en un **selector desplegable**, por ejemplo `FC03 Read Holding Registers`.
 - `Dirección inicial`.
 - `Cantidad`.
 - Botón `Leer`.
@@ -263,9 +263,58 @@ Una sesión debe guardar:
 - Tráfico capturado.
 - Notas.
 
+#### Diseño final aprobado — Sencillo / Sesiones
+
+La versión aprobada es el layout tipo dashboard amigable con:
+
+1. **Barra superior** estándar de JW Modbus Tool.
+2. **Menú lateral** con `Sesiones` activo.
+3. Acciones superiores visibles:
+   - `Nueva sesión`.
+   - `Abrir sesión`.
+   - `Guardar sesión`.
+4. Tarjeta principal **Sesión actual**:
+   - Nombre: `Comisionamiento_Lavadora_S200`.
+   - Estado: `Activa`.
+   - Rol: `PC Master`.
+   - Protocolo: `RTU`.
+   - Slave activo: `PLC_Principal — ID 1`.
+   - Conexión: `COM3 · 115200 · 8N1`.
+   - Última actividad: `Hace 4 min`.
+   - Botón principal ancho: `Continuar sesión`.
+5. Tarjeta lateral **¿Qué guarda una sesión?**:
+   - Conexiones y dispositivos detectados.
+   - Registros leídos y valores configurados.
+   - Pruebas ejecutadas y resultados.
+   - Tráfico Modbus capturado.
+   - Notas y observaciones del diagnóstico.
+6. Panel **Resumen de la sesión actual** con tarjetas con ícono:
+   - `Dispositivos 3 Detectados`.
+   - `Registros leídos 120 En total`.
+   - `Pruebas 4/4 Aprobadas`.
+   - `Tráfico capturado 3.2 MB En total`.
+   - `Notas 2 Guardadas`.
+   - `Errores 0 Detectados`.
+7. Panel **Sesiones recientes** con lista compacta:
+   - `Lavadora_S200_Prueba_RTU`.
+   - `Variador_01_Lectura_RPM`.
+   - `HMI_Panel_Pruebas`.
+   - `Banco_Modbus_Taller`.
+   - Cada fila muestra dispositivos, pruebas, errores y acciones `Continuar`, `Ver resumen`, `Exportar`.
+8. Panel **Actividad reciente**:
+   - Conexión establecida.
+   - Slave activo seleccionado.
+   - Escaneo iniciado.
+   - Registros leídos correctamente.
+9. Bloques laterales opcionales:
+   - `¿Nuevo aquí?`.
+   - Licencia / versión.
+
+Esta versión combina la primera propuesta que gustó por su claridad con la segunda propuesta que aportaba métricas útiles como registros leídos, pruebas, tráfico capturado y notas.
+
 Por nivel:
 
-- **Sencillo:** historial amigable, acciones `Nueva`, `Abrir`, `Guardar`, `Continuar`, sesiones recientes y resumen.
+- **Sencillo:** historial amigable, acciones `Nueva`, `Abrir`, `Guardar`, `Continuar`, sesiones recientes y resumen con tarjetas.
 - **Intermedio:** filtros por cliente/proyecto/máquina, topología guardada, últimos errores, timeline.
 - **Avanzado:** versionado, snapshots, comparación A/B, replay, exportación de evidencia.
 
@@ -424,14 +473,19 @@ A partir de la revisión del modo sencillo, la generación debe hacerse **una vi
 - Cambiar `Resumen` para recuperar el formato original con indicadores grandes: solicitudes, respuestas, errores y timeouts.
 - En `Resumen`, conservar también datos operativos: dispositivos encontrados, rango de escaneo, último escaneo y rol PC Master.
 - Cambiar `3. Lectura rápida de registros` para mostrar tabla de registros leídos.
-- En `3. Lectura rápida de registros`, incluir explícitamente la función de lectura aplicada.
+- En `3. Lectura rápida de registros`, incluir explícitamente la función de lectura aplicada y hacerla un **selector desplegable**.
 - Compactar `Actividad reciente`: fecha/hora de lectura, duración, slave ID, función, dirección-cantidad y resultado.
 
 ### Sesiones
 
-- Mantener diseño aprobado.
-- Añadir `Rol: PC Master`.
-- Guardar perfil de escaneo y slave activo.
+- Mantener como final la versión dashboard aprobada.
+- Acciones superiores: `Nueva sesión`, `Abrir sesión`, `Guardar sesión`.
+- Tarjeta principal: `Sesión actual` con `Continuar sesión` ancho.
+- Mantener panel `¿Qué guarda una sesión?`.
+- Mantener panel `Resumen de la sesión actual` con tarjetas con ícono.
+- Mantener `Sesiones recientes` con acciones por fila.
+- Mantener `Actividad reciente`.
+- Añadir y conservar `Rol: PC Master`, `Slave activo: PLC_Principal — ID 1`, conexión `COM3 · 115200 · 8N1`, registros leídos, pruebas, tráfico capturado y notas.
 
 ### Pruebas
 
@@ -492,7 +546,7 @@ Debajo del resumen, incluir:
 El panel `3. Lectura rápida de registros` debe usar el formato original, con tabla de registros leídos. Debe mostrar:
 
 - `Slave activo: PLC_Principal — ID 1`.
-- Función aplicada: `FC03 Read Holding Registers`.
+- La función aplicada en un **selector desplegable**, por ejemplo `FC03 Read Holding Registers`.
 - `Dirección inicial: 40000`.
 - `Cantidad: 6`.
 - Botón `Leer`.
@@ -518,9 +572,35 @@ La tabla debe incluir registros leídos, por ejemplo:
 
 No usar columnas separadas de inicio y fin en esta vista. No reemplazar la tabla de registros leídos por un simple mensaje de “leído correctamente”.
 
-### Sencillo / Sesiones
+### Sencillo / Sesiones — prompt vigente
 
-Pantalla `Sencillo / Sesiones`. Mantener estilo aprobado: sesión actual, sesiones recientes, resumen y explicación. Añadir `Rol: PC Master`, `Slave activo: PLC_Principal — ID 1`, conexión `COM3 · 115200 · 8N1`, acciones `Nueva sesión`, `Abrir sesión`, `Guardar sesión`, `Continuar sesión`.
+Generar pantalla `Sencillo / Sesiones` de `JW Modbus Tool`, con el mismo tema oscuro azul petróleo, acentos cian y estilo de tarjetas de la vista `Sencillo / Dispositivos` aprobada. El menú lateral debe tener `Sesiones` activo. La barra inferior debe mantener `Conectado · COM3 · 115200 · 8N1 · Slave activo ID 1 · Sesión activa`.
+
+La vista final debe replicar la versión dashboard aprobada:
+
+- En la parte superior del contenido, mostrar acciones grandes: `Nueva sesión`, `Abrir sesión`, `Guardar sesión`.
+- Tarjeta principal izquierda `Sesión actual`:
+  - Nombre: `Comisionamiento_Lavadora_S200`.
+  - Estado: `Activa`.
+  - `Rol: PC Master`.
+  - `Protocolo: RTU`.
+  - `Slave activo: PLC_Principal — ID 1`.
+  - `Conexión: COM3 · 115200 · 8N1`.
+  - `Última actividad: Hace 4 min`.
+  - Botón principal ancho `Continuar sesión`.
+- Tarjeta superior derecha `¿Qué guarda una sesión?` con bullets sobre conexiones, registros leídos, pruebas, tráfico capturado y notas.
+- Panel derecho/medio `Resumen de la sesión actual` con tarjetas con ícono:
+  - `Dispositivos 3 Detectados`.
+  - `Registros leídos 120 En total`.
+  - `Pruebas 4/4 Aprobadas`.
+  - `Tráfico capturado 3.2 MB En total`.
+  - `Notas 2 Guardadas`.
+  - `Errores 0 Detectados`.
+- Panel central/inferior `Sesiones recientes` con filas para `Lavadora_S200_Prueba_RTU`, `Variador_01_Lectura_RPM`, `HMI_Panel_Pruebas`, `Banco_Modbus_Taller`. Cada fila debe mostrar dispositivos, pruebas, errores y acciones `Continuar`, `Ver resumen`, `Exportar`.
+- Panel inferior derecho `Actividad reciente` con eventos de conexión, selección de slave activo, escaneo y lectura correcta de registros.
+- Bloques laterales opcionales: `¿Nuevo aquí?`, `Licencia: Profesional`, `Versión 1.3.0 (64-bit)`.
+
+Mantener la pantalla limpia, amigable y claramente de modo sencillo. No hacerla tan densa como una herramienta de laboratorio.
 
 ### Sencillo / Pruebas
 
