@@ -3,12 +3,21 @@ export {};
 import type {
   ReadCoilsCommand,
   ReadDiscreteInputsCommand,
+  ReadHoldingRegistersCommand,
+  ReadInputRegistersCommand,
   RtuMasterActionResult,
   ValidationSequenceCommand,
   ValidationSequenceResult,
   WriteMultipleCoilsCommand,
-  WriteSingleCoilCommand
+  WriteMultipleRegistersCommand,
+  WriteSingleCoilCommand,
+  WriteSingleRegisterCommand
 } from "../shared/modbus/masterActionTypes.js";
+import type {
+  CopyMarkdownReportResult,
+  SaveMarkdownReportRequest,
+  SaveMarkdownReportResult
+} from "../shared/report/types.js";
 import type {
   SerialConnectionState,
   SerialOperationResult,
@@ -38,15 +47,33 @@ declare global {
         readDiscreteInputs: (
           command: ReadDiscreteInputsCommand
         ) => Promise<SerialOperationResult<RtuMasterActionResult>>;
+        readHoldingRegisters: (
+          command: ReadHoldingRegistersCommand
+        ) => Promise<SerialOperationResult<RtuMasterActionResult>>;
+        readInputRegisters: (
+          command: ReadInputRegistersCommand
+        ) => Promise<SerialOperationResult<RtuMasterActionResult>>;
         writeSingleCoil: (
           command: WriteSingleCoilCommand
         ) => Promise<SerialOperationResult<RtuMasterActionResult>>;
         writeMultipleCoils: (
           command: WriteMultipleCoilsCommand
         ) => Promise<SerialOperationResult<RtuMasterActionResult>>;
+        writeSingleRegister: (
+          command: WriteSingleRegisterCommand
+        ) => Promise<SerialOperationResult<RtuMasterActionResult>>;
+        writeMultipleRegisters: (
+          command: WriteMultipleRegistersCommand
+        ) => Promise<SerialOperationResult<RtuMasterActionResult>>;
         runJwplcValidation: (
           command: ValidationSequenceCommand
         ) => Promise<SerialOperationResult<ValidationSequenceResult>>;
+      };
+      reports: {
+        copyMarkdown: (markdown: string) => Promise<SerialOperationResult<CopyMarkdownReportResult>>;
+        saveMarkdown: (
+          request: SaveMarkdownReportRequest
+        ) => Promise<SerialOperationResult<SaveMarkdownReportResult>>;
       };
     };
   }

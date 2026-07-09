@@ -16,16 +16,24 @@ This repository is in the first implementation step. It currently includes:
 - Master request encoders for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
 - Slave simulator response core for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
 - Serial port listing and basic connect/disconnect IPC through Electron main.
-- Minimal serial diagnostics panel for development validation.
+- Persistent serial settings for baudrate, data bits, parity, stop bits,
+  response timeout, and last selected COM port.
+- Base application views: Dashboard, JWPLC Preset, Generic Master, Bus Monitor,
+  and Settings.
 - Minimal Master RTU probe for JWPLC Basic: FC1, FC2, FC5, and FC15 with
   TX/RX monitor output.
 - JWPLC validation sequence with PASS/FAIL summary.
+- Clipboard copy and Markdown save for validation reports.
+- Generic RTU Master for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
+- Locally persisted Generic Master request presets.
+- Clipboard copy and Markdown save for Bus Monitor captures.
 - Minimal tests for CRC, frame construction, exception responses, and slave behavior.
 - Base documentation and third-party policy.
 
-The full dashboard UI, RTU request execution over serial, persistence, log
-export, and Windows packaging validation are intentionally deferred until this
-foundation compiles and tests pass.
+RTU request execution over serial, the JWPLC validation preset, register
+operations, and report export are now wired. Persistence, advanced data
+formats, and Windows packaging validation remain deferred until the RTU
+workflows stay stable on hardware.
 
 ## Install dependencies
 
@@ -78,8 +86,12 @@ bridge.
 Portable build:
 
 ```powershell
-npm run build:portable
+.\build-portable.bat
 ```
+
+The BAT locates the real `npm.cmd`, installs missing dependencies when needed,
+and leaves the resulting executable in `release`. The equivalent command is
+`npm run build:portable`.
 
 Installer build:
 
@@ -87,27 +99,30 @@ Installer build:
 npm run build:installer
 ```
 
-These scripts are present so the repo shape is ready for Windows delivery. They
-should be validated after the serial layer and renderer workflow are connected.
+The x64 portable build is validated with Electron 43 and the native serialport
+binding. Installer signing remains deferred.
 
 ## Current scope
 
 - Modbus RTU only.
 - Clean-room TypeScript implementation.
 - Windows-first desktop architecture.
-- Minimal serial diagnostics renderer while the protocol and serial layers are
-  stabilized.
+- Base desktop renderer while the protocol and serial layers are stabilized.
 - COM port listing through `serialport`.
-- Basic open/close serial session flow at 115200 8N1 from the diagnostics panel.
+- Configurable serial session flow for supported RTU formats.
+- JWPLC Basic validation report copy/save as Markdown.
+- Generic bit and register operations for all eight supported function codes.
+- Save, load, update, and delete Generic Master request presets.
+- Bus Monitor copy/save as Markdown.
 
 ## Current limitations
 
-- No complete UI yet.
-- FC1, FC2, FC5, and FC15 are wired to the serial UI so far.
-- FC3, FC4, FC6, and FC16 are implemented in the engine but not yet exposed in
-  the UI.
-- No local JSON persistence yet.
-- No log export yet.
+- The UI is still an MVP surface, not the final full workspace.
+- Register values are currently displayed as unsigned 16-bit decimal and
+  hexadecimal values only.
+- No file-based JSON preset import/export yet.
+- The remembered serial port is selected on startup but is not opened
+  automatically.
 - No signed installer.
 
 ## Roadmap

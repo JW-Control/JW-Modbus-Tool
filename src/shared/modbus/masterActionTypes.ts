@@ -12,6 +12,20 @@ export interface ReadCoilsCommand {
   timeoutMs?: number;
 }
 
+export interface ReadHoldingRegistersCommand {
+  unitId: number;
+  startAddress: number;
+  quantity: number;
+  timeoutMs?: number;
+}
+
+export interface ReadInputRegistersCommand {
+  unitId: number;
+  startAddress: number;
+  quantity: number;
+  timeoutMs?: number;
+}
+
 export interface WriteSingleCoilCommand {
   unitId: number;
   address: number;
@@ -19,10 +33,24 @@ export interface WriteSingleCoilCommand {
   timeoutMs?: number;
 }
 
+export interface WriteSingleRegisterCommand {
+  unitId: number;
+  address: number;
+  value: number;
+  timeoutMs?: number;
+}
+
 export interface WriteMultipleCoilsCommand {
   unitId: number;
   startAddress: number;
   values: boolean[];
+  timeoutMs?: number;
+}
+
+export interface WriteMultipleRegistersCommand {
+  unitId: number;
+  startAddress: number;
+  values: number[];
   timeoutMs?: number;
 }
 
@@ -36,6 +64,7 @@ export interface RtuMasterActionResult {
   rxHex: string;
   crcOk: boolean;
   values?: boolean[];
+  registerValues?: number[];
   exception?: {
     functionCode: number;
     exceptionCode: number;

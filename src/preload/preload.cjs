@@ -16,8 +16,16 @@ contextBridge.exposeInMainWorld("jwModbus", {
   modbus: {
     readCoils: (command) => ipcRenderer.invoke("modbus:readCoils", command),
     readDiscreteInputs: (command) => ipcRenderer.invoke("modbus:readDiscreteInputs", command),
+    readHoldingRegisters: (command) => ipcRenderer.invoke("modbus:readHoldingRegisters", command),
+    readInputRegisters: (command) => ipcRenderer.invoke("modbus:readInputRegisters", command),
     writeSingleCoil: (command) => ipcRenderer.invoke("modbus:writeSingleCoil", command),
     writeMultipleCoils: (command) => ipcRenderer.invoke("modbus:writeMultipleCoils", command),
+    writeSingleRegister: (command) => ipcRenderer.invoke("modbus:writeSingleRegister", command),
+    writeMultipleRegisters: (command) => ipcRenderer.invoke("modbus:writeMultipleRegisters", command),
     runJwplcValidation: (command) => ipcRenderer.invoke("modbus:runJwplcValidation", command)
+  },
+  reports: {
+    copyMarkdown: (markdown) => ipcRenderer.invoke("report:copyMarkdown", markdown),
+    saveMarkdown: (request) => ipcRenderer.invoke("report:saveMarkdown", request)
   }
 });

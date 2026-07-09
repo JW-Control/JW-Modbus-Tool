@@ -3,20 +3,29 @@ import { decodeExceptionResponse } from "../../shared/modbus/rtuFrame.js";
 import { expectedRtuResponseLength } from "../../shared/modbus/rtuResponseLength.js";
 import {
   decodeBitReadResponse,
+  decodeRegisterReadResponse,
   encodeReadCoilsRequest,
   encodeReadDiscreteInputsRequest,
+  encodeReadHoldingRegistersRequest,
+  encodeReadInputRegistersRequest,
+  encodeWriteMultipleRegistersRequest,
   encodeWriteMultipleCoilsRequest,
+  encodeWriteSingleRegisterRequest,
   encodeWriteSingleCoilRequest
 } from "../../shared/modbus/masterRequests.js";
 import {
   type ReadCoilsCommand,
   type ReadDiscreteInputsCommand,
+  type ReadHoldingRegistersCommand,
+  type ReadInputRegistersCommand,
   type RtuMasterActionResult,
   type ValidationSequenceCommand,
   type ValidationSequenceResult,
   type ValidationStepResult,
   type WriteMultipleCoilsCommand,
-  type WriteSingleCoilCommand
+  type WriteMultipleRegistersCommand,
+  type WriteSingleCoilCommand,
+  type WriteSingleRegisterCommand
 } from "../../shared/modbus/masterActionTypes.js";
 import { parseRtuFrame } from "../../shared/modbus/rtuFrame.js";
 import { serialManager } from "../serial/serialManager.js";
@@ -77,6 +86,68 @@ export async function readDiscreteInputs(
     `FC2 Read Discrete Inputs ${command.startAddress}:${command.quantity}`,
     undefined,
     parsed.functionCode,
+    decoded.values
+  );
+}
+
+export async function readHoldingRegisters(
+  command: ReadHoldingRegistersCommand
+): Promise<RtuMasterActionResult> {
+  const request = encodeReadHoldingRegistersRequest(command);
+  const transaction = await serialManager.transact(request, {
+    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
+    expectedResponseLength: expectedRtuResponseLength
+  });
+  const parsed = parseRtuFrame(transaction.response);
+  const exception = decodeExceptionResponse(transaction.response);
+
+  if (exception) {
+    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
+      functionCode: exception.functionCode,
+      exceptionCode: exception.exceptionCode,
+      exceptionName: exception.exceptionName
+    });
+  }
+
+  const decoded = decodeRegisterReadResponse(transaction.response);
+  return buildBaseResult(
+    command.unitId,
+    transaction,
+    `FC3 Read Holding Registers ${command.startAddress}:${command.quantity}`,
+    undefined,
+    parsed.functionCode,
+    undefined,
+    decoded.values
+  );
+}
+
+export async function readInputRegisters(
+  command: ReadInputRegistersCommand
+): Promise<RtuMasterActionResult> {
+  const request = encodeReadInputRegistersRequest(command);
+  const transaction = await serialManager.transact(request, {
+    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
+    expectedResponseLength: expectedRtuResponseLength
+  });
+  const parsed = parseRtuFrame(transaction.response);
+  const exception = decodeExceptionResponse(transaction.response);
+
+  if (exception) {
+    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
+      functionCode: exception.functionCode,
+      exceptionCode: exception.exceptionCode,
+      exceptionName: exception.exceptionName
+    });
+  }
+
+  const decoded = decodeRegisterReadResponse(transaction.response);
+  return buildBaseResult(
+    command.unitId,
+    transaction,
+    `FC4 Read Input Registers ${command.startAddress}:${command.quantity}`,
+    undefined,
+    parsed.functionCode,
+    undefined,
     decoded.values
   );
 }
@@ -189,6 +260,34 @@ export async function writeSingleCoil(
   );
 }
 
+export async function writeSingleRegister(
+  command: WriteSingleRegisterCommand
+): Promise<RtuMasterActionResult> {
+  const request = encodeWriteSingleRegisterRequest(command);
+  const transaction = await serialManager.transact(request, {
+    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
+    expectedResponseLength: expectedRtuResponseLength
+  });
+  const parsed = parseRtuFrame(transaction.response);
+  const exception = decodeExceptionResponse(transaction.response);
+
+  if (exception) {
+    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
+      functionCode: exception.functionCode,
+      exceptionCode: exception.exceptionCode,
+      exceptionName: exception.exceptionName
+    });
+  }
+
+  return buildBaseResult(
+    command.unitId,
+    transaction,
+    `FC6 Write Register ${command.address} = ${formatRegisterValue(command.value)}`,
+    undefined,
+    parsed.functionCode
+  );
+}
+
 export async function writeMultipleCoils(
   command: WriteMultipleCoilsCommand
 ): Promise<RtuMasterActionResult> {
@@ -217,6 +316,34 @@ export async function writeMultipleCoils(
   );
 }
 
+export async function writeMultipleRegisters(
+  command: WriteMultipleRegistersCommand
+): Promise<RtuMasterActionResult> {
+  const request = encodeWriteMultipleRegistersRequest(command);
+  const transaction = await serialManager.transact(request, {
+    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
+    expectedResponseLength: expectedRtuResponseLength
+  });
+  const parsed = parseRtuFrame(transaction.response);
+  const exception = decodeExceptionResponse(transaction.response);
+
+  if (exception) {
+    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
+      functionCode: exception.functionCode,
+      exceptionCode: exception.exceptionCode,
+      exceptionName: exception.exceptionName
+    });
+  }
+
+  return buildBaseResult(
+    command.unitId,
+    transaction,
+    `FC16 Write Registers ${command.startAddress}:${command.values.length}`,
+    undefined,
+    parsed.functionCode
+  );
+}
+
 interface SerialTransactionShape {
   request: Uint8Array;
   response: Uint8Array;
@@ -229,7 +356,8 @@ function buildBaseResult(
   summary: string,
   exception?: RtuMasterActionResult["exception"],
   functionCode = 0,
-  values?: boolean[]
+  values?: boolean[],
+  registerValues?: number[]
 ): RtuMasterActionResult {
   const parsed = parseRtuFrame(transaction.response);
 
@@ -237,12 +365,13 @@ function buildBaseResult(
     timestamp: new Date().toISOString(),
     elapsedMs: transaction.elapsedMs,
     unitId,
-    functionCode: functionCode || parsed.functionCode,
+    functionCode: functionCode || exception?.functionCode || parsed.functionCode,
     summary,
     txHex: formatHex(transaction.request),
     rxHex: formatHex(transaction.response),
     crcOk: parsed.crcOk,
     values,
+    registerValues,
     exception
   };
 }
@@ -267,6 +396,10 @@ function bitPattern(pattern: number, quantity: number): boolean[] {
 
 function sameBits(left: boolean[] | undefined, right: boolean[]): boolean {
   return Boolean(left && left.length >= right.length && right.every((value, index) => left[index] === value));
+}
+
+function formatRegisterValue(value: number): string {
+  return `0x${value.toString(16).toUpperCase().padStart(4, "0")}`;
 }
 
 function buildValidationMarkdown(unitId: number, summary: string, steps: ValidationStepResult[]): string {

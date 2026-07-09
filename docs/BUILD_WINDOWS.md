@@ -1,7 +1,7 @@
 # Build Windows
 
-JW Modbus Tool is Windows-first. Portable and installer scripts are scaffolded,
-but packaging must be revalidated after serial integration is added.
+JW Modbus Tool is Windows-first. The x64 portable build is validated with the
+native `serialport` binding rebuilt for Electron 43.
 
 ## Requirements
 
@@ -49,12 +49,42 @@ in the Electron window, not in browser preview.
 ## Build portable executable
 
 ```powershell
+.\build-portable.bat
+```
+
+This is the recommended double-click workflow. It locates `npm.cmd`, installs
+missing dependencies when required, runs the production build, and pauses with
+the final result. Close the development Electron window first if Windows
+reports locked files.
+
+Equivalent npm command:
+
+```powershell
 npm run build:portable
 ```
 
 Expected product name:
 
-`JW Modbus Tool.exe`
+`release\JW Modbus Tool-0.1.0-x64.exe`
+
+The portable build uses the Electron distribution already installed in
+`node_modules`. This avoids a Windows directory-lock issue observed while
+Electron Builder renamed a freshly downloaded extraction.
+
+Vite uses a relative asset base so the packaged renderer resolves JavaScript
+and CSS correctly through Electron's `file://` loader.
+
+The executable is currently unsigned. Windows SmartScreen may show an
+unrecognized publisher warning during local testing.
+
+## Portable smoke test
+
+1. Close the development Electron window so it releases the COM port.
+2. Run `release\JW Modbus Tool-0.1.0-x64.exe`.
+3. Confirm that the COM list loads.
+4. Connect to the JWPLC at 115200 8N1.
+5. Run FC1 or the JWPLC validation sequence.
+6. Confirm TX/RX data and `CRC OK` in Bus Monitor.
 
 ## Build installer
 
@@ -62,4 +92,4 @@ Expected product name:
 npm run build:installer
 ```
 
-Installer signing and public release packaging are outside this first step.
+Installer signing and public release packaging remain deferred.

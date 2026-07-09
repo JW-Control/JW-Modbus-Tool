@@ -22,7 +22,7 @@ The first bundled preset is:
 - FC5, address 0 through 7: individual output control
 - FC15, start 0, quantity 8: block output control
 
-## Planned validation sequence
+## Validation sequence
 
 1. Read inputs with FC2 start 0 quantity 8.
 2. Write `Q0_0` ON with FC5.
@@ -34,6 +34,5 @@ The first bundled preset is:
 8. Read output feedback with FC1 and verify all outputs OFF.
 9. Generate PASS/FAIL summary.
 
-The first development UI includes this sequence and a generated Markdown report
-string in the main-process result. Export/copy controls are deferred until the
-Bus Monitor and report surfaces are separated.
+The development UI includes this sequence, PASS/FAIL step cards, TX/RX monitor
+entries, clipboard copy, and Markdown save for the generated validation report.

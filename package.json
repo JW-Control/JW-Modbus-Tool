@@ -15,10 +15,11 @@
     "test": "vitest run",
     "build:main": "tsc -p tsconfig.electron.json && node scripts/copy-preload.mjs",
     "build": "npm run typecheck && npm run build:main && vite build",
-    "build:portable": "npm run build && electron-builder --win portable",
+    "build:portable": "npm run build && node scripts/package-portable.mjs",
     "build:installer": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
+    "lucide-react": "^1.23.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "serialport": "^13.0.0"
@@ -41,6 +42,7 @@
     "directories": {
       "output": "release"
     },
+    "electronDist": "node_modules/electron/dist",
     "files": [
       "dist-electron/**/*",
       "dist/renderer/**/*",

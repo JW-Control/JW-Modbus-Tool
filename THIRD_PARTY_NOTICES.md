@@ -10,6 +10,7 @@ before they are added, and this file must be updated with the license and reason
 | Electron | MIT | Desktop runtime for Windows-first app shell. |
 | React | MIT | Renderer UI framework. |
 | React DOM | MIT | React DOM renderer. |
+| lucide-react | ISC | Interface icons for navigation, status, and actions. |
 | serialport | MIT | COM port discovery and serial access from Electron main. |
 | @serialport/* package family | MIT | Native bindings, mock binding, and parsers used by `serialport`. |
 | Vite | MIT | Renderer dev server and bundler. |
