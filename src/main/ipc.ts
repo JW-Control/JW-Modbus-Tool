@@ -107,7 +107,7 @@ export function registerIpcHandlers(): void {
       if (!filePath) {
         const options = {
           title: "Abrir sesión JW Modbus",
-          properties: ["openFile"] as const,
+          properties: ["openFile"],
           filters: [{ name: "JW Modbus Session", extensions: ["jwmodbus-session"] }]
         };
         const parentWindow = BrowserWindow.fromWebContents(event.sender);
