@@ -29,6 +29,7 @@ La herramienta debe permitir:
 - Verde para OK/conectado.
 - Amarillo/naranja para advertencias o timeouts.
 - Rojo para errores, CRC, desconexión o falla crítica.
+- Morado para funciones secundarias de simulación slave.
 - Tarjetas con bordes sutiles.
 - Tablas legibles.
 - Gráficas pequeñas y útiles.
@@ -154,7 +155,7 @@ Diferencia funcional:
 - `Escanear`: búsqueda principal de slaves disponibles.
 - `Recargar`: refresco rápido del último escaneo.
 
-Ejemplo de slave activo:
+Ejemplo:
 
 ```text
 Slave activo: PLC_Principal — ID 1
@@ -162,42 +163,25 @@ Slave activo: PLC_Principal — ID 1
 
 #### Resumen
 
-Debe volver al enfoque de la propuesta original porque representa mejor un resumen general de comunicación.
+Debe representar el estado general de la comunicación.
 
-Debe incluir indicadores grandes:
+Indicadores grandes:
 
-- `Solicitudes`
-- `Respuestas`
-- `Errores`
-- `Timeouts`
+- `Solicitudes`.
+- `Respuestas`.
+- `Errores`.
+- `Timeouts`.
 
-Y debajo un resumen operativo:
+Resumen operativo:
 
-- `Dispositivos encontrados`
-- `Rango de escaneo`
-- `Último escaneo`
-- `Rol: PC Master`
-
-Ejemplo visual deseado:
-
-```text
-Resumen
-Estado general de la comunicación.
-
-Solicitudes: 128
-Respuestas: 126
-Errores: 2
-Timeouts: 0
-
-Dispositivos encontrados: 3
-Rango de escaneo: 1–10
-Último escaneo: OK · 09/07/2026 01:02:15
-Rol: PC Master
-```
+- `Dispositivos encontrados`.
+- `Rango de escaneo`.
+- `Último escaneo`.
+- `Rol: PC Master`.
 
 #### 3. Lectura rápida de registros
 
-Debe volver al formato de la propuesta anterior, mostrando **lo leído**, no solo los parámetros de lectura.
+Debe mostrar **lo leído**, no solo los parámetros de lectura.
 
 Debe incluir:
 
@@ -206,13 +190,9 @@ Debe incluir:
 - `Dirección inicial`.
 - `Cantidad`.
 - Botón `Leer`.
-- Tabla de resultados con columnas:
-  - Dirección.
-  - Nombre.
-  - Valor.
-  - Estado.
+- Tabla con `Dirección`, `Nombre`, `Valor`, `Estado`.
 
-Ejemplo:
+Ejemplo de registros:
 
 | Dirección | Nombre | Valor | Estado |
 |---:|---|---:|---|
@@ -222,8 +202,6 @@ Ejemplo:
 | 40003 | Tensión_DC (V) | 540 | OK |
 | 40004 | Temp_Disipador (°C) | 42.3 | OK |
 | 40005 | Horas_Marcha (h) | 1523 | OK |
-
-No basta con indicar “leído correctamente”; debe mostrarse qué registros fueron leídos.
 
 #### Actividad reciente
 
@@ -238,11 +216,7 @@ Debe ser compacta. Basta con indicar:
 
 No es necesario separar inicio y fin para esta vista.
 
-Ejemplo:
-
-| Fecha/hora | Duración | Slave ID | Función | Dirección / cantidad | Resultado |
-|---|---:|---:|---|---|---|
-| 09/07/2026 01:02:15 | 284 ms | 1 | FC03 | 40000 / 6 regs | OK |
+---
 
 ### 6.2 Sesiones
 
@@ -269,10 +243,7 @@ La versión aprobada es el layout tipo dashboard amigable con:
 
 1. **Barra superior** estándar de JW Modbus Tool.
 2. **Menú lateral** con `Sesiones` activo.
-3. Acciones superiores visibles:
-   - `Nueva sesión`.
-   - `Abrir sesión`.
-   - `Guardar sesión`.
+3. Acciones superiores visibles: `Nueva sesión`, `Abrir sesión`, `Guardar sesión`.
 4. Tarjeta principal **Sesión actual**:
    - Nombre: `Comisionamiento_Lavadora_S200`.
    - Estado: `Activa`.
@@ -306,9 +277,7 @@ La versión aprobada es el layout tipo dashboard amigable con:
    - Slave activo seleccionado.
    - Escaneo iniciado.
    - Registros leídos correctamente.
-9. Bloques laterales opcionales:
-   - `¿Nuevo aquí?`.
-   - Licencia / versión.
+9. Bloques laterales opcionales: `¿Nuevo aquí?`, licencia y versión.
 
 Esta versión combina la primera propuesta que gustó por su claridad con la segunda propuesta que aportaba métricas útiles como registros leídos, pruebas, tráfico capturado y notas.
 
@@ -317,6 +286,8 @@ Por nivel:
 - **Sencillo:** historial amigable, acciones `Nueva`, `Abrir`, `Guardar`, `Continuar`, sesiones recientes y resumen con tarjetas.
 - **Intermedio:** filtros por cliente/proyecto/máquina, topología guardada, últimos errores, timeline.
 - **Avanzado:** versionado, snapshots, comparación A/B, replay, exportación de evidencia.
+
+---
 
 ### 6.3 Pruebas
 
@@ -338,7 +309,7 @@ La tabla de pasos debe permitir definir:
 - Dispositivo.
 - Función.
 - Dirección.
-- Cantidad.
+- Cantidad / valor.
 - Valor a escribir.
 - Tipo de dato.
 - Esperado.
@@ -346,21 +317,73 @@ La tabla de pasos debe permitir definir:
 - Reintentos.
 - Resultado.
 
-Ejemplo:
+#### Diseño final aprobado — Sencillo / Pruebas
 
-| Paso | Slave | Función | Dirección | Acción |
-|---|---:|---|---:|---|
-| 1 | 1 | FC03 | 40000 | Leer 10 registros |
-| 2 | 1 | FC06 | 40020 | Escribir valor 1 |
-| 3 | 10 | FC04 | 30000 | Leer 4 registros |
-| 4 | 2 | FC01 | 00000 | Leer 8 coils |
+La versión aprobada es el layout tipo dashboard de pruebas con:
 
-Flujo secundario:
+1. **Barra superior** estándar de JW Modbus Tool.
+2. **Menú lateral** con `Pruebas` activo.
+3. Panel principal **Plan de pruebas al slave**:
+   - Subtítulo: `PC como Master`.
+   - Botones: `Iniciar prueba`, `Detener`, `Agregar paso`, `Guardar plan`.
+   - Menú de opciones con tres puntos.
+4. Tabla editable de pasos:
+   - Columnas: `Activo`, `Paso`, `Slave`, `Dispositivo`, `Función`, `Dirección`, `Cantidad/Valor`, `Esperado`, `Timeout`, `Resultado`.
+   - `Slave` debe verse como selector desplegable.
+   - `Función` debe verse como selector desplegable.
+   - `Dirección`, `Cantidad/Valor`, `Esperado` y `Timeout` son campos editables/manuales.
+   - Se debe poder agregar y eliminar pasos.
+   - La columna `Resultado` debe actualizarse durante o después de la ejecución.
+5. La columna **Resultado** del plan muestra el estado resumido del último intento de cada paso:
+   - `Pendiente` o `—` antes de ejecutar.
+   - `En ejecución` durante la ejecución.
+   - `Aprobado` / `OK` cuando el paso cumple el criterio esperado.
+   - `Error`, `Timeout`, `Excepción` o `CRC error` cuando falla.
+6. El **Registro de ejecución** inferior guarda el detalle histórico:
+   - Hora.
+   - Paso.
+   - Slave.
+   - Función.
+   - Dirección.
+   - Cantidad/Valor.
+   - Resultado.
+   - Tiempo.
+   - Detalle.
+7. Panel lateral **Escenarios**:
+   - `Operación normal`.
+   - `Timeout detectado`.
+   - `Error CRC detectado`.
+   - `Excepción Modbus`.
+   - Acción `Gestionar escenarios` para añadir o administrar escenarios.
+8. Panel lateral **Simulador slave (PC como slave)**:
+   - Es secundario, no el foco principal.
+   - Incluye `Estado`, `Dirección slave`, `Puerto`, `Baud Rate`.
+   - Botón `Iniciar simulador slave`.
+   - Engranaje para ajustes futuros de la lógica real del simulador.
+9. KPIs inferiores atractivos:
+   - `Tasa de éxito` con indicador circular.
+   - `Latencia promedio`.
+   - `Errores`.
+   - `Pasos completados` con indicador circular.
+10. Panel **Registro de ejecución** debajo de los KPIs:
+    - Debe mostrar resultados detallados por paso.
+    - Debe incluir acciones `Limpiar registro` y `Exportar`.
 
-- `Simulador slave`
-- `PC como slave`
+Relación entre tablas:
 
-Debe existir para probar masters externos, pero no debe ser el foco principal.
+- La tabla superior **Plan de pruebas** muestra la definición editable y el estado resumido actual por paso.
+- La tabla inferior **Registro de ejecución** muestra el historial detallado de cada ejecución.
+
+#### Ejemplo de pasos
+
+| Paso | Slave | Dispositivo | Función | Dirección | Cantidad/Valor | Esperado | Timeout | Resultado |
+|---:|---:|---|---|---:|---:|---|---:|---|
+| 1 | 1 | PLC_Principal | FC03 Read Holding Registers | 400000 | 10 | 10 regs | 1000 ms | — |
+| 2 | 1 | PLC_Principal | FC06 Write Single Register | 400010 | 1234 | OK | 1000 ms | — |
+| 3 | 2 | HMI_Panel | FC04 Read Input Registers | 100000 | 8 | 8 regs | 1000 ms | — |
+| 4 | 10 | Variador_01 | FC03 Read Holding Registers | 300000 | 5 | 5 regs | 1000 ms | — |
+
+---
 
 ### 6.4 Registros
 
@@ -384,10 +407,12 @@ La vista debe mostrar pestañas:
 
 Debe existir parámetro explícito de frecuencia:
 
-- `Leer`
-- `Autolectura`
-- `Intervalo`
-- `Detener`
+- `Leer`.
+- `Autolectura`.
+- `Intervalo`.
+- `Detener`.
+
+---
 
 ### 6.5 Tráfico Modbus
 
@@ -489,9 +514,15 @@ A partir de la revisión del modo sencillo, la generación debe hacerse **una vi
 
 ### Pruebas
 
-- Rediseñar hacia `Plan de pruebas al slave`.
+- Mantener como final la propuesta de `Plan de pruebas al slave` con la tabla editable y KPIs atractivos.
 - Poner a la PC como Master en el flujo principal.
-- Dejar `Simulador slave` como opción secundaria.
+- La tabla superior define los pasos y muestra el estado resumido en la columna `Resultado`.
+- La columna `Resultado` debe actualizarse durante o al finalizar la ejecución de cada paso.
+- El `Registro de ejecución` inferior muestra el detalle histórico de cada paso ejecutado.
+- `Slave` y `Función` deben ser desplegables.
+- `Dirección`, `Cantidad/Valor`, `Esperado` y `Timeout` se escriben manualmente.
+- Incluir `Escenarios` con `Gestionar escenarios` para añadir o administrar más escenarios.
+- Dejar `Simulador slave` como opción secundaria con engranaje para ajustes futuros.
 
 ### Registros
 
@@ -523,54 +554,13 @@ Mantener el diseño aprobado de:
 - `1. Conectar`.
 - `2. Dispositivos detectados`.
 
-En `2. Dispositivos detectados`, mostrar:
+En `2. Dispositivos detectados`, mostrar `PLC_Principal — ID 1` como seleccionado y marcado como `SLAVE ACTIVO`, además de `HMI_Panel — ID 2` y `Variador_01 — ID 10`.
 
-- `PLC_Principal — ID 1` como seleccionado y marcado como `SLAVE ACTIVO`.
-- `HMI_Panel — ID 2`.
-- `Variador_01 — ID 10`.
+El panel `Resumen` debe parecer un verdadero resumen general de comunicación. Debe incluir `Solicitudes: 128`, `Respuestas: 126`, `Errores: 2`, `Timeouts: 0`, `Dispositivos encontrados: 3`, `Rango de escaneo: 1–10`, `Último escaneo: OK · 09/07/2026 01:02:15` y `Rol: PC Master`.
 
-El panel `Resumen` debe parecer un verdadero resumen general de comunicación. Debe incluir cuatro indicadores grandes:
+El panel `3. Lectura rápida de registros` debe usar el formato original, con tabla de registros leídos. Debe mostrar `Slave activo: PLC_Principal — ID 1`, función aplicada en un **selector desplegable** (`FC03 Read Holding Registers`), `Dirección inicial: 40000`, `Cantidad: 6`, botón `Leer` y tabla con `Dirección`, `Nombre`, `Valor`, `Estado`.
 
-- `Solicitudes: 128`.
-- `Respuestas: 126`.
-- `Errores: 2`.
-- `Timeouts: 0`.
-
-Debajo del resumen, incluir:
-
-- `Dispositivos encontrados: 3`.
-- `Rango de escaneo: 1–10`.
-- `Último escaneo: OK · 09/07/2026 01:02:15`.
-- `Rol: PC Master`.
-
-El panel `3. Lectura rápida de registros` debe usar el formato original, con tabla de registros leídos. Debe mostrar:
-
-- `Slave activo: PLC_Principal — ID 1`.
-- La función aplicada en un **selector desplegable**, por ejemplo `FC03 Read Holding Registers`.
-- `Dirección inicial: 40000`.
-- `Cantidad: 6`.
-- Botón `Leer`.
-- Tabla con columnas `Dirección`, `Nombre`, `Valor`, `Estado`.
-
-La tabla debe incluir registros leídos, por ejemplo:
-
-- `40000`, `Velocidad_Ref (RPM)`, `1250`, `OK`.
-- `40001`, `Estado_Variador`, `0x006F`, `OK`.
-- `40002`, `Corriente_Salida (A)`, `12.1`, `OK`.
-- `40003`, `Tensión_DC (V)`, `540`, `OK`.
-- `40004`, `Temp_Disipador (°C)`, `42.3`, `OK`.
-- `40005`, `Horas_Marcha (h)`, `1523`, `OK`.
-
-`Actividad reciente` debe ser compacta y mostrar solo:
-
-- Fecha/hora.
-- Duración.
-- Slave ID.
-- Función.
-- Dirección / cantidad.
-- Resultado.
-
-No usar columnas separadas de inicio y fin en esta vista. No reemplazar la tabla de registros leídos por un simple mensaje de “leído correctamente”.
+`Actividad reciente` debe ser compacta y mostrar solo fecha/hora, duración, Slave ID, función, dirección/cantidad y resultado.
 
 ### Sencillo / Sesiones — prompt vigente
 
@@ -579,32 +569,36 @@ Generar pantalla `Sencillo / Sesiones` de `JW Modbus Tool`, con el mismo tema os
 La vista final debe replicar la versión dashboard aprobada:
 
 - En la parte superior del contenido, mostrar acciones grandes: `Nueva sesión`, `Abrir sesión`, `Guardar sesión`.
-- Tarjeta principal izquierda `Sesión actual`:
-  - Nombre: `Comisionamiento_Lavadora_S200`.
-  - Estado: `Activa`.
-  - `Rol: PC Master`.
-  - `Protocolo: RTU`.
-  - `Slave activo: PLC_Principal — ID 1`.
-  - `Conexión: COM3 · 115200 · 8N1`.
-  - `Última actividad: Hace 4 min`.
-  - Botón principal ancho `Continuar sesión`.
+- Tarjeta principal izquierda `Sesión actual` con `Comisionamiento_Lavadora_S200`, estado `Activa`, `Rol: PC Master`, `Protocolo: RTU`, `Slave activo: PLC_Principal — ID 1`, conexión `COM3 · 115200 · 8N1`, última actividad `Hace 4 min` y botón ancho `Continuar sesión`.
 - Tarjeta superior derecha `¿Qué guarda una sesión?` con bullets sobre conexiones, registros leídos, pruebas, tráfico capturado y notas.
-- Panel derecho/medio `Resumen de la sesión actual` con tarjetas con ícono:
-  - `Dispositivos 3 Detectados`.
-  - `Registros leídos 120 En total`.
-  - `Pruebas 4/4 Aprobadas`.
-  - `Tráfico capturado 3.2 MB En total`.
-  - `Notas 2 Guardadas`.
-  - `Errores 0 Detectados`.
-- Panel central/inferior `Sesiones recientes` con filas para `Lavadora_S200_Prueba_RTU`, `Variador_01_Lectura_RPM`, `HMI_Panel_Pruebas`, `Banco_Modbus_Taller`. Cada fila debe mostrar dispositivos, pruebas, errores y acciones `Continuar`, `Ver resumen`, `Exportar`.
+- Panel derecho/medio `Resumen de la sesión actual` con tarjetas con ícono para dispositivos, registros leídos, pruebas, tráfico capturado, notas y errores.
+- Panel central/inferior `Sesiones recientes` con filas para `Lavadora_S200_Prueba_RTU`, `Variador_01_Lectura_RPM`, `HMI_Panel_Pruebas`, `Banco_Modbus_Taller`; cada fila debe mostrar dispositivos, pruebas, errores y acciones `Continuar`, `Ver resumen`, `Exportar`.
 - Panel inferior derecho `Actividad reciente` con eventos de conexión, selección de slave activo, escaneo y lectura correcta de registros.
 - Bloques laterales opcionales: `¿Nuevo aquí?`, `Licencia: Profesional`, `Versión 1.3.0 (64-bit)`.
 
 Mantener la pantalla limpia, amigable y claramente de modo sencillo. No hacerla tan densa como una herramienta de laboratorio.
 
-### Sencillo / Pruebas
+### Sencillo / Pruebas — prompt vigente
 
-Pantalla `Sencillo / Pruebas` rediseñada. Foco principal: `Plan de pruebas al slave` con `PC como Master`. Mostrar una tabla de secuencia de tramas con columnas: habilitado, paso, slave, dispositivo, función, dirección, cantidad/valor, esperado, timeout, resultado. Incluir `PLC_Principal ID 1`, `HMI_Panel ID 2` y `Variador_01 ID 10`. Botones: `Iniciar prueba`, `Detener`, `Agregar paso`, `Guardar plan`. Añadir tarjeta secundaria `Simulador slave`.
+Generar pantalla `Sencillo / Pruebas` de `JW Modbus Tool`, con el mismo tema oscuro azul petróleo, acentos cian y estilo de tarjetas de las vistas aprobadas. El menú lateral debe tener `Pruebas` activo. La barra inferior debe mantener `Conectado · COM3 · 115200 · 8N1 · Slave activo ID 1 · Sesión activa`.
+
+La vista final debe replicar la propuesta aprobada:
+
+- Panel principal `Plan de pruebas al slave` con subtítulo `PC como Master`.
+- Botones visibles: `Iniciar prueba`, `Detener`, `Agregar paso`, `Guardar plan` y menú de tres puntos.
+- Tabla editable de pasos con columnas `Activo`, `Paso`, `Slave`, `Dispositivo`, `Función`, `Dirección`, `Cantidad/Valor`, `Esperado`, `Timeout`, `Resultado`.
+- `Slave` y `Función` deben verse como desplegables.
+- `Dirección`, `Cantidad/Valor`, `Esperado` y `Timeout` deben parecer campos editables/manuales.
+- Debe entenderse que se pueden agregar y eliminar pasos.
+- La columna `Resultado` de la tabla superior debe actualizarse durante o al finalizar la ejecución de cada paso: `Pendiente`, `En ejecución`, `Aprobado`, `Error`, `Timeout`, `Excepción` o `CRC error`.
+- Panel lateral `Escenarios` con `Operación normal`, `Timeout detectado`, `Error CRC detectado`, `Excepción Modbus` y acción `Gestionar escenarios` para añadir o administrar escenarios.
+- Panel lateral secundario `Simulador slave (PC como slave)` con `Estado`, `Dirección slave`, `Puerto`, `Baud Rate`, botón `Iniciar simulador slave` y engranaje para ajustes futuros.
+- Fila de KPIs atractivos: `Tasa de éxito`, `Latencia promedio`, `Errores`, `Pasos completados`, con indicadores circulares cuando aplique.
+- Panel inferior `Registro de ejecución` con columnas `Hora`, `Paso`, `Slave`, `Función`, `Dirección`, `Cantidad/Valor`, `Resultado`, `Tiempo`, `Detalle`.
+- El `Registro de ejecución` debe mostrar el detalle histórico de cada ejecución, mientras la tabla superior solo muestra el estado resumido actual por paso.
+- Incluir acciones `Limpiar registro` y `Exportar`.
+
+Mantener la pantalla clara y amigable para modo sencillo, aunque con suficiente potencia técnica para validar slaves reales.
 
 ### Sencillo / Registros
 
