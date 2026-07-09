@@ -1,4 +1,5 @@
 import { BrowserWindow, clipboard, dialog, ipcMain } from "electron";
+import type { OpenDialogOptions } from "electron";
 import { readFile, writeFile } from "node:fs/promises";
 import {
   readCoils,
@@ -105,7 +106,7 @@ export function registerIpcHandlers(): void {
       let filePath = typeof request?.filePath === "string" && request.filePath.trim() ? request.filePath : undefined;
 
       if (!filePath) {
-        const options = {
+        const options: OpenDialogOptions = {
           title: "Abrir sesión JW Modbus",
           properties: ["openFile"],
           filters: [{ name: "JW Modbus Session", extensions: ["jwmodbus-session"] }]
