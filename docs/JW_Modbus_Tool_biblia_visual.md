@@ -29,10 +29,11 @@ La herramienta debe permitir:
 - Verde para OK/conectado.
 - Amarillo/naranja para advertencias o timeouts.
 - Rojo para errores, CRC, desconexión o falla crítica.
-- Morado para funciones secundarias de simulación slave.
+- Morado para funciones secundarias de simulación slave o excepciones.
 - Tarjetas con bordes sutiles.
 - Tablas legibles.
 - Gráficas pequeñas y útiles.
+- Iconos de estado circulares en paneles de resumen y explicación.
 - Densidad progresiva por nivel: **Sencillo → Intermedio → Avanzado**.
 - Resolución base de mockups: **1448 × 1086 px** (4:3).
 
@@ -412,27 +413,71 @@ Acceso por defecto según área:
 
 ### 6.5 Tráfico Modbus
 
-**Objetivo:** explicar el intercambio real de mensajes.
+**Objetivo:** explicar el intercambio real de mensajes Modbus de forma clara.
 
-La tabla debe mostrar:
+#### Diseño final aprobado — Sencillo / Tráfico Modbus
 
-- Hora.
-- Origen.
-- Destino.
-- ID esclavo.
-- Tipo.
-- Función.
-- Resultado.
-- Resumen.
+La versión aprobada es la tercera propuesta, manteniendo la distribución de la segunda propuesta y aplicando estos ajustes visuales:
 
-Ejemplo RTU:
+1. **Barra superior** estándar de JW Modbus Tool.
+2. **Menú lateral** con `Tráfico Modbus` activo.
+3. Encabezado:
+   - Título: `Tráfico Modbus`.
+   - Subtítulo: `Visualice el historial de mensajes Modbus en tiempo real.`
+4. Filtros superiores:
+   - `Protocolo`.
+   - `Dispositivo`.
+   - `Slave ID`.
+   - `Resultado`.
+   - Botón `Limpiar filtros`.
+5. Tabla principal de tráfico:
+   - Primera columna angosta con flechas direccionales.
+   - `Hora`.
+   - `Origen → Destino` como **una sola columna combinada**.
+   - `ID esclavo`.
+   - `Tipo`.
+   - `Función`.
+   - `Resultado`.
+   - `Resumen`.
+6. Las flechas de la primera columna deben ser delgadas y claras:
+   - Flecha azul/cian hacia arriba para **petición / salida desde PC Master**.
+   - Flecha verde hacia abajo para **respuesta / entrada hacia PC Master**.
+   - Se pueden usar colores de advertencia para filas con error si aporta claridad, pero no deben reemplazar el resultado principal.
+7. La columna combinada `Origen → Destino` debe mostrar rutas como:
+   - `PC Master → PLC_Principal`.
+   - `PLC_Principal → PC Master`.
+   - `PC Master → HMI_Panel`.
+   - `PC Master → Variador_01`.
+8. Evitar mostrar títulos separados `Origen` y `Destino` si la fila usa una ruta combinada, para no dar la impresión de columnas vacías o duplicadas.
+9. La tabla debe incluir estados:
+   - `OK`.
+   - `Timeout`.
+   - `CRC Error`.
+   - `Excepción`.
+10. Debe incluir paginación: `Mostrando 1 a 10 de 25 tramas` y páginas `1`, `2`, `3`.
+11. Panel inferior **Detalles del mensaje seleccionado**:
+   - Dirección / ID.
+   - Función.
+   - Tipo.
+   - Fecha / hora.
+   - Origen.
+   - Destino.
+   - Resumen.
+   - Parámetros de petición.
+   - Respuesta.
+   - Tiempo de respuesta.
+12. Panel inferior **¿Qué pasó?**:
+   - Debe usar icono circular grande de estado, por ejemplo check verde.
+   - Debe conservar explicación simple y humana.
+   - Debe incluir una caja de consejo con icono de estrella.
+13. Panel inferior **Actividad de la sesión**:
+   - Debe usar iconos circulares de estado.
+   - Debe mostrar `Mensajes OK`, `Timeouts`, `Errores CRC`, `Excepciones`.
+   - Debe mostrar cantidades y porcentajes.
+   - Puede incluir barras de progreso.
+   - Debe incluir resumen temporal: sesión activa desde, tiempo total, trama más rápida/lenta o equivalente.
 
-```text
-PC Master → PLC_Principal
-PLC_Principal → PC Master
-```
-
-Modo sencillo debe mantener explicación simple con panel `¿Qué pasó?`, sin convertirse en analizador byte a byte.
+La vista debe mantenerse clara y sencilla. No debe convertirse en analizador hexadecimal avanzado.
 
 ---
 
@@ -482,6 +527,16 @@ Cada modo debe tener 5 imágenes:
 5. Tráfico Modbus
 
 A partir de la revisión del modo sencillo, la generación debe hacerse **una vista a la vez** para afinar con menor demora y menor retrabajo.
+
+### Estado de validación
+
+La primera versión **Sencilla** queda validada visual y funcionalmente con estas vistas aprobadas:
+
+- `Sencillo / Dispositivos`.
+- `Sencillo / Sesiones`.
+- `Sencillo / Pruebas`.
+- `Sencillo / Registros`.
+- `Sencillo / Tráfico Modbus`.
 
 ---
 
@@ -534,9 +589,15 @@ A partir de la revisión del modo sencillo, la generación debe hacerse **una vi
 
 ### Tráfico Modbus
 
-- Mantener estilo aprobado.
-- Añadir `Origen`, `Destino` e `ID esclavo`.
-- Mantener explicación simple en `¿Qué pasó?`.
+- Mantener como final la tercera propuesta visual generada para `Sencillo / Tráfico Modbus`.
+- Mantener filtros: protocolo, dispositivo, Slave ID, resultado y `Limpiar filtros`.
+- Usar columna inicial de flechas delgadas para dirección del mensaje.
+- Usar una sola columna combinada `Origen → Destino`, no columnas separadas, para que coincida con las rutas mostradas en cada fila.
+- Mantener `ID esclavo`, `Tipo`, `Función`, `Resultado` y `Resumen`.
+- Mantener el panel `Detalles del mensaje seleccionado`.
+- Mantener el panel `¿Qué pasó?` con explicación simple e iconos circulares.
+- Mantener `Actividad de la sesión` con iconos circulares, cantidades, porcentajes y resumen temporal.
+- No convertir esta vista en un analizador hexadecimal avanzado.
 
 ---
 
@@ -615,9 +676,25 @@ La vista final debe replicar la segunda propuesta aprobada:
 
 Mantener la distribución exacta y limpia de la segunda propuesta aprobada. No sobrecargar la pantalla; la aclaración del mapa debe sentirse como una acción natural de edición, no como un bloque grande adicional.
 
-### Sencillo / Tráfico Modbus
+### Sencillo / Tráfico Modbus — prompt vigente
 
-Pantalla `Sencillo / Tráfico Modbus`. Mantener estilo aprobado y agregar columnas `Origen`, `Destino` e `ID esclavo`. Mostrar mensajes como `PC Master → PLC_Principal`, `PLC_Principal → PC Master`, `PC Master → Variador_01`. Filtros: protocolo, dispositivo, slave ID y resultado. Panel `¿Qué pasó?` con explicación simple.
+Generar pantalla `Sencillo / Tráfico Modbus` de `JW Modbus Tool`, con el mismo tema oscuro azul petróleo, acentos cian y estilo de tarjetas de las vistas aprobadas. El menú lateral debe tener `Tráfico Modbus` activo. La barra inferior debe mantener `Conectado · COM3 · 115200 · 8N1 · Slave activo ID 1 · Sesión activa`.
+
+La vista final debe replicar la tercera propuesta aprobada:
+
+- Título `Tráfico Modbus` y subtítulo `Visualice el historial de mensajes Modbus en tiempo real`.
+- Fila de filtros: `Protocolo RTU`, `Dispositivo Todos`, `Slave ID Todos`, `Resultado Todos`, botón `Limpiar filtros`.
+- Tabla principal con columnas: flecha direccional, `Hora`, `Origen → Destino`, `ID esclavo`, `Tipo`, `Función`, `Resultado`, `Resumen`.
+- La columna `Origen → Destino` debe ser una sola columna combinada, no dos columnas separadas.
+- La primera columna debe usar flechas delgadas: azul/cian hacia arriba para peticiones salientes del PC Master y verde hacia abajo para respuestas entrantes hacia el PC Master.
+- Filas de ejemplo con rutas como `PC Master → PLC_Principal`, `PLC_Principal → PC Master`, `PC Master → HMI_Panel`, `HMI_Panel → PC Master`, `PC Master → Variador_01`.
+- Estados visibles: `OK`, `Timeout`, `CRC Error`, `Excepción`.
+- Incluir paginación: `Mostrando 1 a 10 de 25 tramas`, páginas `1`, `2`, `3`.
+- Panel inferior izquierdo `Detalles del mensaje seleccionado` con información técnica de la trama seleccionada: dirección, función, tipo, fecha/hora, origen, destino, resumen, parámetros de petición, respuesta y tiempo de respuesta.
+- Panel inferior central `¿Qué pasó?` con icono circular de estado, explicación simple en lenguaje humano y caja de consejo con icono de estrella.
+- Panel inferior derecho `Actividad de la sesión` con iconos circulares y métricas: `Mensajes OK`, `Timeouts`, `Errores CRC`, `Excepciones`, cantidades, porcentajes, barras de progreso y resumen temporal.
+
+Mantener la pantalla clara y simple. No incluir vista hex, bytes crudos, CRC detallado ni análisis avanzado en esta versión sencilla.
 
 ---
 
