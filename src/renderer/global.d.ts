@@ -24,6 +24,12 @@ import type {
   SerialPortConfig,
   SerialPortDescriptor
 } from "../shared/serial/types.js";
+import type {
+  OpenSessionFileRequest,
+  OpenSessionFileResult,
+  SaveSessionFileRequest,
+  SaveSessionFileResult
+} from "../shared/session/types.js";
 
 declare global {
   interface Window {
@@ -68,6 +74,14 @@ declare global {
         runJwplcValidation: (
           command: ValidationSequenceCommand
         ) => Promise<SerialOperationResult<ValidationSequenceResult>>;
+      };
+      sessions: {
+        saveFile: (
+          request: SaveSessionFileRequest
+        ) => Promise<SerialOperationResult<SaveSessionFileResult>>;
+        openFile: (
+          request?: OpenSessionFileRequest
+        ) => Promise<SerialOperationResult<OpenSessionFileResult>>;
       };
       reports: {
         copyMarkdown: (markdown: string) => Promise<SerialOperationResult<CopyMarkdownReportResult>>;
