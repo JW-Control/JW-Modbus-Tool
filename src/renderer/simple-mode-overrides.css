@@ -1,3 +1,35 @@
+.workspace {
+  overflow: hidden;
+}
+
+.devices {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: minmax(0, 245px) minmax(0, 1fr);
+}
+
+.devices > .card,
+.devicesLower,
+.quickPanel,
+.recentPanel {
+  min-height: 0;
+}
+
+.devicesLower {
+  grid-column: 1 / 4;
+  display: grid;
+  grid-template-columns: .44fr .56fr;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.quickPanel,
+.recentPanel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .quickPanel > p:first-of-type {
   margin-bottom: 14px;
 }
@@ -7,6 +39,7 @@
   gap: 16px;
   align-items: end;
   margin: 14px 0 12px;
+  flex: 0 0 auto;
 }
 
 .quickbar .field {
@@ -37,4 +70,97 @@
 
 .quickPanel .note {
   margin-top: 10px;
+  flex: 0 0 auto;
+}
+
+.quickScroll,
+.activityScroll,
+.detailTable {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2d87aa #071d30;
+}
+
+.quickScroll,
+.activityScroll {
+  flex: 1 1 auto;
+  margin-top: 10px;
+}
+
+.quickScroll .table,
+.activityScroll .table,
+.detailTable .table {
+  min-width: 100%;
+}
+
+.activityDetail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  gap: 10px;
+}
+
+.activityDetailHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border: 1px solid #00bfff33;
+  border-radius: 8px;
+  background: #00bfff0d;
+}
+
+.activityDetailHeader strong,
+.activityDetailHeader small {
+  display: block;
+}
+
+.detailFacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.detailFacts > div {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid #2d5c75;
+  border-radius: 8px;
+  background: #071d30;
+}
+
+.detailFacts span {
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.detailFacts strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailTable {
+  flex: 1 1 auto;
+}
+
+@media (max-height: 850px) {
+  .devices {
+    grid-template-rows: minmax(0, 220px) minmax(0, 1fr);
+  }
+
+  .quickbar {
+    margin-top: 10px;
+  }
+
+  .quickPanel .note {
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
 }
