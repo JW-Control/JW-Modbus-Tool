@@ -15,6 +15,7 @@ const functionOrder = ["fc3", "fc6", "fc5", "fc15", "fc16", "fc4", "fc1", "fc2"]
 const readFns = new Set(["fc1", "fc2", "fc3", "fc4"]);
 const writeFns = new Set(["fc5", "fc6", "fc15", "fc16"]);
 const overlayId = "jw-simple-tests-runtime-overlay";
+const runtimeFormat = "jwmodbus-tests-runtime";
 
 const defaultScenarios = {
   normal: { icon: "🛡", name: "Operación normal", desc: "Verifica lectura y escritura correcta.", color: "shield" },
@@ -51,6 +52,23 @@ function mk(slave, fn, addr, amount, exp, to = 1000) {
   return { on: true, slave, fn, addr, amount: String(amount), exp, to, res: "Pendiente", ms: null, detail: "", values: "", at: "" };
 }
 function cloneStep(x) { return { ...x, res: "Pendiente", ms: null, detail: "", values: "", at: "" }; }
+function cleanStep(x) {
+  const fn = F[x?.fn] ? x.fn : "fc3";
+  return {
+    on: x?.on !== false,
+    slave: Math.max(1, Math.min(247, Number.parseInt(String(x?.slave ?? 1), 10) || 1)),
+    fn,
+    addr: Number.isFinite(Number(x?.addr)) ? Number(x.addr) : def(fn),
+    amount: String(x?.amount ?? defaultAmount(fn)),
+    exp: String(x?.exp ?? defaultExpected(fn, x?.amount ?? defaultAmount(fn))),
+    to: Number.isFinite(Number(x?.to)) ? Number(x.to) : 1000,
+    res: "Pendiente",
+    ms: null,
+    detail: "",
+    values: "",
+    at: ""
+  };
+}
 function plan(slave) {
   return [
     mk(slave, "fc3", 40000, 10, "10 regs"),
@@ -119,6 +137,55 @@ function res(r) {
 }
 function msg(t) { const p = document.querySelector(".helper p"); if (p) p.textContent = t; }
 
+function exportRuntimeState() {
+  return {
+    format: runtimeFormat,
+    version: 1,
+    savedAt: new Date().toISOString(),
+    selectedScenario: st.sc,
+    simulatorState: st.sim,
+    steps: st.steps.map(cleanStep),
+    scenarios: JSON.parse(JSON.stringify(st.scenarios))
+  };
+}
+function importRuntimeState(data) {
+  if (!data || typeof data !== "object") return false;
+  const src = data.format === runtimeFormat ? data : data.testsRuntime;
+  if (!src || src.format !== runtimeFormat || !Array.isArray(src.steps)) return false;
+  st.sc = src.selectedScenario || "normal";
+  st.sim = src.simulatorState || "Detenido";
+  st.steps = src.steps.map(cleanStep);
+  st.scenarios = { ...JSON.parse(JSON.stringify(defaultScenarios)), ...(src.scenarios || {}) };
+  st.log = [];
+  st.manage = false;
+  if (active()) render();
+  return true;
+}
+function persistPlanMessage() {
+  msg("Plan guardado en memoria de la vista y listo para persistirse con Guardar sesión.");
+  window.dispatchEvent(new CustomEvent("jw-simple-tests-plan-updated", { detail: exportRuntimeState() }));
+}
+function installSessionBridge() {
+  const sessions = api()?.sessions;
+  if (!sessions || sessions.__jwTestsRuntimePatched) return;
+  const originalSave = sessions.saveFile?.bind(sessions);
+  const originalOpen = sessions.openFile?.bind(sessions);
+  if (originalSave) {
+    sessions.saveFile = async (args = {}) => originalSave({
+      ...args,
+      data: { ...(args?.data || {}), testsRuntime: exportRuntimeState() }
+    });
+  }
+  if (originalOpen) {
+    sessions.openFile = async (...args) => {
+      const result = await originalOpen(...args);
+      if (result?.ok && result.value?.data?.testsRuntime) importRuntimeState(result.value.data.testsRuntime);
+      return result;
+    };
+  }
+  Object.defineProperty(sessions, "__jwTestsRuntimePatched", { value: true });
+}
+
 function style() {
   if (document.getElementById("simple-tests-runtime-style")) return;
   const e = document.createElement("style");
@@ -131,7 +198,7 @@ function style() {
 .testsRuntime .scenarioList{display:flex;flex:1 1 auto;min-height:0;overflow:auto;flex-direction:column;gap:10px;padding-right:4px;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime .scenarioCard{display:grid;grid-template-columns:46px 1fr 30px;gap:11px;align-items:center;min-height:72px;padding:11px;border:1px solid #2d5c75;border-radius:11px;background:linear-gradient(180deg,#ffffff0d,#ffffff05);color:var(--text);text-align:left;box-shadow:inset 0 0 0 1px #ffffff08;flex:0 0 auto}.testsRuntime .scenarioCard.selected{border-color:var(--cyan);background:linear-gradient(180deg,#00bfff24,#00bfff0b);box-shadow:0 0 16px #00bfff1d,inset 0 0 0 1px #00bfff33}.testsRuntime .scenarioIcon{display:grid;place-items:center;width:42px;height:42px;border-radius:10px;font-size:1.35rem}.testsRuntime .scenarioIcon.shield{background:#1f6e3b88}.testsRuntime .scenarioIcon.clock{background:#9a5d1288}.testsRuntime .scenarioIcon.warn{background:#9a5d1288}.testsRuntime .scenarioIcon.bad{background:#9b313d88}.testsRuntime .scenarioCard strong,.testsRuntime .scenarioCard small{display:block}.testsRuntime .scenarioCard small{color:var(--muted);margin-top:4px;line-height:1.25}.testsRuntime .scenarioRadio{display:grid;place-items:center;width:26px;height:26px;border:2px solid #45677a;border-radius:50%;font-style:normal;color:transparent}.testsRuntime .scenarioCard.selected .scenarioRadio{border-color:var(--cyan);color:white;background:radial-gradient(circle at center,#dff7ff 0 36%,transparent 40%)}.testsRuntime .manageScenarios{flex:0 0 auto;margin-top:2px}
 .testsRuntime .scenarioManager{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime .scenarioManager label{display:grid;gap:5px;color:var(--muted);font-size:.82rem}.testsRuntime .managerRow{display:grid;grid-template-columns:.75fr 1fr;gap:9px}.testsRuntime .scenarioPreview{display:grid;grid-template-columns:42px 1fr;gap:10px;align-items:center;border:1px solid #2d5c75;border-radius:10px;background:#ffffff09;padding:10px}.testsRuntime .scenarioSteps{border:1px solid #2d5c75;border-radius:10px;background:#ffffff08;padding:10px}.testsRuntime .scenarioSteps h3{margin:0 0 8px;color:var(--cyan);font-size:.92rem}.testsRuntime .scenarioSteps ol{margin:0;padding-left:18px;color:var(--muted);display:grid;gap:4px}.testsRuntime .managerActions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.testsRuntime .managerNote{border:1px solid #00bfff33;border-radius:8px;background:#00bfff0d;color:var(--muted);padding:8px 10px;line-height:1.35}
 .testsRuntime .testkpis article{border:1px solid #2d5c75;border-radius:11px;background:linear-gradient(180deg,#ffffff0d,#ffffff05);padding:10px 18px;display:grid;grid-template-columns:112px minmax(0,1fr);align-items:center;justify-items:center;column-gap:16px;min-width:0}.testsRuntime .testkpis article.plain{grid-template-columns:1fr;justify-items:start;align-content:center}.testsRuntime .kpiRing{--p:0;display:grid;place-items:center;width:92px;height:92px;border-radius:50%;background:conic-gradient(var(--ring,#00bfff) calc(var(--p)*1%),#102d42 0);position:relative;margin:auto}.testsRuntime .kpiRing::after{content:"";position:absolute;inset:13px;border-radius:50%;background:#071d30;box-shadow:inset 0 0 12px #0008}.testsRuntime .kpiStack{position:relative;z-index:1;display:grid;place-items:center;gap:2px;text-align:center;line-height:1}.testsRuntime .kpiStack strong{font-size:1.42rem;color:var(--text);line-height:1}.testsRuntime .kpiStack small{color:var(--muted);font-size:.66rem;line-height:1}.testsRuntime .kpiText{justify-self:start;display:grid;gap:5px}.testsRuntime .kpiText span{color:var(--muted);font-weight:700}.testsRuntime .kpiText b{display:block;font-size:1.85rem;color:var(--cyan);line-height:1}.testsRuntime .kpiText.danger b{color:#ff5353}.testsRuntime .kpiText small{color:var(--muted);line-height:1.2}
-.testsRuntime .resultOK{color:var(--green);font-weight:700}.testsRuntime .resultBad{color:#ff5353;font-weight:700}.testsRuntime .resultWarn{color:#ffad24;font-weight:700}.testsRuntime .resultPill{white-space:nowrap}.testsRuntime .topActions{display:flex;gap:10px;align-items:center;justify-content:flex-end}.testsRuntime .iconOnly{min-height:28px;padding:0 8px}.testsRuntime .purple{background:linear-gradient(180deg,#8b36e7,#671cbe);border-color:#9d5cff;color:white}.testsRuntime .noteLine{margin-top:8px;padding:8px 10px;border:1px solid #00bfff33;border-radius:8px;color:var(--muted);background:#00bfff0d;flex:0 0 auto}.testsRuntime .simGrid{display:grid;gap:9px}.testsRuntime .simGrid label{display:grid;grid-template-columns:1fr 1.2fr;gap:8px;align-items:center;color:var(--muted)}.testsRuntime .fnWrite{border-left:3px solid #b96cff}.testsRuntime .fnRead{border-left:3px solid #00bfff}
+.testsRuntime .resultOK{color:var(--green);font-weight:700}.testsRuntime .resultBad{color:#ff5353;font-weight:700}.testsRuntime .resultWarn{color:#ffad24;font-weight:700}.testsRuntime .resultPill{white-space:nowrap}.testsRuntime .topActions{display:flex;gap:10px;align-items:center;justify-content:flex-end}.testsRuntime .iconOnly{min-height:28px;padding:0 8px}.testsRuntime .purple{background:linear-gradient(180deg,#8b36e7,#671cbe);border-color:#9d5cff;color:white}.testsRuntime .noteLine{margin-top:8px;padding:8px 10px;border:1px solid #00bfff33;border-radius:8px;color:var(--muted);background:#00bfff0d;flex:0 0 auto}.testsRuntime .fnRead{box-shadow:inset 3px 0 #00d5ff}.testsRuntime .fnWrite{box-shadow:inset 3px 0 #b35cff}.testsRuntime .simGrid{display:grid;gap:10px}.testsRuntime .simGrid label{display:grid;grid-template-columns:1fr 1fr;gap:9px;align-items:center;color:var(--muted)}.testsRuntime .simGrid span{font-size:.9rem}.testsRuntime .simGrid button{min-height:34px}
 `;
   document.head.appendChild(e);
 }
@@ -156,6 +223,7 @@ function positionOverlay(o = overlay()) {
 }
 function cleanupOverlay() { const o = overlay(); if (o) o.remove(); }
 function syncOverlay() {
+  installSessionBridge();
   if (!active()) { cleanupOverlay(); return; }
   const o = ensureOverlay();
   if (!o.dataset.rendered) render();
@@ -205,7 +273,7 @@ function managerHtml() {
 <section class="scenarioSteps"><h3>Pasos del escenario</h3><ol>${previewSteps.map((x) => `<li>${F[x.fn]} · S${x.slave} · ${x.addr} · ${esc(x.amount)}</li>`).join("")}</ol></section>
 <button data-a="scenarioUsePlan">Usar plan actual como pasos</button>
 <div class="managerActions"><button data-a="scenarioDuplicate">Duplicar</button><button class="primary" data-a="scenarioClose">Guardar cambios</button></div>
-<p class="managerNote">Los cambios quedan activos en memoria. La persistencia real irá dentro de <b>.jwmodbus-session</b>.</p>
+<p class="managerNote">Los cambios quedan listos para persistirse dentro de <b>.jwmodbus-session</b> al usar Guardar sesión.</p>
 </div>`;
 }
 function kpiHtml(pct, ok, bad, done, avg) {
@@ -292,7 +360,7 @@ function successDetail(x, vals) {
 function applySc(k) {
   st.sc = k;
   const custom = st.scenarios[k]?.steps;
-  if (custom?.length) st.steps = custom.map(cloneStep);
+  if (custom?.length) st.steps = custom.map(cleanStep);
   else {
     const s = sid();
     if (k === "normal") st.steps = plan(s);
@@ -301,6 +369,7 @@ function applySc(k) {
     if (k === "crc") st.steps = plan(s).map((x) => ({ ...x, exp: x.exp === "OK" ? "CRC/Error controlado" : x.exp }));
   }
   st.log = [];
+  persistPlanMessage();
   render();
 }
 function av() { const r = st.log.filter((x) => x.ms != null); return r.length ? Math.round(r.reduce((a, x) => a + x.ms, 0) / r.length) : 0; }
@@ -311,6 +380,12 @@ function disp(fn, r, b) {
   return r;
 }
 
+function markDirty() {
+  st.log = [];
+  persistPlanMessage();
+  render();
+}
+
 document.addEventListener("click", (e) => {
   const o = overlay();
   const a = e.target.closest?.("[data-a]");
@@ -319,24 +394,24 @@ document.addEventListener("click", (e) => {
   const n = a.dataset.a;
   if (n === "run") run();
   if (n === "stop") { st.stopped = true; msg("Deteniendo prueba al finalizar el paso actual..."); }
-  if (n === "add") { st.steps.push(mk(sid(), "fc3", 40000, 1, "1 reg", 1000)); render(); }
-  if (n === "del") { st.steps.splice(+a.dataset.i, 1); render(); }
+  if (n === "add") { st.steps.push(mk(sid(), "fc3", 40000, 1, "1 reg", 1000)); markDirty(); }
+  if (n === "del") { st.steps.splice(+a.dataset.i, 1); markDirty(); }
   if (n === "clear") { st.log = []; st.steps = st.steps.map(cloneStep); render(); }
   if (n === "export") { navigator.clipboard?.writeText(st.log.map((x, i) => `${i + 1}. ${x.at} ${F[x.fn]} S${x.slave} ${x.res} ${x.detail}`).join("\n")); msg("Registro copiado al portapapeles."); }
-  if (n === "save") msg("Plan guardado en memoria de la vista. Usa Guardar sesión para persistirlo en archivo.");
+  if (n === "save") persistPlanMessage();
   if (n === "sc") applySc(a.dataset.sc);
   if (n === "manage") { st.manage = true; render(); }
-  if (n === "scenarioClose") { st.manage = false; msg("Escenario actualizado en memoria de la sesión."); render(); }
-  if (n === "scenarioUsePlan") { st.scenarios[st.sc].steps = st.steps.map(cloneStep); msg("Plan actual asignado al escenario seleccionado."); render(); }
+  if (n === "scenarioClose") { st.manage = false; persistPlanMessage(); render(); }
+  if (n === "scenarioUsePlan") { st.scenarios[st.sc].steps = st.steps.map(cleanStep); msg("Plan actual asignado al escenario seleccionado."); render(); }
   if (n === "scenarioDuplicate") {
     const base = st.scenarios[st.sc];
     const id = `custom_${Date.now()}`;
-    st.scenarios[id] = { ...JSON.parse(JSON.stringify(base)), name: `${base.name} copia`, steps: (base.steps || st.steps).map(cloneStep) };
+    st.scenarios[id] = { ...JSON.parse(JSON.stringify(base)), name: `${base.name} copia`, steps: (base.steps || st.steps).map(cleanStep) };
     st.sc = id;
     msg("Escenario duplicado. Edita su nombre, color, ícono y pasos.");
     render();
   }
-  if (n === "sim") { st.sim = st.sim === "Detenido" ? "Preparado" : "Detenido"; msg("Simulador slave preparado a nivel UI; emulación real queda para la siguiente etapa."); render(); }
+  if (n === "sim") { st.sim = st.sim === "Detenido" ? "Preparado" : "Detenido"; persistPlanMessage(); render(); }
 });
 
 document.addEventListener("change", (e) => {
@@ -358,7 +433,7 @@ document.addEventListener("change", (e) => {
   if (c === "exp") x.exp = v;
   if (c === "to") x.to = +v;
   x.res = "Pendiente";
-  render();
+  markDirty();
 });
 document.addEventListener("input", (e) => {
   const o = overlay();
@@ -370,4 +445,5 @@ document.addEventListener("input", (e) => {
 setInterval(syncOverlay, 250);
 window.addEventListener("resize", () => positionOverlay());
 new MutationObserver(syncOverlay).observe(document.body, { childList: true, subtree: true });
+installSessionBridge();
 syncOverlay();
