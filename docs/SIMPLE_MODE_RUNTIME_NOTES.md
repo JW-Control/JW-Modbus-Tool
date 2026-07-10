@@ -36,6 +36,49 @@ Para no perder cambios al cerrar/abrir la app o al guardar una sesión, se agreg
 - Lee `testsRuntime` al usar `Abrir sesión` y lo vuelve a importar al runtime.
 - Deja el estado en `window.__jwPendingTestsRuntimeState` antes de cargar el overlay, para restaurar el plan al iniciar.
 
+## Registro de ejecución y validación de valores
+
+La tabla **Registro de ejecución** ahora tiene una columna **Info**.
+
+Al abrir el detalle de un paso ejecutado, la misma zona del registro cambia a una vista de detalle con:
+
+- paso, función, slave, dirección inicial, cantidad/valor, duración y resultado;
+- tabla de valores por dirección;
+- nombre referencial del registro o bit;
+- valor esperado;
+- valor leído o escrito;
+- tipo básico (`bool` o `uint16`);
+- resultado de validación por fila.
+
+El resultado del paso ya no debe entenderse solo como comunicación exitosa. Ahora queda definido así:
+
+- **Aprobado** = comunicación OK + validación OK.
+- **Validación fallida** = hubo respuesta Modbus, pero uno o más valores no coinciden con el campo `Esperado`.
+- **Timeout** = el slave no respondió dentro del tiempo definido.
+- **Excepción** = el slave respondió con excepción Modbus.
+- **CRC Error** = la respuesta fue marcada como inválida por CRC.
+- **Error** = error interno o de comunicación no clasificado.
+
+### Campo Esperado
+
+El campo `Esperado` admite tres niveles:
+
+1. **Validar solo respuesta/cantidad**
+   - `OK`
+   - `10 regs`
+   - `8 coils`
+   - `8 bits`
+
+2. **Validar valores secuenciales**
+   - `4096,4097,4098`
+   - `ON,OFF,ON,OFF`
+
+3. **Validar valores por dirección**
+   - `40000=4096,40001=4097`
+   - `0=ON,1=OFF`
+
+Para escrituras, el MVP valida contra el valor solicitado o eco lógico de escritura. La lectura posterior automática para confirmar que el slave realmente conservó el valor queda como mejora futura.
+
 ## Gestionar escenarios
 
 El botón **Gestionar escenarios** queda implementado dentro del mismo panel derecho de **Pruebas**.
@@ -77,3 +120,5 @@ Para evitar repetir el bloqueo:
 La solución correcta a mediano plazo es migrar la vista **Pruebas** desde overlay hacia un componente React nativo, con persistencia formal dentro del documento `.jwmodbus-session`.
 
 Hasta cerrar esa migración, el overlay seguro + puente de persistencia quedan como implementación canónica del MVP.
+
+Pendiente funcional importante: agregar opción **verificar escritura después de escribir**, donde FC05/FC06/FC15/FC16 ejecuten una lectura posterior FC01/FC03 para confirmar que el valor quedó realmente aplicado en el slave.
