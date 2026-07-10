@@ -11,7 +11,8 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 );
 
 window.setTimeout(() => {
-  void import("./simple-tests-persistence-bridge.js")
+  void import("./simple-tests-base-layout-fix.js")
+    .then(() => import("./simple-tests-persistence-bridge.js"))
     .then(() => import("./simple-modbus-result-compat.js"))
     .then(() => import("./simple-tests-runtime-safe.js"))
     .then(() => import("./simple-tests-layout-guard.js"))
