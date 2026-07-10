@@ -118,181 +118,42 @@ Primera etapa:
 - JWPLC conocido por ID;
 - métricas de la sesión actual.
 
-Etapa posterior:
-
-- escaneo de unidades;
-- perfiles de dispositivo;
-- Modbus TCP;
-- calidad de enlace y reintentos.
-
-### Sesiones
-
-Centralizará lo que hoy está repartido entre ajustes y presets:
-
-- perfiles de conexión;
-- solicitudes guardadas;
-- mapa de registros;
-- última unidad y vista utilizadas;
-- importación y exportación de sesión.
-
-No es necesario implementarla para la primera transformación visual, pero la
-navegación debe reservarle un lugar estable.
-
 ### Pruebas
 
-La primera versión de esta área será el diagnóstico JWPLC existente:
+La vista **Pruebas** ejecuta un plan de pasos Modbus y debe separar claramente
+lo que se envía de lo que se valida.
 
-- lectura de entradas y salidas;
-- control individual y patrones;
-- validación guiada;
-- resultado por pasos;
-- exportación del reporte.
+Decisiones actuales:
 
-Su composición seguirá el lenguaje de la cuarta referencia: configuración a la
-izquierda, secuencia o pasos en el centro, resultado a la derecha y registro de
-ejecución abajo.
+- `Slave`, `Dirección` y `Timeout` son columnas compactas.
+- `Función` es un desplegable ordenado por código: FC01, FC02, FC03, FC04,
+  FC05, FC06, FC15 y FC16.
+- `Cantidad` se usa en lecturas: FC01, FC02, FC03 y FC04.
+- `Valor` se usa en escrituras: FC05, FC06, FC15 y FC16.
+- `Validación` reemplaza el uso libre de `Esperado` como criterio principal.
+- `Esperado` solo queda editable cuando la validación requiere valores exactos.
 
-Evolución posterior:
+Modos de validación:
 
-- editor de secuencias;
-- escenarios reutilizables;
-- simulador de esclavo;
-- inyección de timeout, CRC y excepciones;
-- métricas de cobertura y latencia.
+- `Respuesta OK`: basta comunicación Modbus correcta. Es el modo natural para
+  escrituras simples cuando aún no se hace una lectura posterior de confirmación.
+- `Cantidad solicitada`: para lecturas; compara que llegue la cantidad pedida,
+  evitando repetir manualmente `8 regs`, `8 bits` o `8 coils`.
+- `Valores exactos`: compara una secuencia, por ejemplo `4096,4097,4098` o
+  `ON,OFF,ON,OFF`.
+- `Por dirección`: compara pares explícitos, por ejemplo
+  `40000=4096,40001=4097` o `0=ON,1=OFF`.
 
-### Registros
+Para coils e inputs discretos, los valores booleanos deben aceptar formatos
+cómodos como `ON/OFF`, `1/0`, `true/false`, `HIGH/LOW` como mejora progresiva.
+El MVP actual ya trabaja con los formatos principales `ON/OFF`, `1/0` y
+`true/false`.
 
-El Maestro RTU actual evolucionará a un explorador de registros.
+La columna **Info** del registro de ejecución abre el detalle del paso en la
+misma zona inferior. Ese detalle muestra función, slave, dirección, cantidad o
+valor, modo de validación, resultado y una tabla por dirección con esperado vs
+leído/escrito.
 
-Estructura:
-
-- franja superior con unidad, función, dirección, cantidad y sondeo;
-- pestañas para coils, discrete inputs, holding e input registers;
-- tabla principal de direcciones y valores;
-- inspector contextual a la derecha;
-- actividad de lectura/escritura en la parte inferior.
-
-Primera etapa:
-
-- las ocho funciones RTU ya soportadas;
-- ejecución manual;
-- valores decimal y hexadecimal;
-- solicitudes guardadas;
-- trama TX/RX;
-- confirmación de escrituras.
-
-Etapa posterior:
-
-- nombres y tipos de datos;
-- escala y unidad de ingeniería;
-- polling;
-- watch list;
-- historial breve;
-- edición desde la tabla.
-
-### Tráfico Modbus
-
-El monitor actual evolucionará hacia el analizador de la tercera referencia.
-
-Primera etapa:
-
-- tabla de transacciones;
-- filtros por unidad, función y resultado;
-- pausa, limpieza y exportación;
-- detalle TX/RX;
-- CRC, excepción y duración interpretados.
-
-Etapa posterior:
-
-- separación solicitud/respuesta;
-- desglose byte a byte;
-- representación hex y binaria;
-- cronología de sesión;
-- distribución de latencia;
-- estadísticas y búsqueda avanzada.
-
-## Patrones de interacción
-
-- Las lecturas se ejecutan directamente.
-- Toda escritura Modbus requiere confirmación explícita.
-- Una operación activa deshabilita controles incompatibles.
-- Una fila seleccionada abre detalle sin navegar a otra pantalla.
-- Los paneles secundarios pueden plegarse para recuperar espacio.
-- `Esc` cierra diálogos; `Enter` ejecuta la acción primaria cuando sea seguro.
-- Los errores se explican en lenguaje operativo y conservan el código Modbus.
-- TX/RX siempre permanece disponible para auditoría.
-- Los tamaños de tablas, matrices y barras no cambian durante una operación.
-
-## Qué se adopta de cada familia
-
-### Primeras cuatro propuestas
-
-Se adopta como destino final:
-
-- tema oscuro;
-- navegación lateral;
-- barra global de comandos;
-- barra inferior de estado;
-- áreas multipanel;
-- tablas densas;
-- inspector contextual;
-- análisis técnico y visualizaciones útiles.
-
-### Propuestas intermedias
-
-Se adopta:
-
-- menor cantidad de paneles simultáneos;
-- jerarquía más clara;
-- formularios de conexión más respirables;
-- tabla principal dominante;
-- detalle lateral enfocado.
-
-### Propuestas sencillas
-
-Se adopta:
-
-- lenguaje comprensible;
-- recorridos numerados cuando la tarea lo requiere;
-- explicaciones de errores;
-- estados vacíos que indican el siguiente paso;
-- resúmenes de actividad para usuarios nuevos.
-
-No se adopta su reducción funcional como límite del producto.
-
-## Plan de transformación
-
-### Fase 1: shell profesional
-
-- tema oscuro y tokens visuales;
-- barra de comandos;
-- navegación lateral;
-- barra de estado;
-- migración de las funciones actuales sin alterar el motor RTU.
-
-### Fase 2: superficies operativas
-
-- Dispositivos con conexión y resumen;
-- Pruebas con el preset JWPLC;
-- Registros basado en el Maestro RTU;
-- Tráfico basado en el monitor actual.
-
-### Fase 3: profundidad técnica
-
-- tablas con selección e inspector;
-- filtros y polling;
-- perfiles y sesiones;
-- desglose de tramas;
-- métricas de sesión.
-
-### Fase 4: expansión
-
-- escaneo;
-- Modbus TCP;
-- simulador;
-- inyección de fallos;
-- secuencias de prueba editables;
-- gráficas e historial.
-
-La Fase 1 y la Fase 2 son el siguiente objetivo. Las fases posteriores quedan
-previstas por la arquitectura, pero no deben retrasar una versión RTU sólida.
+Pendiente futuro: para escrituras, agregar una opción de **confirmar por lectura
+posterior**. Es decir, escribir con FC05/FC06/FC15/FC16 y luego leer con
+FC01/FC03 para comprobar que el slave conservó el valor.
