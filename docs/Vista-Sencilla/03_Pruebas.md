@@ -10,7 +10,7 @@ Rama: `feature/simple-mode-mvp`
 
 La vista **Pruebas** permite validar un slave Modbus desde la PC actuando como **Master**.
 
-La pantalla permite construir y ejecutar un plan de pasos Modbus contra uno o varios slaves, revisar KPIs de ejecución, ver un registro de resultados y seleccionar escenarios de prueba.
+La pantalla permite construir y ejecutar un plan de pasos Modbus contra uno o varios slaves, revisar KPIs de ejecución, ver un registro de resultados y seleccionar/editar escenarios de prueba.
 
 ---
 
@@ -68,7 +68,7 @@ La columna cambia de significado según la función seleccionada:
 
 ### KPIs
 
-La sección central de resumen queda menos alta y más balanceada.
+La sección central de resumen queda menos alta, más balanceada y con los indicadores circulares centrados.
 
 KPIs actuales:
 
@@ -77,26 +77,29 @@ KPIs actuales:
 - `Errores`.
 - `Pasos completados` con indicador circular.
 
+Los textos dentro del aro se renderizan como bloque centrado (`valor + etiqueta`) para evitar el descuadre visual observado en la primera prueba.
+
 Los textos secundarios deben ser explícitos; por ejemplo:
 
 - `Última ejecución: 6/8 aprobados`.
 - `Última ejecución: 8 paso(s)`.
 - `Última ejecución`.
 
-La intención es evitar textos flotando sin contexto.
-
 ### Escenarios
 
 Se mantiene la altura actual aproximada de la sección de escenarios.
 
 - La lista de escenarios tiene scroll interno.
-- `Gestionar escenarios` queda preparado para una siguiente iteración.
-- En el futuro, el gestor debe permitir editar:
+- `Gestionar escenarios` ya abre un panel interno dentro de la misma tarjeta de escenarios.
+- El panel permite editar en memoria:
   - nombre del escenario,
   - descripción,
   - color,
   - ícono,
-  - pasos del escenario.
+  - pasos asociados al escenario usando el plan actual,
+  - duplicar el escenario actual.
+
+Esta edición todavía no persiste en archivo; queda activa durante la sesión runtime del MVP.
 
 ### Simulador slave
 
@@ -161,9 +164,9 @@ Resultados posibles:
 
 1. Migrar este MVP runtime a componente React nativo.
 2. Persistir el plan dentro del archivo `.jwmodbus-session`.
-3. Crear gestor real de escenarios.
-4. Permitir duplicar escenarios.
-5. Permitir guardar escenarios como plantillas reutilizables.
+3. Persistir escenarios personalizados dentro de `.jwmodbus-session`.
+4. Crear gestor definitivo de escenarios como componente React.
+5. Permitir importar/exportar escenarios como plantillas reutilizables.
 6. Integrar resultados de prueba con la vista `Sesiones`.
 7. Integrar trazas completas con la vista `Tráfico Modbus`.
 8. Conectar `Simulador slave` a un motor real de emulación.
