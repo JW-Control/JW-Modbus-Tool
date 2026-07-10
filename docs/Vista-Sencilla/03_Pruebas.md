@@ -105,6 +105,13 @@ ON,OFF,ON
 Un paso aprueba solo si la comunicacion fue OK, no hubo timeout/excepcion/CRC
 error y el criterio de validacion se cumple.
 
+Las escrituras validan los valores antes de enviar la trama:
+
+- FC05/FC15 aceptan `ON/OFF`, `1/0`, `true/false`, `yes/no`.
+- FC06/FC16 aceptan enteros decimales o hexadecimales, por ejemplo
+  `1234`, `0x1111`, `10,20,0x30`.
+- Valores ambiguos como `maybe` o `10,abc` fallan antes de tocar el bus.
+
 ---
 
 ## Persistencia
@@ -137,12 +144,18 @@ Hora | Paso | Slave | Funcion | Direccion | Cantidad/Valor | Resultado | Tiempo 
 Resultados posibles:
 
 - `Pendiente`
+- `Ejecutando`
 - `Aprobado`
 - `Error`
 - `Timeout`
 - `CRC Error`
 - `Excepcion`
 - `Validacion fallida`
+
+Las respuestas `Timed out waiting for RTU response...` se clasifican como
+`Timeout`, no como error generico. La KPI `Latencia respuesta` promedia solo
+pasos con respuesta real; los timeouts y errores de transporte quedan excluidos
+del promedio y se reflejan en `Fallos`.
 
 La accion de detalle debe abrirse dentro de la misma zona inferior de la vista,
 sin modal flotante.

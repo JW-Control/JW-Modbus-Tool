@@ -877,6 +877,12 @@
   color: var(--muted);
 }
 
+.testsResult.active {
+  border: 1px solid #00c8ff88;
+  background: #00c8ff1f;
+  color: var(--cyan);
+}
+
 .testsResult.warn {
   border: 1px solid #ffab2577;
   background: #ffab251f;
