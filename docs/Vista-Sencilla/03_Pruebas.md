@@ -77,21 +77,15 @@ KPIs actuales:
 - `Errores`.
 - `Pasos completados` con indicador circular.
 
-Los textos dentro del aro se renderizan como bloque centrado (`valor + etiqueta`) para evitar el descuadre visual observado en la primera prueba.
-
-Los textos secundarios deben ser explícitos; por ejemplo:
-
-- `Última ejecución: 6/8 aprobados`.
-- `Última ejecución: 8 paso(s)`.
-- `Última ejecución`.
+Los textos dentro del aro se renderizan como bloque centrado (`valor + etiqueta`) para evitar descuadres visuales.
 
 ### Escenarios
 
 Se mantiene la altura actual aproximada de la sección de escenarios.
 
 - La lista de escenarios tiene scroll interno.
-- `Gestionar escenarios` ya abre un panel interno dentro de la misma tarjeta de escenarios.
-- El panel permite editar en memoria:
+- `Gestionar escenarios` abre un panel interno dentro de la misma tarjeta de escenarios.
+- El panel permite editar:
   - nombre del escenario,
   - descripción,
   - color,
@@ -99,7 +93,25 @@ Se mantiene la altura actual aproximada de la sección de escenarios.
   - pasos asociados al escenario usando el plan actual,
   - duplicar el escenario actual.
 
-Esta edición todavía no persiste en archivo; queda activa durante la sesión runtime del MVP.
+### Persistencia de plan y escenarios
+
+El MVP runtime de `Pruebas` trabaja como overlay aislado para no romper el render de React al cambiar entre vistas.
+
+Para que el plan no se pierda, el runtime intercepta el backend de sesiones:
+
+- Al usar `Guardar sesión` o `Guardar como`, se añade un bloque `testsRuntime` dentro del archivo `.jwmodbus-session`.
+- Ese bloque guarda:
+  - pasos del plan,
+  - slave configurado por paso,
+  - función,
+  - dirección,
+  - cantidad/valor,
+  - esperado,
+  - timeout,
+  - escenarios personalizados.
+- Al usar `Abrir sesión`, si el archivo contiene `testsRuntime`, la vista `Pruebas` restaura el plan guardado.
+
+Esto corrige el caso donde se cambiaba el `Slave` de `1` a `2`, se guardaba la sesión, se cerraba la app y al abrir volvía a `1`.
 
 ### Simulador slave
 
@@ -163,14 +175,12 @@ Resultados posibles:
 ## Pendiente técnico
 
 1. Migrar este MVP runtime a componente React nativo.
-2. Persistir el plan dentro del archivo `.jwmodbus-session`.
-3. Persistir escenarios personalizados dentro de `.jwmodbus-session`.
-4. Crear gestor definitivo de escenarios como componente React.
-5. Permitir importar/exportar escenarios como plantillas reutilizables.
-6. Integrar resultados de prueba con la vista `Sesiones`.
-7. Integrar trazas completas con la vista `Tráfico Modbus`.
-8. Conectar `Simulador slave` a un motor real de emulación.
-9. Definir cómo se inyectarán errores CRC reales desde el motor Modbus.
+2. Crear gestor definitivo de escenarios como componente React.
+3. Permitir importar/exportar escenarios como plantillas reutilizables.
+4. Integrar resultados de prueba con la vista `Sesiones` usando el mismo modelo de datos runtime.
+5. Integrar trazas completas con la vista `Tráfico Modbus`.
+6. Conectar `Simulador slave` a un motor real de emulación.
+7. Definir cómo se inyectarán errores CRC reales desde el motor Modbus.
 
 ---
 
@@ -187,7 +197,5 @@ Se carga desde:
 ```text
 src/renderer/main.tsx
 ```
-
-La implementación runtime ahora se renderiza como **overlay aislado sobre el área de trabajo**, sin modificar directamente el DOM interno de React (`.workspace`). Esto evita que React pierda sincronía al salir de `Pruebas` hacia `Sesiones`, `Dispositivos`, `Registros` o `Tráfico Modbus`.
 
 La intención es validar flujo, ergonomía y pruebas reales antes de formalizarlo como componente React definitivo.
