@@ -36,6 +36,23 @@ Para no perder cambios al cerrar/abrir la app o al guardar una sesión, se agreg
 - Lee `testsRuntime` al usar `Abrir sesión` y lo vuelve a importar al runtime.
 - Deja el estado en `window.__jwPendingTestsRuntimeState` antes de cargar el overlay, para restaurar el plan al iniciar.
 
+## Gestionar escenarios
+
+El botón **Gestionar escenarios** queda implementado dentro del mismo panel derecho de **Pruebas**.
+
+Funciones incluidas en el MVP:
+
+- Editar nombre, descripción, ícono y color del escenario seleccionado.
+- Crear un escenario nuevo a partir del plan visible.
+- Duplicar el escenario seleccionado.
+- Asignar el plan actual como pasos del escenario.
+- Restaurar escenarios base a sus valores predeterminados.
+- Eliminar escenarios personalizados.
+- Scroll interno en la lista/gestor para evitar desplazar la vista completa.
+- Persistencia dentro de `testsRuntime.scenarios`, por lo que se guarda en `.jwmodbus-session` junto con el plan.
+
+Regla de uso: después de editar escenarios o pasos, usar **Guardar plan** o cerrar el gestor con **Guardar y volver**; luego usar **Guardar sesión** para persistirlo en archivo.
+
 ## Regla para próximos cambios
 
 Para evitar repetir el bloqueo:
