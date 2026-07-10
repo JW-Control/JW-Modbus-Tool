@@ -188,4 +188,6 @@ Se carga desde:
 src/renderer/main.tsx
 ```
 
+La implementación runtime ahora se renderiza como **overlay aislado sobre el área de trabajo**, sin modificar directamente el DOM interno de React (`.workspace`). Esto evita que React pierda sincronía al salir de `Pruebas` hacia `Sesiones`, `Dispositivos`, `Registros` o `Tráfico Modbus`.
+
 La intención es validar flujo, ergonomía y pruebas reales antes de formalizarlo como componente React definitivo.
