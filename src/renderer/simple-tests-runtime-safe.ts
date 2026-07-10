@@ -60,30 +60,21 @@ if (!window[installKey]) {
     scenarios: clone(defaultScenarios)
   };
 
+  let mounted = false;
+  let lastRectKey = "";
   st.steps = plan(2);
 
   const api = () => window.jwModbus;
   const workspace = () => document.querySelector(".workspace");
   const statusText = () => document.querySelector(".status")?.textContent || "";
-  const statusParts = () =>
-    Array.from(document.querySelectorAll(".status span"))
-      .map((item) => item.textContent?.trim() || "")
-      .filter(Boolean);
-
-  const esc = (v) =>
-    String(v ?? "").replace(/[&<>"]/g, (c) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      "\"": "&quot;"
-    }[c]));
+  const statusParts = () => Array.from(document.querySelectorAll(".status span")).map((item) => item.textContent?.trim() || "").filter(Boolean);
+  const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
 
   function active() {
-    const activeButton = Array.from(document.querySelectorAll(".sidebar button.active"))
-      .some((button) => button.textContent?.includes("Pruebas"));
-    return activeButton || Boolean(document.querySelector(".workspace .tests"));
+    const activeButton = document.querySelector(".sidebar button.active");
+    return Boolean(activeButton?.textContent?.includes("Pruebas"));
   }
 
   function port() {
@@ -173,14 +164,8 @@ if (!window[installKey]) {
   }
 
   function boolText(value) { return normalizeBool(value) ? "ON" : "OFF"; }
-
-  function parseBoolList(value) {
-    return String(value ?? "").split(/[;,\s]+/).map((x) => x.trim()).filter(Boolean).map(normalizeBool);
-  }
-
-  function parseRegList(value) {
-    return String(value ?? "").split(/[;,\s]+/).map((x) => Number(x.trim())).filter((x) => Number.isFinite(x));
-  }
+  function parseBoolList(value) { return String(value ?? "").split(/[;,\s]+/).map((x) => x.trim()).filter(Boolean).map(normalizeBool); }
+  function parseRegList(value) { return String(value ?? "").split(/[;,\s]+/).map((x) => Number(x.trim())).filter((x) => Number.isFinite(x)); }
 
   function inferMode(fn, exp) {
     const text = String(exp ?? "").trim();
@@ -225,9 +210,7 @@ if (!window[installKey]) {
     };
   }
 
-  function cloneStep(step) {
-    return cleanStep({ ...step, res: "Pendiente", ms: null, detail: "", values: "", rows: [], at: "" });
-  }
+  function cloneStep(step) { return cleanStep({ ...step, res: "Pendiente", ms: null, detail: "", values: "", rows: [], at: "" }); }
 
   function plan(slave) {
     return [
@@ -295,25 +278,11 @@ if (!window[installKey]) {
   }
 
   function exposeRuntimeState() { window.__jwSimpleTestsRuntimeState = { export: exportRuntimeState, import: importRuntimeState }; }
+  function persistSilent() { exposeRuntimeState(); window.dispatchEvent(new CustomEvent("jw-simple-tests-plan-updated", { detail: exportRuntimeState() })); }
+  function msg(text) { const p = document.querySelector(".helper p"); if (p) p.textContent = text; }
+  function persistPlanMessage() { persistSilent(); msg("Plan guardado en memoria de la vista. Usa Guardar sesión para persistirlo en archivo."); }
 
-  function persistSilent() {
-    exposeRuntimeState();
-    window.dispatchEvent(new CustomEvent("jw-simple-tests-plan-updated", { detail: exportRuntimeState() }));
-  }
-
-  function msg(text) {
-    const p = document.querySelector(".helper p");
-    if (p) p.textContent = text;
-  }
-
-  function persistPlanMessage() {
-    persistSilent();
-    msg("Plan guardado en memoria de la vista. Usa Guardar sesión para persistirlo en archivo.");
-  }
-
-  function functionOptions(selected) {
-    return functionOrder.map((key) => `<option value="${key}" ${selected === key ? "selected" : ""}>${esc(F[key])}</option>`).join("");
-  }
+  function functionOptions(selected) { return functionOrder.map((key) => `<option value="${key}" ${selected === key ? "selected" : ""}>${esc(F[key])}</option>`).join(""); }
 
   function validationOptions(selected, fn) {
     const keys = isWrite(fn) ? ["response", "exact", "byAddress"] : ["count", "exact", "byAddress"];
@@ -321,15 +290,7 @@ if (!window[installKey]) {
   }
 
   function resultHtml(result) {
-    const map = {
-      Aprobado: ["✓", "resultOK"],
-      Pendiente: ["—", ""],
-      Timeout: ["!", "resultWarn"],
-      "Validación fallida": ["×", "resultBad"],
-      Excepción: ["!", "resultWarn"],
-      "CRC Error": ["!", "resultWarn"],
-      Error: ["×", "resultBad"]
-    };
+    const map = { Aprobado: ["✓", "resultOK"], Pendiente: ["—", ""], Timeout: ["!", "resultWarn"], "Validación fallida": ["×", "resultBad"], Excepción: ["!", "resultWarn"], "CRC Error": ["!", "resultWarn"], Error: ["×", "resultBad"] };
     const [icon, cls] = map[result] || map.Error;
     return `<span class="${cls} resultPill">${icon} ${esc(result)}</span>`;
   }
@@ -343,20 +304,7 @@ if (!window[installKey]) {
   function nameFor(fn, address) {
     if (fn === "fc1" || fn === "fc5" || fn === "fc15") return `Q0_${address}`;
     if (fn === "fc2") return `I0_${raw(fn, address)}`;
-    const names = {
-      40000: "Velocidad_Ref (RPM)",
-      40001: "Estado_Variador",
-      40002: "Corriente_Salida (A)",
-      40003: "Tension_DC (V)",
-      40004: "Temp_Disipador (°C)",
-      40005: "Horas_Marcha (h)",
-      40008: "Frecuencia_Salida (Hz)",
-      40009: "Estado_Alarma",
-      30000: "Input_Reg_0",
-      30001: "Input_Reg_1",
-      30002: "Input_Reg_2",
-      30003: "Input_Reg_3"
-    };
+    const names = { 40000: "Velocidad_Ref (RPM)", 40001: "Estado_Variador", 40002: "Corriente_Salida (A)", 40003: "Tension_DC (V)", 40004: "Temp_Disipador (°C)", 40005: "Horas_Marcha (h)", 40008: "Frecuencia_Salida (Hz)", 40009: "Estado_Alarma", 30000: "Input_Reg_0", 30001: "Input_Reg_1", 30002: "Input_Reg_2", 30003: "Input_Reg_3" };
     return names[address] || `Reg_${address}`;
   }
 
@@ -389,7 +337,6 @@ if (!window[installKey]) {
     const byAddr = expectedMap(step);
     const qty = countNumber(step);
     let actualValues = [];
-
     if (step.fn === "fc1" || step.fn === "fc2") actualValues = action?.values || [];
     if (step.fn === "fc3" || step.fn === "fc4") actualValues = action?.registerValues || [];
     if (step.fn === "fc5") actualValues = [normalizeBool(step.value)];
@@ -485,8 +432,8 @@ if (!window[installKey]) {
   }
 
   function kpiCard(title, value, sub, ringClass = "", ringText = "") {
-    if (ringClass) return `<section class="card kpiCard ringKpi"><div class="ring ${ringClass}"><strong>${esc(value)}</strong><small>${esc(ringText)}</small></div><div><h4>${esc(title)}</h4><p>${esc(sub)}</p></div></section>`;
-    return `<section class="card kpiCard"><div><h4>${esc(title)}</h4><strong class="big">${esc(value)}</strong><p>${esc(sub)}</p></div></section>`;
+    if (ringClass) return `<section class="card kpiCard ringKpi"><div class="ring ${ringClass}"><strong>${esc(value)}</strong><small>${esc(ringText)}</small></div><div class="kpiCopy"><h4>${esc(title)}</h4><p>${esc(sub)}</p></div></section>`;
+    return `<section class="card kpiCard textKpi"><div class="kpiCopy"><h4>${esc(title)}</h4><strong class="kpiValue ${title === "Errores" ? "danger" : ""}">${esc(value)}</strong><p>${esc(sub)}</p></div></section>`;
   }
 
   function stepRow(step, index) {
@@ -555,10 +502,39 @@ if (!window[installKey]) {
     const e = document.createElement("style");
     e.id = styleId;
     e.textContent = `
-#${overlayId}{position:fixed;z-index:40;background:linear-gradient(180deg,#061b2d,#031323);padding:12px;box-sizing:border-box;pointer-events:auto;color:var(--text,#eef7ff);overflow:hidden}
-.testsRuntime{height:100%;min-height:0;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr)318px;grid-template-rows:minmax(0,1.15fr)126px minmax(0,.82fr);gap:12px}.testsRuntime .card{min-height:0;overflow:hidden;border:1px solid #2d5c75;border-radius:9px;background:linear-gradient(180deg,#0b2a42dd,#071f33dd);box-shadow:inset 0 0 0 1px #ffffff06}.testsRuntime h2,.testsRuntime h3,.testsRuntime h4{margin:0;color:#00d5ff}.testsRuntime p{margin:0;color:#aac3d2}.testsRuntime .plan{grid-column:1;grid-row:1;display:flex;flex-direction:column;padding:12px}.testsRuntime .scenarios{grid-column:2;grid-row:1;display:flex;flex-direction:column;gap:10px;padding:12px}.testsRuntime .sim{grid-column:2;grid-row:2/4;display:flex;flex-direction:column;gap:10px;padding:12px}.testsRuntime .testkpis{grid-column:1;grid-row:2;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.testsRuntime .exec{grid-column:1;grid-row:3;display:flex;flex-direction:column;padding:10px}.testsRuntime .planHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex:0 0 auto;margin-bottom:8px}.testsRuntime .planTitle{display:grid;gap:8px}.testsRuntime .planActions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.testsRuntime button{border:1px solid #2d5c75;border-radius:7px;background:#061a2b;color:#eef7ff;padding:7px 10px;font-weight:700;cursor:pointer}.testsRuntime button.primary{background:linear-gradient(180deg,#1498f3,#0878c7);border-color:#11a7ff}.testsRuntime button.wide{width:100%}.testsRuntime .planBody,.testsRuntime .execBody{min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime table{width:100%;border-collapse:collapse;font-size:.84rem}.testsRuntime th,.testsRuntime td{border-bottom:1px solid #4588a640;padding:5px 7px;text-align:left;vertical-align:middle}.testsRuntime th{color:#aac3d2;font-weight:600;background:#ffffff0a;position:sticky;top:0;z-index:1}.testsRuntime input,.testsRuntime select,.testsRuntime textarea{width:100%;min-height:29px;border:1px solid #2d5c75;border-radius:6px;background:#061a2b;color:#eef7ff;padding:4px 7px;box-sizing:border-box}.testsRuntime textarea{min-height:58px;resize:vertical;font-family:inherit}.testsRuntime input:disabled{opacity:.62;color:#aac3d2}.testsRuntime input[type=checkbox]{width:17px;min-height:17px;accent-color:#5ce044}.testsRuntime .slaveInput{-moz-appearance:textfield}.testsRuntime .slaveInput::-webkit-inner-spin-button,.testsRuntime .slaveInput::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.testsRuntime .colActive{width:42px}.testsRuntime .colPaso{width:38px}.testsRuntime .colSlave{width:72px}.testsRuntime .colFn{width:185px}.testsRuntime .colAddr{width:86px}.testsRuntime .colCount{width:70px}.testsRuntime .colValue{width:138px}.testsRuntime .colMode{width:152px}.testsRuntime .colExpected{width:150px}.testsRuntime .colTimeout{width:78px}.testsRuntime .colResult{width:120px}.testsRuntime .colTrash{width:34px}.testsRuntime .infoLine{margin-top:7px;padding:7px 9px;border:1px solid #007da850;border-radius:7px;background:#073a5566;color:#aac3d2}.testsRuntime .scenarioList{display:flex;flex:1 1 auto;min-height:0;overflow:auto;flex-direction:column;gap:10px;padding-right:4px;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime .scenarioCard{display:grid;grid-template-columns:46px 1fr 28px;gap:10px;align-items:center;min-height:70px;padding:10px;border:1px solid #2d5c75;border-radius:11px;background:linear-gradient(180deg,#ffffff0d,#ffffff05);color:#eef7ff;text-align:left;flex:0 0 auto}.testsRuntime .scenarioCard.selected{border-color:#00d5ff;background:linear-gradient(180deg,#00bfff24,#00bfff0b);box-shadow:0 0 16px #00bfff1d,inset 0 0 0 1px #00bfff33}.testsRuntime .scenarioIcon{display:grid;place-items:center;width:42px;height:42px;border-radius:10px;font-size:1.35rem}.testsRuntime .scenarioIcon.shield{background:#1f6e3b88}.testsRuntime .scenarioIcon.clock,.testsRuntime .scenarioIcon.warn{background:#9a5d1288}.testsRuntime .scenarioIcon.bad{background:#9b313d88}.testsRuntime .scenarioIcon.cyan{background:#136b8e88}.testsRuntime .scenarioCard strong,.testsRuntime .scenarioCard small{display:block}.testsRuntime .scenarioCard small{color:#aac3d2;margin-top:4px;line-height:1.25}.testsRuntime .scenarioRadio{display:grid;place-items:center;width:24px;height:24px;border:2px solid #45677a;border-radius:50%}.testsRuntime .scenarioCard.selected .scenarioRadio{border-color:#00d5ff;background:radial-gradient(circle at center,#dff7ff 0 36%,transparent 40%)}.testsRuntime .manageScenarios{flex:0 0 auto}.testsRuntime .scenarioManager{overflow:auto}.testsRuntime .managerTop,.testsRuntime .twoCols{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.testsRuntime .sim small{color:#aac3d2}.testsRuntime .simButton{background:linear-gradient(180deg,#9b37e8,#7b19ce);border-color:#b859ff}.testsRuntime .kpiCard{padding:12px;display:flex;align-items:center;gap:16px}.testsRuntime .kpiCard .big{display:block;margin-top:8px;color:#00d5ff;font-size:1.85rem}.testsRuntime .kpiCard p{font-size:.8rem;margin-top:3px}.testsRuntime .ring{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(#5ce044 var(--pct,100%),#0b3952 0);position:relative;flex:0 0 auto}.testsRuntime .ring.steps{background:conic-gradient(#00c8ff var(--pct,100%),#0b3952 0)}.testsRuntime .ring::after{content:"";position:absolute;inset:13px;border-radius:50%;background:#062033}.testsRuntime .ring strong,.testsRuntime .ring small{position:relative;z-index:1}.testsRuntime .ring strong{font-size:1.25rem}.testsRuntime .ring small{font-size:.65rem;color:#eef7ff;margin-top:28px;position:absolute}.testsRuntime .execHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.testsRuntime .execHeader div{display:flex;gap:8px}.testsRuntime .resultOK{color:#5ce044;font-weight:800}.testsRuntime .resultWarn{color:#ffb22e;font-weight:800}.testsRuntime .resultBad{color:#ff5d5d;font-weight:800}.testsRuntime .bitBadge{display:inline-block;min-width:42px;text-align:center;border-radius:999px;padding:2px 9px;font-weight:800}.testsRuntime .bitBadge.on{background:#228a3c;color:white}.testsRuntime .bitBadge.off{background:#34495a;color:white}.testsRuntime .tiny{padding:4px 7px;min-width:26px}.testsRuntime .detailPanel{display:flex;flex-direction:column;min-height:0;position:relative}.testsRuntime .closeDetail{position:absolute;right:0;top:0}.testsRuntime .detailGrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;margin:12px 36px 8px 0}.testsRuntime .detailGrid span{border:1px solid #2d5c75;border-radius:6px;padding:7px;background:#061a2b}.testsRuntime .detailGrid small,.testsRuntime .detailGrid strong{display:block}.testsRuntime .detailGrid small{color:#aac3d2}.testsRuntime .detailTable{flex:1 1 auto}
+#${overlayId}{position:fixed;z-index:40;background:linear-gradient(180deg,#061b2d,#031323);padding:12px;box-sizing:border-box;pointer-events:auto;color:var(--text,#eef7ff);overflow:hidden}.jw-tests-overlay-active .workspace .tests{visibility:hidden!important}
+.testsRuntime{height:100%;min-height:0;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr)318px;grid-template-rows:minmax(0,1.15fr)126px minmax(0,.82fr);gap:12px}.testsRuntime .card{min-height:0;overflow:hidden;border:1px solid #2d5c75;border-radius:9px;background:linear-gradient(180deg,#0b2a42dd,#071f33dd);box-shadow:inset 0 0 0 1px #ffffff06}.testsRuntime h2,.testsRuntime h3,.testsRuntime h4{margin:0;color:#00d5ff}.testsRuntime p{margin:0;color:#aac3d2}.testsRuntime .plan{grid-column:1;grid-row:1;display:flex;flex-direction:column;padding:12px}.testsRuntime .scenarios{grid-column:2;grid-row:1;display:flex;flex-direction:column;gap:10px;padding:12px}.testsRuntime .sim{grid-column:2;grid-row:2/4;display:flex;flex-direction:column;gap:10px;padding:12px}.testsRuntime .testkpis{grid-column:1;grid-row:2;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.testsRuntime .exec{grid-column:1;grid-row:3;display:flex;flex-direction:column;padding:10px}.testsRuntime .planHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex:0 0 auto;margin-bottom:8px}.testsRuntime .planTitle{display:grid;gap:8px}.testsRuntime .planActions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.testsRuntime button{border:1px solid #2d5c75;border-radius:7px;background:#061a2b;color:#eef7ff;padding:7px 10px;font-weight:700;cursor:pointer}.testsRuntime button.primary{background:linear-gradient(180deg,#1498f3,#0878c7);border-color:#11a7ff}.testsRuntime button.wide{width:100%}.testsRuntime .planBody,.testsRuntime .execBody{min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime table{width:100%;border-collapse:collapse;font-size:.84rem}.testsRuntime th,.testsRuntime td{border-bottom:1px solid #4588a640;padding:5px 7px;text-align:left;vertical-align:middle}.testsRuntime th{color:#aac3d2;font-weight:600;background:#ffffff0a;position:sticky;top:0;z-index:1}.testsRuntime input,.testsRuntime select,.testsRuntime textarea{width:100%;min-height:29px;border:1px solid #2d5c75;border-radius:6px;background:#061a2b;color:#eef7ff;padding:4px 7px;box-sizing:border-box}.testsRuntime textarea{min-height:58px;resize:vertical;font-family:inherit}.testsRuntime input:disabled{opacity:.62;color:#aac3d2}.testsRuntime input[type=checkbox]{width:17px;min-height:17px;accent-color:#5ce044}.testsRuntime .slaveInput{-moz-appearance:textfield}.testsRuntime .slaveInput::-webkit-inner-spin-button,.testsRuntime .slaveInput::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.testsRuntime .colActive{width:42px}.testsRuntime .colPaso{width:38px}.testsRuntime .colSlave{width:72px}.testsRuntime .colFn{width:185px}.testsRuntime .colAddr{width:86px}.testsRuntime .colCount{width:70px}.testsRuntime .colValue{width:138px}.testsRuntime .colMode{width:152px}.testsRuntime .colExpected{width:150px}.testsRuntime .colTimeout{width:78px}.testsRuntime .colResult{width:120px}.testsRuntime .colTrash{width:34px}.testsRuntime .infoLine{margin-top:7px;padding:7px 9px;border:1px solid #007da850;border-radius:7px;background:#073a5566;color:#aac3d2}.testsRuntime .scenarioList{display:flex;flex:1 1 auto;min-height:0;overflow:auto;flex-direction:column;gap:10px;padding-right:4px;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime .scenarioCard{display:grid;grid-template-columns:46px 1fr 28px;gap:10px;align-items:center;min-height:70px;padding:10px;border:1px solid #2d5c75;border-radius:11px;background:linear-gradient(180deg,#ffffff0d,#ffffff05);color:#eef7ff;text-align:left;flex:0 0 auto}.testsRuntime .scenarioCard.selected{border-color:#00d5ff;background:linear-gradient(180deg,#00bfff24,#00bfff0b);box-shadow:0 0 16px #00bfff1d,inset 0 0 0 1px #00bfff33}.testsRuntime .scenarioIcon{display:grid;place-items:center;width:42px;height:42px;border-radius:10px;font-size:1.35rem}.testsRuntime .scenarioIcon.shield{background:#1f6e3b88}.testsRuntime .scenarioIcon.clock,.testsRuntime .scenarioIcon.warn{background:#9a5d1288}.testsRuntime .scenarioIcon.bad{background:#9b313d88}.testsRuntime .scenarioIcon.cyan{background:#136b8e88}.testsRuntime .scenarioCard strong,.testsRuntime .scenarioCard small{display:block}.testsRuntime .scenarioCard small{color:#aac3d2;margin-top:4px;line-height:1.25}.testsRuntime .scenarioRadio{display:grid;place-items:center;width:24px;height:24px;border:2px solid #45677a;border-radius:50%}.testsRuntime .scenarioCard.selected .scenarioRadio{border-color:#00d5ff;background:radial-gradient(circle at center,#dff7ff 0 36%,transparent 40%)}.testsRuntime .manageScenarios{flex:0 0 auto}.testsRuntime .scenarioManager{overflow:auto}.testsRuntime .managerTop,.testsRuntime .twoCols{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.testsRuntime .sim small{color:#aac3d2}.testsRuntime .simButton{background:linear-gradient(180deg,#9b37e8,#7b19ce);border-color:#b859ff}.testsRuntime .kpiCard{padding:12px 16px;display:flex!important;align-items:center!important;justify-content:center!important;gap:18px}.testsRuntime .kpiCard .kpiCopy{display:flex;flex-direction:column;justify-content:center;gap:4px;min-width:0}.testsRuntime .kpiCard h4{color:#b9d1df;font-size:1rem}.testsRuntime .kpiCard p{font-size:.82rem;color:#aac3d2;margin:0}.testsRuntime .textKpi{align-items:center!important;justify-content:flex-start!important}.testsRuntime .kpiValue{display:block!important;border:0!important;background:transparent!important;box-shadow:none!important;color:#00d5ff!important;font-size:1.9rem!important;line-height:1.1!important;padding:0!important;margin:0!important;min-height:0!important}.testsRuntime .kpiValue.danger{color:#ff5d5d!important}.testsRuntime .ring{width:74px;height:74px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(#5ce044 var(--pct,100%),#0b3952 0);position:relative;flex:0 0 auto}.testsRuntime .ring.steps{background:conic-gradient(#00c8ff var(--pct,100%),#0b3952 0)}.testsRuntime .ring::after{content:"";position:absolute;inset:13px;border-radius:50%;background:#062033}.testsRuntime .ring strong,.testsRuntime .ring small{position:relative;z-index:1}.testsRuntime .ring strong{font-size:1.25rem}.testsRuntime .ring small{font-size:.65rem;color:#eef7ff;margin-top:30px;position:absolute}.testsRuntime .execHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.testsRuntime .execHeader div{display:flex;gap:8px}.testsRuntime .resultOK{color:#5ce044;font-weight:800}.testsRuntime .resultWarn{color:#ffb22e;font-weight:800}.testsRuntime .resultBad{color:#ff5d5d;font-weight:800}.testsRuntime .bitBadge{display:inline-block;min-width:42px;text-align:center;border-radius:999px;padding:2px 9px;font-weight:800}.testsRuntime .bitBadge.on{background:#228a3c;color:white}.testsRuntime .bitBadge.off{background:#34495a;color:white}.testsRuntime .tiny{padding:4px 7px;min-width:26px}.testsRuntime .detailPanel{display:flex;flex-direction:column;min-height:0;position:relative}.testsRuntime .closeDetail{position:absolute;right:0;top:0}.testsRuntime .detailGrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;margin:12px 36px 8px 0}.testsRuntime .detailGrid span{border:1px solid #2d5c75;border-radius:6px;padding:7px;background:#061a2b}.testsRuntime .detailGrid small,.testsRuntime .detailGrid strong{display:block}.testsRuntime .detailGrid small{color:#aac3d2}.testsRuntime .detailTable{flex:1 1 auto}
 `;
     document.head.appendChild(e);
+  }
+
+  function updateField(target, shouldRender) {
+    const index = target.dataset?.i != null ? Number(target.dataset.i) : null;
+    const field = target.dataset?.field;
+    if (index == null || !field || !st.steps[index]) return false;
+    const step = st.steps[index];
+    if (field === "on") step.on = target.checked;
+    else if (field === "fn") {
+      const nextFn = target.value;
+      step.fn = nextFn;
+      step.addr = def(nextFn);
+      step.count = defaultCount(nextFn);
+      step.value = defaultValue(nextFn);
+      step.expectedMode = defaultMode(nextFn);
+      step.expectedValue = "";
+    } else if (field === "expectedMode") {
+      step.expectedMode = target.value;
+      step.expectedValue = step.expectedMode === "exact" ? (isWrite(step.fn) ? step.value : "") : "";
+    } else if (field === "slave") step.slave = Math.max(1, Math.min(247, parseInt(target.value, 10) || 1));
+    else if (field === "addr") step.addr = Number(target.value) || 0;
+    else if (field === "count") step.count = String(target.value);
+    else if (field === "value") { step.value = String(target.value); if (!isRead(step.fn)) step.count = String(countNumber(step)); }
+    else if (field === "expectedValue") step.expectedValue = String(target.value);
+    else if (field === "to") step.to = Number(target.value) || 1000;
+    st.steps[index] = cleanStep(step);
+    persistSilent();
+    if (shouldRender) render();
+    return true;
   }
 
   function bind() {
@@ -566,45 +542,33 @@ if (!window[installKey]) {
     if (!root || root.dataset.bound === "1") return;
     root.dataset.bound = "1";
 
+    root.addEventListener("input", (event) => {
+      const target = event.target;
+      if (target?.matches?.("input[data-field], textarea[data-scenario-field], input[data-scenario-field]")) {
+        if (target.dataset?.scenarioField) {
+          const scenario = st.scenarios[st.sc];
+          scenario[target.dataset.scenarioField] = target.value;
+          st.scenarios[st.sc] = normalizeScenario(scenario, scenario);
+          persistSilent();
+          return;
+        }
+        updateField(target, false);
+      }
+    });
+
     root.addEventListener("change", (event) => {
       const target = event.target;
-      const index = target.dataset?.i != null ? Number(target.dataset.i) : null;
-      const field = target.dataset?.field;
-      if (index != null && field && st.steps[index]) {
-        const step = st.steps[index];
-        if (field === "on") step.on = target.checked;
-        else if (field === "fn") {
-          const nextFn = target.value;
-          step.fn = nextFn;
-          step.addr = def(nextFn);
-          step.count = defaultCount(nextFn);
-          step.value = defaultValue(nextFn);
-          step.expectedMode = defaultMode(nextFn);
-          step.expectedValue = "";
-        } else if (field === "expectedMode") {
-          step.expectedMode = target.value;
-          step.expectedValue = step.expectedMode === "exact" ? (isWrite(step.fn) ? step.value : "") : "";
-        } else if (field === "slave") step.slave = Math.max(1, Math.min(247, parseInt(target.value, 10) || 1));
-        else if (field === "addr") step.addr = Number(target.value) || 0;
-        else if (field === "count") step.count = String(target.value);
-        else if (field === "value") {
-          step.value = String(target.value);
-          if (!isRead(step.fn)) step.count = String(countNumber(step));
-        } else if (field === "expectedValue") step.expectedValue = String(target.value);
-        else if (field === "to") step.to = Number(target.value) || 1000;
-        st.steps[index] = cleanStep(step);
-        persistSilent();
-        render();
+      if (target.dataset?.field) {
+        const renderNeeded = target.tagName === "SELECT" || target.type === "checkbox";
+        updateField(target, renderNeeded);
       }
-
       if (target.dataset?.scenarioField) {
         const scenario = st.scenarios[st.sc];
         scenario[target.dataset.scenarioField] = target.value;
         st.scenarios[st.sc] = normalizeScenario(scenario, scenario);
         persistSilent();
-        render();
+        if (target.tagName === "SELECT") render();
       }
-
       if (target.dataset?.action === "manager-select") {
         st.sc = target.value;
         const scenario = st.scenarios[st.sc];
@@ -639,11 +603,25 @@ if (!window[installKey]) {
     });
   }
 
+  function applyGeometry(root, area) {
+    const rect = area.getBoundingClientRect();
+    const key = `${Math.round(rect.left)}:${Math.round(rect.top)}:${Math.round(rect.width)}:${Math.round(rect.height)}`;
+    if (key === lastRectKey) return false;
+    lastRectKey = key;
+    root.style.left = `${rect.left}px`;
+    root.style.top = `${rect.top}px`;
+    root.style.width = `${rect.width}px`;
+    root.style.height = `${rect.height}px`;
+    return true;
+  }
+
   function mount() {
     const area = workspace();
     if (!area) return;
     style();
+    document.body.classList.add("jw-tests-overlay-active");
     let root = document.getElementById(overlayId);
+    const isNew = !root;
     if (!root) {
       root = document.createElement("div");
       root.id = overlayId;
@@ -651,15 +629,19 @@ if (!window[installKey]) {
       const pending = window.__jwPendingTestsRuntimeState;
       if (pending) importRuntimeState(pending);
     }
-    const rect = area.getBoundingClientRect();
-    root.style.left = `${rect.left}px`;
-    root.style.top = `${rect.top}px`;
-    root.style.width = `${rect.width}px`;
-    root.style.height = `${rect.height}px`;
-    render();
+    applyGeometry(root, area);
+    if (isNew || !mounted || !root.querySelector(".testsRuntime")) {
+      mounted = true;
+      render();
+    }
   }
 
-  function unmount() { document.getElementById(overlayId)?.remove(); }
+  function unmount() {
+    document.body.classList.remove("jw-tests-overlay-active");
+    document.getElementById(overlayId)?.remove();
+    mounted = false;
+    lastRectKey = "";
+  }
 
   function sync() {
     try { if (active()) mount(); else unmount(); }
@@ -669,7 +651,7 @@ if (!window[installKey]) {
   exposeRuntimeState();
   if (window.__jwPendingTestsRuntimeState) importRuntimeState(window.__jwPendingTestsRuntimeState);
   setInterval(sync, 450);
-  window.addEventListener("resize", sync);
+  window.addEventListener("resize", () => { lastRectKey = ""; sync(); });
   window.addEventListener("jw-simple-tests-runtime-import", (event) => importRuntimeState(event.detail));
   setTimeout(sync, 80);
 }
