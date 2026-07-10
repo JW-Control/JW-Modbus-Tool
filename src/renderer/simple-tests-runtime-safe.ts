@@ -17,7 +17,7 @@ if (!window[installKey]) {
     fc16: "FC16 Write Multiple Registers"
   };
 
-  const functionOrder = ["fc3", "fc6", "fc5", "fc15", "fc16", "fc4", "fc1", "fc2"];
+  const functionOrder = ["fc1", "fc2", "fc3", "fc4", "fc5", "fc6", "fc15", "fc16"];
   const readFns = new Set(["fc1", "fc2", "fc3", "fc4"]);
   const writeFns = new Set(["fc5", "fc6", "fc15", "fc16"]);
   const bitFns = new Set(["fc1", "fc2", "fc5", "fc15"]);
@@ -25,12 +25,27 @@ if (!window[installKey]) {
   const styleId = "simple-tests-runtime-safe-style";
   const runtimeFormat = "jwmodbus-tests-runtime";
   const defaultScenarioIds = new Set(["normal", "timeout", "crc", "exception"]);
-  const colorOptions = { shield: "Verde", clock: "Naranja", warn: "Amarillo", bad: "Rojo", cyan: "Azul" };
+
+  const colorOptions = {
+    shield: "Verde",
+    clock: "Naranja",
+    warn: "Amarillo",
+    bad: "Rojo",
+    cyan: "Azul"
+  };
+
   const defaultScenarios = {
     normal: { icon: "🛡", name: "Operación normal", desc: "Verifica lectura y escritura correcta.", color: "shield" },
     timeout: { icon: "⏱", name: "Timeout detectado", desc: "Simula dispositivos no disponibles.", color: "clock" },
     crc: { icon: "⚠", name: "Error CRC detectado", desc: "Reserva escenario para tramas CRC inválidas.", color: "warn" },
     exception: { icon: "✖", name: "Excepción Modbus", desc: "Fuerza códigos de excepción (01, 02, 03).", color: "bad" }
+  };
+
+  const validationModes = {
+    response: "Respuesta OK",
+    count: "Cantidad solicitada",
+    exact: "Valores exactos",
+    byAddress: "Por dirección"
   };
 
   const st = {
@@ -41,191 +56,620 @@ if (!window[installKey]) {
     running: false,
     stopped: false,
     manage: false,
-    detailIndex: null,
+    detail: null,
     scenarios: clone(defaultScenarios)
   };
-  st.steps = plan(1);
+
+  st.steps = plan(2);
 
   const api = () => window.jwModbus;
-  const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
   const workspace = () => document.querySelector(".workspace");
   const statusText = () => document.querySelector(".status")?.textContent || "";
-  const statusParts = () => Array.from(document.querySelectorAll(".status span")).map((item) => item.textContent?.trim() || "").filter(Boolean);
-  const active = () => Array.from(document.querySelectorAll(".sidebar button.active")).some((button) => button.textContent?.includes("Pruebas")) || Boolean(document.querySelector(".workspace .tests"));
+  const statusParts = () =>
+    Array.from(document.querySelectorAll(".status span"))
+      .map((item) => item.textContent?.trim() || "")
+      .filter(Boolean);
+
+  const esc = (v) =>
+    String(v ?? "").replace(/[&<>"]/g, (c) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;"
+    }[c]));
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
-  function port() { const fromSpan = statusParts().find((value) => /^COM\d+$/i.test(value)); if (fromSpan) return fromSpan; return /COM\d{1,3}/i.exec(statusText())?.[0] || "COM3"; }
-  function baud() { const fromSpan = statusParts().find((value) => /^(9600|19200|38400|57600|115200|230400)$/.test(value)); if (fromSpan) return fromSpan; return /\b(9600|19200|38400|57600|115200|230400)\b/.exec(statusText())?.[1] || "115200"; }
-  function sid() { const m = /Slave activo ID\s*(\d+)/i.exec(statusText()); return m ? +m[1] : 1; }
-  function mk(slave, fn, addr, amount, exp, to = 1000) { return { on: true, slave, fn, addr, amount: String(amount), exp, to, res: "Pendiente", ms: null, detail: "", values: "", at: "", rows: [], validationMode: "Respuesta", validationDetail: "" }; }
-  function cloneStep(x) { return { ...x, res: "Pendiente", ms: null, detail: "", values: "", at: "", rows: [], validationMode: "Respuesta", validationDetail: "" }; }
-  function cleanStep(x) { const fn = F[x?.fn] ? x.fn : "fc3"; return { on: x?.on !== false, slave: Math.max(1, Math.min(247, Number.parseInt(String(x?.slave ?? 1), 10) || 1)), fn, addr: Number.isFinite(Number(x?.addr)) ? Number(x.addr) : def(fn), amount: String(x?.amount ?? defaultAmount(fn)), exp: String(x?.exp ?? defaultExpected(fn, x?.amount ?? defaultAmount(fn))), to: Number.isFinite(Number(x?.to)) ? Number(x.to) : 1000, res: "Pendiente", ms: null, detail: "", values: "", at: "", rows: [], validationMode: "Respuesta", validationDetail: "" }; }
-  function plan(slave) { return [mk(slave, "fc3", 40000, 10, "10 regs"), mk(slave, "fc6", 40010, 1234, "OK"), mk(slave, "fc5", 0, "ON", "OK"), mk(slave, "fc15", 0, "1,0,1,0", "OK"), mk(slave, "fc16", 40020, "10,20,30", "OK"), mk(slave, "fc4", 30000, 8, "8 regs"), mk(slave, "fc1", 0, 8, "8 coils"), mk(slave, "fc2", 0, 8, "8 bits", 1500)]; }
-  function raw(fn, a) { if (["fc3", "fc6", "fc16"].includes(fn)) return a >= 40000 ? a - 40000 : a; if (fn === "fc4") return a >= 30000 ? a - 30000 : a; if (fn === "fc2") return a >= 10000 ? a - 10000 : a; return a; }
-  function def(fn) { if (["fc3", "fc6", "fc16"].includes(fn)) return 40000; if (fn === "fc4") return 30000; if (fn === "fc2") return 10000; return 0; }
-  function defaultAmount(fn) { if (fn === "fc5") return "ON"; if (fn === "fc15") return "1,0,1,0"; if (fn === "fc16") return "100,200,300"; if (fn === "fc6") return "1234"; if (fn === "fc1" || fn === "fc2") return "8"; return "1"; }
-  function defaultExpected(fn, amount = defaultAmount(fn)) { if (writeFns.has(fn)) return "OK"; if (fn === "fc1") return `${amount} coils`; if (fn === "fc2") return `${amount} bits`; return `${amount} regs`; }
-  function short(fn) { return F[fn].replace("Registers", "Regs").replace("Register", "Reg").replace("Discrete Inputs", "Discrete").replace("Holding", "Hold.").replace("Multiple", "Multi."); }
-  function normalizeBool(v) { const s = String(v ?? "").trim().toLowerCase(); return ["1", "true", "on", "sí", "si", "high"].includes(s); }
-  function boolLabel(v) { return normalizeBool(v) ? "ON" : "OFF"; }
-  function parseBoolList(v) { return String(v ?? "").split(/[;,\s]+/).map((x) => x.trim()).filter(Boolean).map(normalizeBool); }
-  function parseRegList(v) { return String(v ?? "").split(/[;,\s]+/).map((x) => Number(x.trim())).filter((x) => Number.isFinite(x)); }
-  function amountNumber(x) { const n = Number(x.amount); return Number.isFinite(n) ? n : 1; }
-  function valueList(x, responseValue) { const v = responseValue || {}; const values = v.registerValues || v.values || v.coilValues || v.data || []; return Array.isArray(values) ? values : []; }
-  function res(r) { const c = r === "Aprobado" ? "resultOK" : r === "Pendiente" ? "" : r === "Timeout" ? "resultWarn" : r === "Validación fallida" ? "resultWarn" : "resultBad"; const icon = r === "Aprobado" ? "✓" : r === "Pendiente" ? "—" : r === "Timeout" || r === "Validación fallida" ? "!" : "×"; return `<span class="${c} resultPill">${icon} ${esc(r)}</span>`; }
-  function msg(t) { const p = document.querySelector(".helper p"); if (p) p.textContent = t; }
-  function scenarioColor(color) { return colorOptions[color] ? color : "shield"; }
-  function normalizeScenario(input, fallback = defaultScenarios.normal) { const base = fallback || defaultScenarios.normal; return { icon: String(input?.icon ?? base.icon ?? "🧪").slice(0, 4), name: String(input?.name ?? base.name ?? "Escenario"), desc: String(input?.desc ?? base.desc ?? "Escenario de prueba."), color: scenarioColor(input?.color ?? base.color), steps: Array.isArray(input?.steps) ? input.steps.map(cleanStep) : undefined }; }
-  function normalizeScenarios(input) { const result = clone(defaultScenarios); if (!input || typeof input !== "object") return result; for (const [key, value] of Object.entries(input)) { const safeKey = defaultScenarioIds.has(key) ? key : key.replace(/[^\w-]/g, "_") || `custom_${Date.now()}`; result[safeKey] = normalizeScenario(value, result[safeKey]); } return result; }
-  function exportRuntimeState() { return { format: runtimeFormat, version: 1, savedAt: new Date().toISOString(), selectedScenario: st.sc, simulatorState: st.sim, steps: st.steps.map(cleanStep), scenarios: normalizeScenarios(st.scenarios) }; }
-  function importRuntimeState(data) { try { const src = data?.format === runtimeFormat ? data : data?.testsRuntime; if (!src || src.format !== runtimeFormat || !Array.isArray(src.steps)) return false; st.scenarios = normalizeScenarios(src.scenarios); st.sc = st.scenarios[src.selectedScenario] ? src.selectedScenario : "normal"; st.sim = src.simulatorState || "Detenido"; st.steps = src.steps.map(cleanStep); st.log = []; st.manage = false; st.detailIndex = null; render(); return true; } catch (error) { console.warn("[JW Modbus Tool] No se pudo importar testsRuntime", error); return false; } }
+
+  function active() {
+    const activeButton = Array.from(document.querySelectorAll(".sidebar button.active"))
+      .some((button) => button.textContent?.includes("Pruebas"));
+    return activeButton || Boolean(document.querySelector(".workspace .tests"));
+  }
+
+  function port() {
+    const fromSpan = statusParts().find((value) => /^COM\d+$/i.test(value));
+    if (fromSpan) return fromSpan;
+    return /COM\d{1,3}/i.exec(statusText())?.[0] || "COM3";
+  }
+
+  function baud() {
+    const fromSpan = statusParts().find((value) => /^(9600|19200|38400|57600|115200|230400)$/.test(value));
+    if (fromSpan) return fromSpan;
+    return /\b(9600|19200|38400|57600|115200|230400)\b/.exec(statusText())?.[1] || "115200";
+  }
+
+  function sid() {
+    const match = /Slave activo ID\s*(\d+)/i.exec(statusText());
+    return match ? +match[1] : 2;
+  }
+
+  function isRead(fn) { return readFns.has(fn); }
+  function isWrite(fn) { return writeFns.has(fn); }
+
+  function raw(fn, address) {
+    const a = Number(address) || 0;
+    if (["fc3", "fc6", "fc16"].includes(fn)) return a >= 40000 ? a - 40000 : a;
+    if (fn === "fc4") return a >= 30000 ? a - 30000 : a;
+    if (fn === "fc2") return a >= 10000 ? a - 10000 : a;
+    return a;
+  }
+
+  function displayAddress(fn, base, index = 0) {
+    const a = Number(base) || 0;
+    const value = a + index;
+    if (fn === "fc3" || fn === "fc6" || fn === "fc16") return value >= 40000 ? value : 40000 + value;
+    if (fn === "fc4") return value >= 30000 ? value : 30000 + value;
+    if (fn === "fc2") return value >= 10000 ? value : 10000 + value;
+    return value;
+  }
+
+  function def(fn) {
+    if (["fc3", "fc6", "fc16"].includes(fn)) return 40000;
+    if (fn === "fc4") return 30000;
+    if (fn === "fc2") return 10000;
+    return 0;
+  }
+
+  function defaultCount(fn) {
+    if (fn === "fc1" || fn === "fc2") return "8";
+    if (fn === "fc3" || fn === "fc4") return "1";
+    if (fn === "fc15") return "4";
+    if (fn === "fc16") return "3";
+    return "1";
+  }
+
+  function defaultValue(fn) {
+    if (fn === "fc5") return "ON";
+    if (fn === "fc6") return "1234";
+    if (fn === "fc15") return "1,0,1,0";
+    if (fn === "fc16") return "100,200,300";
+    return "";
+  }
+
+  function defaultMode(fn) { return isWrite(fn) ? "response" : "count"; }
+
+  function countNumber(step) {
+    if (isRead(step.fn)) {
+      const n = Number(step.count);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+    }
+    if (step.fn === "fc15") return parseBoolList(step.value).length || 1;
+    if (step.fn === "fc16") return parseRegList(step.value).length || 1;
+    return 1;
+  }
+
+  function expectedAutoText(step) {
+    if (step.expectedMode === "response") return "OK";
+    if (step.expectedMode === "count") {
+      const suffix = step.fn === "fc1" ? "coils" : step.fn === "fc2" ? "bits" : "regs";
+      return `${countNumber(step)} ${suffix}`;
+    }
+    return step.expectedValue || "";
+  }
+
+  function normalizeBool(value) {
+    const s = String(value ?? "").trim().toLowerCase();
+    return ["1", "true", "on", "sí", "si", "high"].includes(s);
+  }
+
+  function boolText(value) { return normalizeBool(value) ? "ON" : "OFF"; }
+
+  function parseBoolList(value) {
+    return String(value ?? "").split(/[;,\s]+/).map((x) => x.trim()).filter(Boolean).map(normalizeBool);
+  }
+
+  function parseRegList(value) {
+    return String(value ?? "").split(/[;,\s]+/).map((x) => Number(x.trim())).filter((x) => Number.isFinite(x));
+  }
+
+  function inferMode(fn, exp) {
+    const text = String(exp ?? "").trim();
+    if (!text) return defaultMode(fn);
+    if (/^ok$/i.test(text)) return "response";
+    if (/^\d+\s*(regs?|coils?|bits?)$/i.test(text)) return "count";
+    if (text.includes("=")) return "byAddress";
+    return "exact";
+  }
+
+  function inferExpectedValue(exp) {
+    const text = String(exp ?? "").trim();
+    if (!text || /^ok$/i.test(text) || /^\d+\s*(regs?|coils?|bits?)$/i.test(text)) return "";
+    return text;
+  }
+
+  function mk(slave, fn, addr, count, value, mode = defaultMode(fn), expectedValue = "", to = 1000) {
+    return cleanStep({ on: true, slave, fn, addr, count, value, expectedMode: mode, expectedValue, to });
+  }
+
+  function cleanStep(input) {
+    const fn = F[input?.fn] ? input.fn : "fc3";
+    const oldAmount = input?.amount;
+    const oldExp = input?.exp;
+    const mode = input?.expectedMode || inferMode(fn, oldExp);
+    return {
+      on: input?.on !== false,
+      slave: Math.max(1, Math.min(247, parseInt(String(input?.slave ?? 2), 10) || 2)),
+      fn,
+      addr: Number.isFinite(Number(input?.addr)) ? Number(input.addr) : def(fn),
+      count: String(input?.count ?? (isRead(fn) ? oldAmount ?? defaultCount(fn) : defaultCount(fn))),
+      value: String(input?.value ?? (isWrite(fn) ? oldAmount ?? defaultValue(fn) : "")),
+      expectedMode: validationModes[mode] ? mode : defaultMode(fn),
+      expectedValue: String(input?.expectedValue ?? inferExpectedValue(oldExp)),
+      to: Number.isFinite(Number(input?.to)) ? Number(input.to) : 1000,
+      res: input?.res || "Pendiente",
+      ms: input?.ms ?? null,
+      detail: input?.detail || "",
+      values: input?.values || "",
+      rows: Array.isArray(input?.rows) ? input.rows : [],
+      at: input?.at || ""
+    };
+  }
+
+  function cloneStep(step) {
+    return cleanStep({ ...step, res: "Pendiente", ms: null, detail: "", values: "", rows: [], at: "" });
+  }
+
+  function plan(slave) {
+    return [
+      mk(slave, "fc3", 40000, "6", "", "count"),
+      mk(slave, "fc4", 30000, "4", "", "count"),
+      mk(slave, "fc1", 0, "8", "", "count"),
+      mk(slave, "fc2", 0, "8", "", "count"),
+      mk(slave, "fc5", 0, "1", "ON", "response"),
+      mk(slave, "fc6", 40010, "1", "1234", "response"),
+      mk(slave, "fc15", 0, "4", "1,0,1,0", "response"),
+      mk(slave, "fc16", 40020, "3", "10,20,30", "response")
+    ];
+  }
+
+  function normalizeScenario(input, fallback = defaultScenarios.normal) {
+    const base = fallback || defaultScenarios.normal;
+    return {
+      icon: String(input?.icon ?? base.icon ?? "🧪").slice(0, 4),
+      name: String(input?.name ?? base.name ?? "Escenario"),
+      desc: String(input?.desc ?? base.desc ?? "Escenario de prueba."),
+      color: colorOptions[input?.color] ? input.color : base.color ?? "shield",
+      steps: Array.isArray(input?.steps) ? input.steps.map(cleanStep) : undefined
+    };
+  }
+
+  function normalizeScenarios(input) {
+    const result = clone(defaultScenarios);
+    if (!input || typeof input !== "object") return result;
+    for (const [key, value] of Object.entries(input)) {
+      const safeKey = defaultScenarioIds.has(key) ? key : key.replace(/[^\w-]/g, "_") || `custom_${Date.now()}`;
+      result[safeKey] = normalizeScenario(value, result[safeKey]);
+    }
+    return result;
+  }
+
+  function exportRuntimeState() {
+    return {
+      format: runtimeFormat,
+      version: 2,
+      savedAt: new Date().toISOString(),
+      selectedScenario: st.sc,
+      simulatorState: st.sim,
+      steps: st.steps.map(cleanStep),
+      scenarios: normalizeScenarios(st.scenarios)
+    };
+  }
+
+  function importRuntimeState(data) {
+    try {
+      const src = data?.format === runtimeFormat ? data : data?.testsRuntime;
+      if (!src || src.format !== runtimeFormat || !Array.isArray(src.steps)) return false;
+      st.scenarios = normalizeScenarios(src.scenarios);
+      st.sc = st.scenarios[src.selectedScenario] ? src.selectedScenario : "normal";
+      st.sim = src.simulatorState || "Detenido";
+      st.steps = src.steps.map(cleanStep);
+      st.log = [];
+      st.detail = null;
+      st.manage = false;
+      render();
+      return true;
+    } catch (error) {
+      console.warn("[JW Modbus Tool] No se pudo importar testsRuntime", error);
+      return false;
+    }
+  }
+
   function exposeRuntimeState() { window.__jwSimpleTestsRuntimeState = { export: exportRuntimeState, import: importRuntimeState }; }
-  function persistSilent() { exposeRuntimeState(); window.dispatchEvent(new CustomEvent("jw-simple-tests-plan-updated", { detail: exportRuntimeState() })); }
-  function persistPlanMessage() { persistSilent(); msg("Plan guardado en memoria de la vista y listo para persistirse con Guardar sesión."); }
+
+  function persistSilent() {
+    exposeRuntimeState();
+    window.dispatchEvent(new CustomEvent("jw-simple-tests-plan-updated", { detail: exportRuntimeState() }));
+  }
+
+  function msg(text) {
+    const p = document.querySelector(".helper p");
+    if (p) p.textContent = text;
+  }
+
+  function persistPlanMessage() {
+    persistSilent();
+    msg("Plan guardado en memoria de la vista. Usa Guardar sesión para persistirlo en archivo.");
+  }
+
+  function functionOptions(selected) {
+    return functionOrder.map((key) => `<option value="${key}" ${selected === key ? "selected" : ""}>${esc(F[key])}</option>`).join("");
+  }
+
+  function validationOptions(selected, fn) {
+    const keys = isWrite(fn) ? ["response", "exact", "byAddress"] : ["count", "exact", "byAddress"];
+    return keys.map((key) => `<option value="${key}" ${selected === key ? "selected" : ""}>${esc(validationModes[key])}</option>`).join("");
+  }
+
+  function resultHtml(result) {
+    const map = {
+      Aprobado: ["✓", "resultOK"],
+      Pendiente: ["—", ""],
+      Timeout: ["!", "resultWarn"],
+      "Validación fallida": ["×", "resultBad"],
+      Excepción: ["!", "resultWarn"],
+      "CRC Error": ["!", "resultWarn"],
+      Error: ["×", "resultBad"]
+    };
+    const [icon, cls] = map[result] || map.Error;
+    return `<span class="${cls} resultPill">${icon} ${esc(result)}</span>`;
+  }
+
+  function valueBadge(value, isBit) {
+    if (!isBit) return esc(value);
+    const on = normalizeBool(value);
+    return `<span class="bitBadge ${on ? "on" : "off"}">${on ? "ON" : "OFF"}</span>`;
+  }
+
+  function nameFor(fn, address) {
+    if (fn === "fc1" || fn === "fc5" || fn === "fc15") return `Q0_${address}`;
+    if (fn === "fc2") return `I0_${raw(fn, address)}`;
+    const names = {
+      40000: "Velocidad_Ref (RPM)",
+      40001: "Estado_Variador",
+      40002: "Corriente_Salida (A)",
+      40003: "Tension_DC (V)",
+      40004: "Temp_Disipador (°C)",
+      40005: "Horas_Marcha (h)",
+      40008: "Frecuencia_Salida (Hz)",
+      40009: "Estado_Alarma",
+      30000: "Input_Reg_0",
+      30001: "Input_Reg_1",
+      30002: "Input_Reg_2",
+      30003: "Input_Reg_3"
+    };
+    return names[address] || `Reg_${address}`;
+  }
+
+  function expectedMap(step) {
+    const map = new Map();
+    if (step.expectedMode !== "byAddress") return map;
+    for (const part of String(step.expectedValue || "").split(/[;,]+/)) {
+      const [left, right] = part.split("=").map((x) => x?.trim());
+      const address = Number(left);
+      if (Number.isFinite(address) && right != null) map.set(address, right);
+    }
+    return map;
+  }
+
+  function expectedSeq(step) {
+    if (step.expectedMode !== "exact") return [];
+    return String(step.expectedValue || "").split(/[;,\s]+/).map((x) => x.trim()).filter(Boolean);
+  }
+
+  function sameValue(actual, expected, isBit) {
+    if (expected == null || expected === "") return true;
+    if (isBit) return normalizeBool(actual) === normalizeBool(expected);
+    return Number(actual) === Number(expected);
+  }
+
+  function buildRows(step, action) {
+    const rows = [];
+    const isBit = bitFns.has(step.fn);
+    const seq = expectedSeq(step);
+    const byAddr = expectedMap(step);
+    const qty = countNumber(step);
+    let actualValues = [];
+
+    if (step.fn === "fc1" || step.fn === "fc2") actualValues = action?.values || [];
+    if (step.fn === "fc3" || step.fn === "fc4") actualValues = action?.registerValues || [];
+    if (step.fn === "fc5") actualValues = [normalizeBool(step.value)];
+    if (step.fn === "fc6") actualValues = [Number(step.value)];
+    if (step.fn === "fc15") actualValues = parseBoolList(step.value);
+    if (step.fn === "fc16") actualValues = parseRegList(step.value);
+
+    const total = isRead(step.fn) ? Math.max(qty, actualValues.length) : actualValues.length;
+    for (let i = 0; i < total; i += 1) {
+      const address = displayAddress(step.fn, step.addr, i);
+      const actualRaw = actualValues[i];
+      const actual = isBit ? boolText(actualRaw) : String(actualRaw ?? "");
+      const expected = byAddr.has(address) ? byAddr.get(address) : seq[i] ?? "";
+      const hasCriterion = step.expectedMode === "exact" || step.expectedMode === "byAddress";
+      const ok = hasCriterion ? sameValue(actual, expected, isBit) : true;
+      rows.push({ address, name: nameFor(step.fn, address), expected: hasCriterion ? expected || "—" : "—", actual: actual || "—", type: isBit ? "bool" : "uint16", validation: hasCriterion ? (ok ? "OK" : "No coincide") : "Sin criterio", ok });
+    }
+    return rows;
+  }
+
+  function validate(step, action, rows) {
+    if (action?.exception) return { result: "Excepción", detail: action.exception.exceptionName || "Excepción Modbus." };
+    if (action && action.crcOk === false) return { result: "CRC Error", detail: "La respuesta fue marcada como CRC inválido." };
+    const qty = countNumber(step);
+    if (step.expectedMode === "response") return { result: "Aprobado", detail: "Respuesta Modbus recibida correctamente." };
+    if (step.expectedMode === "count") {
+      const got = step.fn === "fc1" || step.fn === "fc2" ? action?.values?.length ?? 0 : step.fn === "fc3" || step.fn === "fc4" ? action?.registerValues?.length ?? 0 : qty;
+      const ok = got >= qty;
+      const label = step.fn === "fc1" ? "coils" : step.fn === "fc2" ? "bits" : "registros";
+      return { result: ok ? "Aprobado" : "Validación fallida", detail: ok ? `${qty} ${label} leídos correctamente.` : `Se esperaban ${qty} valores y llegaron ${got}.` };
+    }
+    const allOk = rows.every((row) => row.ok);
+    return { result: allOk ? "Aprobado" : "Validación fallida", detail: allOk ? "Validación de valores OK." : "Uno o más valores no coinciden con lo esperado." };
+  }
+
+  async function executeStep(step, index) {
+    const started = performance.now();
+    const commandBase = { unitId: step.slave, timeoutMs: Number(step.to) || 1000 };
+    const modbus = api()?.modbus;
+    if (!modbus) throw new Error("Backend Modbus no disponible.");
+    let action;
+    if (step.fn === "fc1") action = await modbus.readCoils({ ...commandBase, startAddress: raw(step.fn, step.addr), quantity: countNumber(step) });
+    else if (step.fn === "fc2") action = await modbus.readDiscreteInputs({ ...commandBase, startAddress: raw(step.fn, step.addr), quantity: countNumber(step) });
+    else if (step.fn === "fc3") action = await modbus.readHoldingRegisters({ ...commandBase, startAddress: raw(step.fn, step.addr), quantity: countNumber(step) });
+    else if (step.fn === "fc4") action = await modbus.readInputRegisters({ ...commandBase, startAddress: raw(step.fn, step.addr), quantity: countNumber(step) });
+    else if (step.fn === "fc5") action = await modbus.writeSingleCoil({ ...commandBase, address: raw(step.fn, step.addr), value: normalizeBool(step.value) });
+    else if (step.fn === "fc6") action = await modbus.writeSingleRegister({ ...commandBase, address: raw(step.fn, step.addr), value: Number(step.value) || 0 });
+    else if (step.fn === "fc15") action = await modbus.writeMultipleCoils({ ...commandBase, startAddress: raw(step.fn, step.addr), values: parseBoolList(step.value) });
+    else if (step.fn === "fc16") action = await modbus.writeMultipleRegisters({ ...commandBase, startAddress: raw(step.fn, step.addr), values: parseRegList(step.value) });
+    const rows = buildRows(step, action);
+    const validation = validate(step, action, rows);
+    const ms = Math.round(action?.elapsedMs ?? performance.now() - started);
+    const at = new Date().toLocaleTimeString("es-PE", { hour12: false });
+    st.steps[index] = cleanStep({ ...step, res: validation.result, ms, detail: validation.detail, rows, values: rows.map((row) => `${row.address}=${row.actual}`).join(", "), at });
+    st.log.unshift({ ...st.steps[index], index: index + 1 });
+  }
+
+  async function runPlan() {
+    if (st.running) return;
+    st.running = true;
+    st.stopped = false;
+    st.detail = null;
+    st.log = [];
+    st.steps = st.steps.map(cloneStep);
+    render();
+    for (let i = 0; i < st.steps.length; i += 1) {
+      if (st.stopped) break;
+      if (!st.steps[i].on) continue;
+      try {
+        await executeStep(st.steps[i], i);
+      } catch (error) {
+        const at = new Date().toLocaleTimeString("es-PE", { hour12: false });
+        const message = String(error?.message || error || "Error de comunicación.");
+        const result = /timeout/i.test(message) ? "Timeout" : "Error";
+        st.steps[i] = cleanStep({ ...st.steps[i], res: result, ms: Number(st.steps[i].to) || 1000, detail: message, rows: [], values: "", at });
+        st.log.unshift({ ...st.steps[i], index: i + 1 });
+      }
+      render();
+    }
+    st.running = false;
+    persistSilent();
+    msg("Plan ejecutado. Cada paso aprobado requiere comunicación OK y validación OK.");
+    render();
+  }
+
+  function kpis() {
+    const executed = st.steps.filter((x) => x.res !== "Pendiente");
+    const passed = executed.filter((x) => x.res === "Aprobado").length;
+    const failed = executed.filter((x) => x.res !== "Aprobado").length;
+    const avg = executed.length ? Math.round(executed.reduce((sum, x) => sum + (Number(x.ms) || 0), 0) / executed.length) : null;
+    const rate = executed.length ? Math.round((passed / executed.length) * 100) : 0;
+    return { executed: executed.length, passed, failed, avg, rate, total: st.steps.filter((x) => x.on).length };
+  }
+
+  function kpiCard(title, value, sub, ringClass = "", ringText = "") {
+    if (ringClass) return `<section class="card kpiCard ringKpi"><div class="ring ${ringClass}"><strong>${esc(value)}</strong><small>${esc(ringText)}</small></div><div><h4>${esc(title)}</h4><p>${esc(sub)}</p></div></section>`;
+    return `<section class="card kpiCard"><div><h4>${esc(title)}</h4><strong class="big">${esc(value)}</strong><p>${esc(sub)}</p></div></section>`;
+  }
+
+  function stepRow(step, index) {
+    const read = isRead(step.fn);
+    const expectedDisabled = step.expectedMode === "response" || step.expectedMode === "count";
+    return `<tr>
+      <td class="colActive"><input type="checkbox" data-i="${index}" data-field="on" ${step.on ? "checked" : ""}></td>
+      <td class="colPaso">${index + 1}</td>
+      <td class="colSlave"><input class="slaveInput" inputmode="numeric" data-i="${index}" data-field="slave" value="${esc(step.slave)}"></td>
+      <td class="colFn"><select data-i="${index}" data-field="fn">${functionOptions(step.fn)}</select></td>
+      <td class="colAddr"><input inputmode="numeric" data-i="${index}" data-field="addr" value="${esc(step.addr)}"></td>
+      <td class="colCount"><input inputmode="numeric" data-i="${index}" data-field="count" ${read ? "" : "disabled"} value="${esc(countNumber(step))}"></td>
+      <td class="colValue"><input data-i="${index}" data-field="value" ${read ? "disabled" : ""} value="${esc(read ? "—" : step.value)}"></td>
+      <td class="colMode"><select data-i="${index}" data-field="expectedMode">${validationOptions(step.expectedMode, step.fn)}</select></td>
+      <td class="colExpected"><input data-i="${index}" data-field="expectedValue" ${expectedDisabled ? "disabled" : ""} placeholder="${esc(expectedAutoText(step))}" value="${esc(expectedDisabled ? "" : step.expectedValue)}"></td>
+      <td class="colTimeout"><input inputmode="numeric" data-i="${index}" data-field="to" value="${esc(step.to)}"></td>
+      <td class="colResult">${resultHtml(step.res)}</td>
+      <td class="colTrash"><button class="tiny" data-action="delete-step" data-i="${index}">🗑</button></td>
+    </tr>`;
+  }
+
+  function planTable() {
+    return `<div class="planBody"><table class="planTable"><thead><tr><th>Activo</th><th>Paso</th><th>Slave</th><th>Función</th><th>Dirección</th><th>Cantidad</th><th>Valor</th><th>Validación</th><th>Esperado</th><th>Timeout</th><th>Resultado</th><th></th></tr></thead><tbody>${st.steps.map(stepRow).join("")}</tbody></table></div><div class="infoLine">ⓘ Cantidad se usa en lecturas. Valor se usa en escrituras. Validación define si basta respuesta/cantidad o si se comparan valores exactos.</div>`;
+  }
+
+  function scenariosHtml() {
+    if (st.manage) return scenarioManagerHtml();
+    return `<section class="card scenarios"><h3>Escenarios</h3><div class="scenarioList">${Object.entries(st.scenarios).map(([id, scenario]) => `<button class="scenarioCard ${id === st.sc ? "selected" : ""}" data-action="select-scenario" data-id="${esc(id)}"><span class="scenarioIcon ${esc(scenario.color)}">${esc(scenario.icon)}</span><span><strong>${esc(scenario.name)}</strong><small>${esc(scenario.desc)}</small></span><i class="scenarioRadio"></i></button>`).join("")}</div><button class="manageScenarios" data-action="manage-scenarios">Gestionar escenarios ›</button></section>`;
+  }
+
+  function scenarioManagerHtml() {
+    const scenario = st.scenarios[st.sc] || defaultScenarios.normal;
+    const isDefault = defaultScenarioIds.has(st.sc);
+    return `<section class="card scenarios scenarioManager"><h3>Gestionar escenarios</h3><div class="managerTop"><label>Escenario activo<select data-action="manager-select">${Object.entries(st.scenarios).map(([id, s]) => `<option value="${esc(id)}" ${id === st.sc ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label><button data-action="new-scenario">+ Nuevo</button></div><label>Nombre<input data-scenario-field="name" value="${esc(scenario.name)}"></label><label>Descripción<textarea data-scenario-field="desc">${esc(scenario.desc)}</textarea></label><div class="twoCols"><label>Ícono<input data-scenario-field="icon" value="${esc(scenario.icon)}"></label><label>Color<select data-scenario-field="color">${Object.entries(colorOptions).map(([key, label]) => `<option value="${key}" ${scenario.color === key ? "selected" : ""}>${label}</option>`).join("")}</select></label></div><button data-action="use-current-plan">Usar plan visible como pasos</button><div class="twoCols"><button data-action="duplicate-scenario">Duplicar</button>${isDefault ? `<button data-action="restore-scenario">Restaurar base</button>` : `<button data-action="delete-scenario">Eliminar</button>`}</div><button class="primary wide" data-action="save-manager">Guardar y volver</button></section>`;
+  }
+
+  function simHtml() {
+    return `<section class="card sim"><h3>Simulador slave <small>(PC como slave)</small></h3><label>Estado<input disabled value="${esc(st.sim)}"></label><label>Dirección slave<input inputmode="numeric" value="1"></label><label>Puerto<input disabled value="${esc(port())}"></label><label>Baud Rate<input disabled value="${esc(baud())}"></label><button class="simButton" data-action="toggle-sim">▶ ${st.sim === "Detenido" ? "Preparar" : "Detener"} simulador slave</button><button data-action="sim-settings">⚙</button></section>`;
+  }
+
+  function execRows() {
+    return st.steps.map((step, index) => `<tr><td>${esc(step.at || "—")}</td><td>${index + 1}</td><td>${esc(step.slave)}</td><td>${esc(F[step.fn])}</td><td>${esc(step.addr)}</td><td>${esc(isRead(step.fn) ? countNumber(step) : step.value)}</td><td>${resultHtml(step.res)}</td><td>${step.ms == null ? "—" : `${esc(step.ms)} ms`}</td><td>${esc(step.detail || "Pendiente de ejecución.")}</td><td><button class="tiny infoBtn" data-action="show-detail" data-i="${index}">ⓘ</button></td></tr>`).join("");
+  }
+
+  function detailHtml(index) {
+    const step = st.steps[index];
+    if (!step) return "";
+    const rows = step.rows || [];
+    return `<div class="detailPanel"><button class="closeDetail" data-action="close-detail">×</button><h3>Detalle del paso ${index + 1}</h3><p>${esc(F[step.fn])} · ${esc(step.detail || "Sin detalle.")}</p><div class="detailGrid"><span><small>Función</small><strong>${esc(F[step.fn])}</strong></span><span><small>Slave ID</small><strong>${esc(step.slave)}</strong></span><span><small>Dirección inicial</small><strong>${esc(step.addr)}</strong></span><span><small>${isRead(step.fn) ? "Cantidad" : "Valor"}</small><strong>${esc(isRead(step.fn) ? countNumber(step) : step.value)}</strong></span><span><small>Validación</small><strong>${esc(validationModes[step.expectedMode])}</strong></span><span><small>Resultado</small><strong>${esc(step.res)}</strong></span></div><div class="execBody detailTable"><table><thead><tr><th>Dirección</th><th>Nombre</th><th>Esperado</th><th>Leído/Escrito</th><th>Tipo</th><th>Validación</th></tr></thead><tbody>${rows.length ? rows.map((row) => `<tr><td>${esc(row.address)}</td><td>${esc(row.name)}</td><td>${esc(row.expected)}</td><td>${valueBadge(row.actual, row.type === "bool")}</td><td>${esc(row.type)}</td><td class="${row.validation === "No coincide" ? "resultBad" : row.validation === "OK" ? "resultOK" : ""}">${esc(row.validation)}</td></tr>`).join("") : `<tr><td colspan="6">Este paso no tiene valores detallados.</td></tr>`}</tbody></table></div></div>`;
+  }
+
+  function execHtml() {
+    return `<section class="card exec"><div class="execHeader"><h3>Registro de ejecución</h3><div><button data-action="clear-log">🗑 Limpiar registro</button><button data-action="export-log">⇩ Exportar</button></div></div>${st.detail == null ? `<div class="execBody"><table><thead><tr><th>Hora</th><th>Paso</th><th>Slave</th><th>Función</th><th>Dirección</th><th>Cantidad/Valor</th><th>Resultado</th><th>Tiempo</th><th>Detalle</th><th>Info</th></tr></thead><tbody>${execRows()}</tbody></table></div>` : detailHtml(st.detail)}</section>`;
+  }
+
+  function render() {
+    const root = document.getElementById(overlayId);
+    if (!root) return;
+    const k = kpis();
+    root.innerHTML = `<div class="testsRuntime"><section class="card plan"><div class="planHeader"><div class="planTitle"><h2>Plan de pruebas al slave</h2><p>PC como Master</p></div><div class="planActions"><button class="primary" data-action="run">▶ Iniciar prueba</button><button data-action="stop">■ Detener</button><button data-action="add-step">+ Agregar paso</button><button data-action="save-plan">💾 Guardar plan</button></div></div>${planTable()}</section>${scenariosHtml()}${simHtml()}<div class="testkpis">${kpiCard("Tasa de éxito", `${k.rate}%`, `Última ejecución: ${k.passed}/${k.executed || k.total} aprobados`, "success", "Éxito")}${kpiCard("Latencia promedio", k.avg == null ? "—" : `${k.avg} ms`, k.executed ? `Última ejecución: ${k.executed} paso(s)` : "Sin datos todavía")}${kpiCard("Errores", String(k.failed), "Última ejecución")}${kpiCard("Pasos completados", `${k.passed}/${k.total}`, "Última ejecución", "steps", "Pasos")}</div>${execHtml()}</div>`;
+    bind();
+  }
 
   function style() {
     if (document.getElementById(styleId)) return;
     const e = document.createElement("style");
     e.id = styleId;
     e.textContent = `
-#${overlayId}{position:fixed;z-index:40;background:linear-gradient(180deg,#061b2d,#031323);padding:12px;box-sizing:border-box;pointer-events:auto;color:var(--text);overflow:hidden}
-.testsRuntime{height:100%;min-height:0;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr)318px;grid-template-rows:minmax(0,1.16fr)142px minmax(0,.84fr);gap:14px}.testsRuntime .card{min-height:0;overflow:hidden}.testsRuntime .plan{grid-column:1;grid-row:1;display:flex;flex-direction:column}.testsRuntime .scenarios{grid-column:2;grid-row:1;display:flex;flex-direction:column;gap:10px}.testsRuntime .sim{grid-column:2;grid-row:2/4;display:flex;flex-direction:column;gap:10px}.testsRuntime .testkpis{grid-column:1;grid-row:2;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.testsRuntime .exec{grid-column:1;grid-row:3;display:flex;flex-direction:column}
-.testsRuntime .planHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex:0 0 auto;margin-bottom:8px}.testsRuntime .planTitle{display:grid;gap:8px}.testsRuntime .planTitle p{margin:0;color:var(--muted)}.testsRuntime .planActions{display:flex;gap:9px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.testsRuntime .planActions button{min-height:34px}.testsRuntime .planBody,.testsRuntime .execBody{min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime table{width:100%;border-collapse:collapse;font-size:.86rem}.testsRuntime th,.testsRuntime td{border-bottom:1px solid #4588a640;padding:6px 8px;text-align:left;vertical-align:middle}.testsRuntime th{color:var(--muted);font-weight:600;background:#ffffff0a;position:sticky;top:0;z-index:1}.testsRuntime input,.testsRuntime select,.testsRuntime textarea{width:100%;min-height:30px;border:1px solid #2d5c75;border-radius:6px;background:#061a2b;color:var(--text);padding:4px 7px}.testsRuntime textarea{min-height:58px;resize:vertical;font-family:inherit}.testsRuntime input[type=checkbox]{width:18px;min-height:18px;accent-color:#5ce044}.testsRuntime .slaveInput{-moz-appearance:textfield}.testsRuntime .slaveInput::-webkit-inner-spin-button,.testsRuntime .slaveInput::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-.testsRuntime .scenarioList{display:flex;flex:1 1 auto;min-height:0;overflow:auto;flex-direction:column;gap:10px;padding-right:4px;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime .scenarioCard{display:grid;grid-template-columns:46px 1fr 30px;gap:11px;align-items:center;min-height:72px;padding:11px;border:1px solid #2d5c75;border-radius:11px;background:linear-gradient(180deg,#ffffff0d,#ffffff05);color:var(--text);text-align:left;box-shadow:inset 0 0 0 1px #ffffff08;flex:0 0 auto}.testsRuntime .scenarioCard.selected{border-color:var(--cyan);background:linear-gradient(180deg,#00bfff24,#00bfff0b);box-shadow:0 0 16px #00bfff1d,inset 0 0 0 1px #00bfff33}.testsRuntime .scenarioIcon{display:grid;place-items:center;width:42px;height:42px;border-radius:10px;font-size:1.35rem}.testsRuntime .scenarioIcon.shield{background:#1f6e3b88}.testsRuntime .scenarioIcon.clock,.testsRuntime .scenarioIcon.warn{background:#9a5d1288}.testsRuntime .scenarioIcon.bad{background:#9b313d88}.testsRuntime .scenarioIcon.cyan{background:#136b8e88}.testsRuntime .scenarioCard strong,.testsRuntime .scenarioCard small{display:block}.testsRuntime .scenarioCard small{color:var(--muted);margin-top:4px;line-height:1.25}.testsRuntime .scenarioRadio{display:grid;place-items:center;width:26px;height:26px;border:2px solid #45677a;border-radius:50%;font-style:normal;color:transparent}.testsRuntime .scenarioCard.selected .scenarioRadio{border-color:var(--cyan);color:white;background:radial-gradient(circle at center,#dff7ff 0 36%,transparent 40%)}.testsRuntime .manageScenarios{flex:0 0 auto;margin-top:2px}
-.testsRuntime .managerTop{display:flex;gap:8px;align-items:end;justify-content:space-between}.testsRuntime .scenarioManager{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime .scenarioManager label{display:grid;gap:5px;color:var(--muted);font-size:.82rem}.testsRuntime .managerRow{display:grid;grid-template-columns:.75fr 1fr;gap:9px}.testsRuntime .managerActions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.testsRuntime .managerActions.wide{grid-template-columns:1fr}.testsRuntime .dangerBtn{border-color:#ff535366;color:#ff7c7c;background:#42151a}.testsRuntime .scenarioPreview{display:grid;grid-template-columns:42px minmax(0,1fr);gap:12px;align-items:center;border:1px solid #2d5c75;border-radius:10px;background:#ffffff09;padding:10px}.testsRuntime .scenarioPreview strong,.testsRuntime .scenarioPreview small{display:block;line-height:1.25}.testsRuntime .scenarioPreview small{color:var(--muted);margin-top:4px}.testsRuntime .scenarioPlanHint,.testsRuntime .managerNote{border:1px solid #00bfff33;border-radius:8px;background:#00bfff0d;color:var(--muted);padding:8px 10px;line-height:1.35}
-.testsRuntime .testkpis article{border:1px solid #2d5c75;border-radius:11px;background:linear-gradient(180deg,#ffffff0d,#ffffff05);padding:10px 18px;display:grid;grid-template-columns:112px minmax(0,1fr);align-items:center;justify-items:center;column-gap:16px;min-width:0}.testsRuntime .testkpis article.plain{grid-template-columns:1fr;justify-items:start;align-content:center}.testsRuntime .kpiRing{--p:0;display:grid;place-items:center;width:92px;height:92px;border-radius:50%;background:conic-gradient(var(--ring,#00bfff) calc(var(--p)*1%),#102d42 0);position:relative;margin:auto}.testsRuntime .kpiRing::after{content:"";position:absolute;inset:13px;border-radius:50%;background:#071d30;box-shadow:inset 0 0 12px #0008}.testsRuntime .kpiStack{position:relative;z-index:1;display:grid;place-items:center;gap:2px;text-align:center;line-height:1}.testsRuntime .kpiStack strong{font-size:1.42rem;color:var(--text);line-height:1}.testsRuntime .kpiStack small{color:var(--muted);font-size:.66rem;line-height:1}.testsRuntime .kpiText{justify-self:start;display:grid;gap:5px}.testsRuntime .kpiText span{color:var(--muted);font-weight:700}.testsRuntime .kpiText b{display:block;font-size:1.85rem;color:var(--cyan);line-height:1}.testsRuntime .kpiText.danger b{color:#ff5353}.testsRuntime .kpiText small{color:var(--muted);line-height:1.2}
-.testsRuntime .resultOK{color:var(--green);font-weight:700}.testsRuntime .resultBad{color:#ff5353;font-weight:700}.testsRuntime .resultWarn{color:#ffad24;font-weight:700}.testsRuntime .resultPill{white-space:nowrap}.testsRuntime .topActions{display:flex;gap:10px;align-items:center;justify-content:flex-end}.testsRuntime .iconOnly{min-height:28px;padding:0 8px}.testsRuntime .purple{background:linear-gradient(180deg,#8b36e7,#671cbe);border-color:#9d5cff;color:white}.testsRuntime .noteLine{margin-top:8px;padding:8px 10px;border:1px solid #00bfff33;border-radius:8px;color:var(--muted);background:#00bfff0d;flex:0 0 auto}.testsRuntime .fnRead{box-shadow:inset 3px 0 #00d5ff}.testsRuntime .fnWrite{box-shadow:inset 3px 0 #b35cff}.testsRuntime .simGrid{display:grid;gap:10px}.testsRuntime .simGrid label{display:grid;grid-template-columns:1fr 1fr;gap:9px;align-items:center;color:var(--muted)}.testsRuntime .simGrid span{font-size:.9rem}.testsRuntime .simGrid button{min-height:34px}
-.testsRuntime .infoBtn{width:26px;min-height:26px;border-radius:50%;padding:0;color:var(--cyan)}.testsRuntime .execDetail{height:100%;display:flex;flex-direction:column;gap:10px;min-height:0}.testsRuntime .detailHeader{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;border:1px solid #2d5c75;border-radius:10px;background:#ffffff08;padding:10px}.testsRuntime .detailHeader p{margin:4px 0 0;color:var(--muted)}.testsRuntime .detailGrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}.testsRuntime .detailGrid div{border:1px solid #2d5c75;border-radius:8px;background:#061a2b;padding:8px}.testsRuntime .detailGrid span{display:block;color:var(--muted);font-size:.74rem}.testsRuntime .detailGrid b{display:block;margin-top:3px}.testsRuntime .detailTable{min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime .badgeBool{display:inline-block;min-width:44px;text-align:center;border-radius:999px;padding:2px 9px;font-weight:800;border:1px solid #5d7889;background:#233b4c;color:#d8ecf5}.testsRuntime .badgeBool.on{background:#1f6e3b;border-color:#50d45c;color:white}.testsRuntime .validationOK{color:var(--green);font-weight:700}.testsRuntime .validationBad{color:#ffad24;font-weight:700}.testsRuntime .muted{color:var(--muted)}`;
+#${overlayId}{position:fixed;z-index:40;background:linear-gradient(180deg,#061b2d,#031323);padding:12px;box-sizing:border-box;pointer-events:auto;color:var(--text,#eef7ff);overflow:hidden}
+.testsRuntime{height:100%;min-height:0;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr)318px;grid-template-rows:minmax(0,1.15fr)126px minmax(0,.82fr);gap:12px}.testsRuntime .card{min-height:0;overflow:hidden;border:1px solid #2d5c75;border-radius:9px;background:linear-gradient(180deg,#0b2a42dd,#071f33dd);box-shadow:inset 0 0 0 1px #ffffff06}.testsRuntime h2,.testsRuntime h3,.testsRuntime h4{margin:0;color:#00d5ff}.testsRuntime p{margin:0;color:#aac3d2}.testsRuntime .plan{grid-column:1;grid-row:1;display:flex;flex-direction:column;padding:12px}.testsRuntime .scenarios{grid-column:2;grid-row:1;display:flex;flex-direction:column;gap:10px;padding:12px}.testsRuntime .sim{grid-column:2;grid-row:2/4;display:flex;flex-direction:column;gap:10px;padding:12px}.testsRuntime .testkpis{grid-column:1;grid-row:2;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.testsRuntime .exec{grid-column:1;grid-row:3;display:flex;flex-direction:column;padding:10px}.testsRuntime .planHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex:0 0 auto;margin-bottom:8px}.testsRuntime .planTitle{display:grid;gap:8px}.testsRuntime .planActions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.testsRuntime button{border:1px solid #2d5c75;border-radius:7px;background:#061a2b;color:#eef7ff;padding:7px 10px;font-weight:700;cursor:pointer}.testsRuntime button.primary{background:linear-gradient(180deg,#1498f3,#0878c7);border-color:#11a7ff}.testsRuntime button.wide{width:100%}.testsRuntime .planBody,.testsRuntime .execBody{min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime table{width:100%;border-collapse:collapse;font-size:.84rem}.testsRuntime th,.testsRuntime td{border-bottom:1px solid #4588a640;padding:5px 7px;text-align:left;vertical-align:middle}.testsRuntime th{color:#aac3d2;font-weight:600;background:#ffffff0a;position:sticky;top:0;z-index:1}.testsRuntime input,.testsRuntime select,.testsRuntime textarea{width:100%;min-height:29px;border:1px solid #2d5c75;border-radius:6px;background:#061a2b;color:#eef7ff;padding:4px 7px;box-sizing:border-box}.testsRuntime textarea{min-height:58px;resize:vertical;font-family:inherit}.testsRuntime input:disabled{opacity:.62;color:#aac3d2}.testsRuntime input[type=checkbox]{width:17px;min-height:17px;accent-color:#5ce044}.testsRuntime .slaveInput{-moz-appearance:textfield}.testsRuntime .slaveInput::-webkit-inner-spin-button,.testsRuntime .slaveInput::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.testsRuntime .colActive{width:42px}.testsRuntime .colPaso{width:38px}.testsRuntime .colSlave{width:72px}.testsRuntime .colFn{width:185px}.testsRuntime .colAddr{width:86px}.testsRuntime .colCount{width:70px}.testsRuntime .colValue{width:138px}.testsRuntime .colMode{width:152px}.testsRuntime .colExpected{width:150px}.testsRuntime .colTimeout{width:78px}.testsRuntime .colResult{width:120px}.testsRuntime .colTrash{width:34px}.testsRuntime .infoLine{margin-top:7px;padding:7px 9px;border:1px solid #007da850;border-radius:7px;background:#073a5566;color:#aac3d2}.testsRuntime .scenarioList{display:flex;flex:1 1 auto;min-height:0;overflow:auto;flex-direction:column;gap:10px;padding-right:4px;scrollbar-width:thin;scrollbar-color:#2d87aa #071d30}.testsRuntime .scenarioCard{display:grid;grid-template-columns:46px 1fr 28px;gap:10px;align-items:center;min-height:70px;padding:10px;border:1px solid #2d5c75;border-radius:11px;background:linear-gradient(180deg,#ffffff0d,#ffffff05);color:#eef7ff;text-align:left;flex:0 0 auto}.testsRuntime .scenarioCard.selected{border-color:#00d5ff;background:linear-gradient(180deg,#00bfff24,#00bfff0b);box-shadow:0 0 16px #00bfff1d,inset 0 0 0 1px #00bfff33}.testsRuntime .scenarioIcon{display:grid;place-items:center;width:42px;height:42px;border-radius:10px;font-size:1.35rem}.testsRuntime .scenarioIcon.shield{background:#1f6e3b88}.testsRuntime .scenarioIcon.clock,.testsRuntime .scenarioIcon.warn{background:#9a5d1288}.testsRuntime .scenarioIcon.bad{background:#9b313d88}.testsRuntime .scenarioIcon.cyan{background:#136b8e88}.testsRuntime .scenarioCard strong,.testsRuntime .scenarioCard small{display:block}.testsRuntime .scenarioCard small{color:#aac3d2;margin-top:4px;line-height:1.25}.testsRuntime .scenarioRadio{display:grid;place-items:center;width:24px;height:24px;border:2px solid #45677a;border-radius:50%}.testsRuntime .scenarioCard.selected .scenarioRadio{border-color:#00d5ff;background:radial-gradient(circle at center,#dff7ff 0 36%,transparent 40%)}.testsRuntime .manageScenarios{flex:0 0 auto}.testsRuntime .scenarioManager{overflow:auto}.testsRuntime .managerTop,.testsRuntime .twoCols{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.testsRuntime .sim small{color:#aac3d2}.testsRuntime .simButton{background:linear-gradient(180deg,#9b37e8,#7b19ce);border-color:#b859ff}.testsRuntime .kpiCard{padding:12px;display:flex;align-items:center;gap:16px}.testsRuntime .kpiCard .big{display:block;margin-top:8px;color:#00d5ff;font-size:1.85rem}.testsRuntime .kpiCard p{font-size:.8rem;margin-top:3px}.testsRuntime .ring{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(#5ce044 var(--pct,100%),#0b3952 0);position:relative;flex:0 0 auto}.testsRuntime .ring.steps{background:conic-gradient(#00c8ff var(--pct,100%),#0b3952 0)}.testsRuntime .ring::after{content:"";position:absolute;inset:13px;border-radius:50%;background:#062033}.testsRuntime .ring strong,.testsRuntime .ring small{position:relative;z-index:1}.testsRuntime .ring strong{font-size:1.25rem}.testsRuntime .ring small{font-size:.65rem;color:#eef7ff;margin-top:28px;position:absolute}.testsRuntime .execHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.testsRuntime .execHeader div{display:flex;gap:8px}.testsRuntime .resultOK{color:#5ce044;font-weight:800}.testsRuntime .resultWarn{color:#ffb22e;font-weight:800}.testsRuntime .resultBad{color:#ff5d5d;font-weight:800}.testsRuntime .bitBadge{display:inline-block;min-width:42px;text-align:center;border-radius:999px;padding:2px 9px;font-weight:800}.testsRuntime .bitBadge.on{background:#228a3c;color:white}.testsRuntime .bitBadge.off{background:#34495a;color:white}.testsRuntime .tiny{padding:4px 7px;min-width:26px}.testsRuntime .detailPanel{display:flex;flex-direction:column;min-height:0;position:relative}.testsRuntime .closeDetail{position:absolute;right:0;top:0}.testsRuntime .detailGrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;margin:12px 36px 8px 0}.testsRuntime .detailGrid span{border:1px solid #2d5c75;border-radius:6px;padding:7px;background:#061a2b}.testsRuntime .detailGrid small,.testsRuntime .detailGrid strong{display:block}.testsRuntime .detailGrid small{color:#aac3d2}.testsRuntime .detailTable{flex:1 1 auto}
+`;
     document.head.appendChild(e);
   }
 
-  function overlay() { return document.getElementById(overlayId); }
-  function positionOverlay(o = overlay()) { const h = workspace(); if (!o || !h) return; const r = h.getBoundingClientRect(); Object.assign(o.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` }); }
-  function ensureOverlay() { style(); let o = overlay(); if (!o) { o = document.createElement("div"); o.id = overlayId; document.body.appendChild(o); } positionOverlay(o); return o; }
-  function cleanupOverlay() { overlay()?.remove(); }
-  function safeSyncOverlay() { try { if (!active()) { cleanupOverlay(); return; } const o = ensureOverlay(); if (!o.dataset.rendered) render(); } catch (error) { console.error("[JW Modbus Tool] Simple tests overlay sync failed", error); cleanupOverlay(); } }
+  function bind() {
+    const root = document.getElementById(overlayId);
+    if (!root || root.dataset.bound === "1") return;
+    root.dataset.bound = "1";
 
-  function render() {
-    if (!active()) return;
-    const h = ensureOverlay();
-    const done = st.steps.filter((x) => x.res !== "Pendiente").length;
-    const ok = st.steps.filter((x) => x.res === "Aprobado").length;
-    const bad = st.steps.filter((x) => !["Pendiente", "Aprobado"].includes(x.res)).length;
-    const pct = done ? Math.round((ok / done) * 100) : 0;
-    h.innerHTML = `<div class="testsRuntime"><section class="card plan"><div class="planHeader"><div class="planTitle"><h2>Plan de pruebas al slave</h2><p>PC como Master</p></div><div class="planActions"><button class="primary" data-a="run">▶ Iniciar prueba</button><button data-a="stop">■ Detener</button><button>•••</button><button data-a="add">+ Agregar paso</button><button data-a="save">💾 Guardar plan</button></div></div><div class="planBody">${planTable()}</div><p class="noteLine">ⓘ Resultado = comunicación + validación. En <b>Esperado</b> puedes usar conteos (10 regs), OK o valores exactos: <b>4096,4097</b> / <b>40000=4096</b> / <b>ON,OFF</b>.</p></section><section class="card scenarios"><header><h2>${st.manage ? "Gestionar escenarios" : "Escenarios"}</h2></header>${st.manage ? managerHtml() : `<div class="scenarioList">${scHtml()}</div><button class="ghost manageScenarios" data-a="manage">Gestionar escenarios ›</button>`}</section><section class="card sim"><header><h2>Simulador slave <small>(PC como slave)</small></h2></header>${simHtml()}</section><div class="testkpis">${kpiHtml(pct, ok, bad, done, av())}</div><section class="card exec"><header><h2>Registro de ejecución</h2><div class="topActions"><button data-a="clear">🗑 Limpiar registro</button><button data-a="export">⇩ Exportar</button></div></header><div class="execBody">${st.detailIndex == null ? execTable() : detailHtml()}</div></section></div>`;
-    h.dataset.rendered = "1";
-    positionOverlay(h);
-  }
-
-  function planTable() { return `<table><thead><tr><th>Activo</th><th>Paso</th><th>Slave</th><th>Función</th><th>Dirección</th><th>Cantidad/Valor</th><th>Esperado</th><th>Timeout</th><th>Resultado</th><th></th></tr></thead><tbody>${st.steps.map((x, i) => `<tr class="${writeFns.has(x.fn) ? "fnWrite" : "fnRead"}"><td><input type="checkbox" data-c="on" data-i="${i}" ${x.on ? "checked" : ""}></td><td>${i + 1}</td><td><input class="slaveInput" inputmode="numeric" pattern="[0-9]*" data-c="slave" data-i="${i}" value="${x.slave}"></td><td><select data-c="fn" data-i="${i}">${functionOrder.map((f) => `<option value="${f}" ${x.fn === f ? "selected" : ""}>${short(f)}</option>`).join("")}</select></td><td><input type="number" data-c="addr" data-i="${i}" value="${x.addr}"></td><td><input data-c="amount" data-i="${i}" value="${esc(x.amount)}"></td><td><input data-c="exp" data-i="${i}" value="${esc(x.exp)}"></td><td><input type="number" data-c="to" data-i="${i}" value="${x.to}"></td><td>${res(x.res)}</td><td><button class="iconOnly" data-a="del" data-i="${i}">🗑</button></td></tr>`).join("")}</tbody></table>`; }
-  function execTable() { const r = st.log.length ? st.log : st.steps; return `<table><thead><tr><th>Hora</th><th>Paso</th><th>Slave</th><th>Función</th><th>Dirección</th><th>Cantidad/Valor</th><th>Resultado</th><th>Tiempo</th><th>Detalle</th><th>Info</th></tr></thead><tbody>${r.map((x, i) => `<tr><td>${x.at || "—"}</td><td>${i + 1}</td><td>${x.slave}</td><td>${F[x.fn]}</td><td>${x.addr}</td><td>${esc(x.amount)}</td><td>${res(x.res)}</td><td>${x.ms != null ? x.ms + " ms" : "—"}</td><td>${esc(x.detail || x.values || "Pendiente de ejecución.")}</td><td><button class="infoBtn" data-a="detail" data-i="${i}">ⓘ</button></td></tr>`).join("")}</tbody></table>`; }
-  function detailHtml() { const rowsSource = st.log.length ? st.log : st.steps; const x = rowsSource[st.detailIndex]; if (!x) { st.detailIndex = null; return execTable(); } const rows = x.rows?.length ? x.rows : buildRows(x, writeFns.has(x.fn) ? writeEchoValues(x) : []); return `<div class="execDetail"><div class="detailHeader"><div><h3>Detalle del paso ${st.detailIndex + 1}</h3><p>${esc(F[x.fn])} · Slave ${x.slave} · ${esc(x.validationDetail || "Validación pendiente de ejecución.")}</p></div><button data-a="closeDetail">✕</button></div><div class="detailGrid"><div><span>Función</span><b>${esc(F[x.fn])}</b></div><div><span>Slave ID</span><b>${x.slave}</b></div><div><span>Dirección inicial</span><b>${x.addr}</b></div><div><span>Cantidad/Valor</span><b>${esc(x.amount)}</b></div><div><span>Duración</span><b>${x.ms != null ? x.ms + " ms" : "—"}</b></div><div><span>Resultado</span><b>${res(x.res)}</b></div></div><div class="detailTable"><table><thead><tr><th>Dirección</th><th>Nombre</th><th>Esperado</th><th>Leído/Escrito</th><th>Tipo</th><th>Validación</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${row.addr}</td><td>${esc(row.name)}</td><td>${formatCell(row.expected, x.fn)}</td><td>${formatCell(row.value, x.fn)}</td><td>${esc(row.type)}</td><td>${row.ok == null ? `<span class="muted">Sin criterio</span>` : row.ok ? `<span class="validationOK">✓ OK</span>` : `<span class="validationBad">! No coincide</span>`}</td></tr>`).join("")}</tbody></table></div></div>`; }
-
-  function scHtml() { return Object.keys(st.scenarios).map((k) => { const s = normalizeScenario(st.scenarios[k], defaultScenarios[k]); return `<button class="scenarioCard ${st.sc === k ? "selected" : ""}" data-a="sc" data-sc="${esc(k)}"><b class="scenarioIcon ${scenarioColor(s.color)}">${esc(s.icon)}</b><span><strong>${esc(s.name)}</strong><small>${esc(s.desc)}</small></span><i class="scenarioRadio">●</i></button>`; }).join(""); }
-  function managerHtml() { const keys = Object.keys(st.scenarios); const s = normalizeScenario(st.scenarios[st.sc], defaultScenarios[st.sc]); const isDefault = defaultScenarioIds.has(st.sc); const planCount = st.scenarios[st.sc]?.steps?.length || st.steps.length; return `<div class="scenarioManager"><div class="managerTop"><label style="flex:1">Escenario activo<select data-sel="scenario">${keys.map((k) => `<option value="${esc(k)}" ${k === st.sc ? "selected" : ""}>${esc(st.scenarios[k].name)}</option>`).join("")}</select></label><button data-a="scenarioNew">+ Nuevo</button></div><div class="scenarioPreview"><b class="scenarioIcon ${scenarioColor(s.color)}">${esc(s.icon)}</b><span><strong>${esc(s.name)}</strong><small>${esc(s.desc)}</small></span></div><label>Nombre<input data-sf="name" value="${esc(s.name)}"></label><label>Descripción<textarea data-sf="desc">${esc(s.desc)}</textarea></label><div class="managerRow"><label>Ícono<input data-sf="icon" value="${esc(s.icon)}" maxlength="4"></label><label>Color<select data-sf="color">${Object.entries(colorOptions).map(([value, label]) => `<option value="${value}" ${s.color === value ? "selected" : ""}>${label}</option>`).join("")}</select></label></div><button data-a="scenarioUsePlan">Usar plan visible como pasos</button><p class="scenarioPlanHint">Este escenario usará ${planCount} paso(s). Edita los pasos en la tabla principal y pulsa este botón para guardarlos dentro del escenario.</p><div class="managerActions ${isDefault ? "" : "wide"}"><button data-a="scenarioDuplicate">Duplicar escenario</button>${isDefault ? `<button data-a="scenarioReset">Restaurar base</button>` : ""}</div><div class="managerActions ${isDefault ? "wide" : ""}">${!isDefault ? `<button class="dangerBtn" data-a="scenarioDelete">Eliminar escenario</button>` : ""}<button class="primary" data-a="scenarioClose">Guardar y volver</button></div><p class="managerNote">Los cambios quedan en memoria de la vista. Para conservarlos al cerrar la app, usa <b>Guardar sesión</b>.</p></div>`; }
-  function kpiHtml(pct, ok, bad, done, avg) { const stepPct = st.steps.length ? Math.round((done / st.steps.length) * 100) : 0; return `<article><div class="kpiRing" style="--p:${pct};--ring:var(--green)"><span class="kpiStack"><strong>${pct}%</strong><small>Éxito</small></span></div><div class="kpiText"><span>Tasa de éxito</span><small>Última ejecución: ${ok}/${done || st.steps.length} aprobados</small></div></article><article class="plain"><div class="kpiText"><span>Latencia promedio</span><b>${avg ? avg + " ms" : "—"}</b><small>${st.log.length ? `Última ejecución: ${st.log.length} paso(s)` : "Sin datos todavía"}</small></div></article><article class="plain"><div class="kpiText danger"><span>Errores</span><b>${bad}</b><small>Última ejecución</small></div></article><article><div class="kpiRing" style="--p:${stepPct};--ring:var(--cyan)"><span class="kpiStack"><strong>${done}/${st.steps.length}</strong><small>Pasos</small></span></div><div class="kpiText"><span>Pasos completados</span><small>Última ejecución</small></div></article>`; }
-  function simHtml() { return `<div class="simGrid"><label><span>Estado</span><input readonly value="${esc(st.sim)}"></label><label><span>Dirección slave</span><input value="1"></label><label><span>Puerto</span><input readonly value="${esc(port())}"></label><label><span>Baud Rate</span><input readonly value="${esc(baud())}"></label><button class="purple" data-a="sim">▶ ${st.sim === "Detenido" ? "Preparar simulador slave" : "Detener simulador slave"}</button><button>⚙</button></div>`; }
-
-  async function run() {
-    const b = api();
-    if (!b?.modbus) return msg("Backend Modbus no disponible.");
-    st.log = [];
-    st.detailIndex = null;
-    st.running = true;
-    st.stopped = false;
-    render();
-    for (let i = 0; i < st.steps.length; i++) {
-      if (st.stopped) break;
-      const x = st.steps[i];
-      if (!x.on) continue;
-      const t = performance.now();
-      const at = new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date());
-      try {
-        const r = await exec(x, b);
-        const ms = Math.round(performance.now() - t);
-        x.ms = ms;
-        x.at = at;
-        if (!r.ok) {
-          x.res = String(r.error || "").toLowerCase().includes("timeout") ? "Timeout" : "Error";
-          x.detail = r.error || "Error de comunicación.";
-          x.validationMode = "Comunicación";
-          x.validationDetail = "No se pudo validar datos porque la comunicación falló.";
-          x.rows = [];
-        } else {
-          const v = r.value || {};
-          const vals = readFns.has(x.fn) ? valueList(x, v) : writeEchoValues(x);
-          const validation = validateStep(x, vals);
-          x.ms = v.elapsedMs ?? ms;
-          x.rows = buildRows(x, vals, validation.expected);
-          x.values = summarizeValues(x, vals);
-          x.validationMode = validation.mode;
-          x.validationDetail = validation.message;
-          if (v.exception) { x.res = "Excepción"; x.detail = v.exception?.exceptionName || "Excepción Modbus recibida."; }
-          else if (v.crcOk === false) { x.res = "CRC Error"; x.detail = "Respuesta con CRC inválido."; }
-          else if (!validation.ok) { x.res = "Validación fallida"; x.detail = validation.message; }
-          else { x.res = "Aprobado"; x.detail = successDetail(x, vals); }
-        }
-      } catch (e) {
-        x.res = "Error";
-        x.ms = Math.round(performance.now() - t);
-        x.detail = e?.message || "Error inesperado.";
-        x.validationMode = "Comunicación";
-        x.validationDetail = "No se pudo validar datos porque ocurrió un error interno.";
-        x.rows = [];
-        x.at = at;
+    root.addEventListener("change", (event) => {
+      const target = event.target;
+      const index = target.dataset?.i != null ? Number(target.dataset.i) : null;
+      const field = target.dataset?.field;
+      if (index != null && field && st.steps[index]) {
+        const step = st.steps[index];
+        if (field === "on") step.on = target.checked;
+        else if (field === "fn") {
+          const nextFn = target.value;
+          step.fn = nextFn;
+          step.addr = def(nextFn);
+          step.count = defaultCount(nextFn);
+          step.value = defaultValue(nextFn);
+          step.expectedMode = defaultMode(nextFn);
+          step.expectedValue = "";
+        } else if (field === "expectedMode") {
+          step.expectedMode = target.value;
+          step.expectedValue = step.expectedMode === "exact" ? (isWrite(step.fn) ? step.value : "") : "";
+        } else if (field === "slave") step.slave = Math.max(1, Math.min(247, parseInt(target.value, 10) || 1));
+        else if (field === "addr") step.addr = Number(target.value) || 0;
+        else if (field === "count") step.count = String(target.value);
+        else if (field === "value") {
+          step.value = String(target.value);
+          if (!isRead(step.fn)) step.count = String(countNumber(step));
+        } else if (field === "expectedValue") step.expectedValue = String(target.value);
+        else if (field === "to") step.to = Number(target.value) || 1000;
+        st.steps[index] = cleanStep(step);
+        persistSilent();
+        render();
       }
-      st.log = st.steps.filter((z) => z.at);
-      render();
+
+      if (target.dataset?.scenarioField) {
+        const scenario = st.scenarios[st.sc];
+        scenario[target.dataset.scenarioField] = target.value;
+        st.scenarios[st.sc] = normalizeScenario(scenario, scenario);
+        persistSilent();
+        render();
+      }
+
+      if (target.dataset?.action === "manager-select") {
+        st.sc = target.value;
+        const scenario = st.scenarios[st.sc];
+        if (scenario?.steps) st.steps = scenario.steps.map(cloneStep);
+        persistSilent();
+        render();
+      }
+    });
+
+    root.addEventListener("click", async (event) => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      const action = button.dataset.action;
+      const index = button.dataset.i != null ? Number(button.dataset.i) : null;
+      if (action === "run") await runPlan();
+      if (action === "stop") { st.stopped = true; st.running = false; msg("Prueba detenida por el usuario."); render(); }
+      if (action === "add-step") { st.steps.push(mk(sid(), "fc3", 40000, "1", "", "count")); persistPlanMessage(); render(); }
+      if (action === "delete-step" && index != null) { st.steps.splice(index, 1); persistPlanMessage(); render(); }
+      if (action === "save-plan") { if (st.scenarios[st.sc]) st.scenarios[st.sc].steps = st.steps.map(cleanStep); persistPlanMessage(); render(); }
+      if (action === "select-scenario") { st.sc = button.dataset.id; const scenario = st.scenarios[st.sc]; st.steps = scenario?.steps ? scenario.steps.map(cloneStep) : plan(sid()); st.detail = null; persistSilent(); render(); }
+      if (action === "manage-scenarios") { st.manage = true; render(); }
+      if (action === "save-manager") { st.manage = false; persistPlanMessage(); render(); }
+      if (action === "new-scenario") { const id = `custom_${Date.now()}`; st.scenarios[id] = normalizeScenario({ icon: "🧪", name: "Nuevo escenario", desc: "Escenario personalizado.", color: "cyan", steps: st.steps.map(cleanStep) }); st.sc = id; persistSilent(); render(); }
+      if (action === "use-current-plan") { st.scenarios[st.sc].steps = st.steps.map(cleanStep); persistPlanMessage(); render(); }
+      if (action === "duplicate-scenario") { const id = `custom_${Date.now()}`; st.scenarios[id] = normalizeScenario({ ...clone(st.scenarios[st.sc]), name: `${st.scenarios[st.sc].name} copia`, steps: st.steps.map(cleanStep) }); st.sc = id; persistSilent(); render(); }
+      if (action === "restore-scenario" && defaultScenarioIds.has(st.sc)) { st.scenarios[st.sc] = normalizeScenario(defaultScenarios[st.sc], defaultScenarios[st.sc]); st.steps = plan(sid()); persistPlanMessage(); render(); }
+      if (action === "delete-scenario" && !defaultScenarioIds.has(st.sc)) { delete st.scenarios[st.sc]; st.sc = "normal"; st.steps = st.scenarios.normal.steps ? st.scenarios.normal.steps.map(cloneStep) : plan(sid()); persistPlanMessage(); render(); }
+      if (action === "clear-log") { st.log = []; st.detail = null; st.steps = st.steps.map(cloneStep); persistSilent(); render(); }
+      if (action === "show-detail" && index != null) { st.detail = index; render(); }
+      if (action === "close-detail") { st.detail = null; render(); }
+      if (action === "toggle-sim") { st.sim = st.sim === "Detenido" ? "Preparado" : "Detenido"; persistSilent(); render(); }
+    });
+  }
+
+  function mount() {
+    const area = workspace();
+    if (!area) return;
+    style();
+    let root = document.getElementById(overlayId);
+    if (!root) {
+      root = document.createElement("div");
+      root.id = overlayId;
+      document.body.appendChild(root);
+      const pending = window.__jwPendingTestsRuntimeState;
+      if (pending) importRuntimeState(pending);
     }
-    st.running = false;
-    persistPlanMessage();
-    msg(st.stopped ? "Prueba detenida por el usuario." : "Plan ejecutado. Cada paso aprobado requiere comunicación OK y validación OK.");
+    const rect = area.getBoundingClientRect();
+    root.style.left = `${rect.left}px`;
+    root.style.top = `${rect.top}px`;
+    root.style.width = `${rect.width}px`;
+    root.style.height = `${rect.height}px`;
+    render();
   }
 
-  function exec(x, b) { if (x.fn === "fc5") return b.modbus.writeSingleCoil({ unitId: x.slave, address: raw(x.fn, x.addr), value: normalizeBool(x.amount), timeoutMs: x.to }); if (x.fn === "fc6") return b.modbus.writeSingleRegister({ unitId: x.slave, address: raw(x.fn, x.addr), value: Number(x.amount), timeoutMs: x.to }); if (x.fn === "fc15") return b.modbus.writeMultipleCoils({ unitId: x.slave, startAddress: raw(x.fn, x.addr), values: parseBoolList(x.amount), timeoutMs: x.to }); if (x.fn === "fc16") return b.modbus.writeMultipleRegisters({ unitId: x.slave, startAddress: raw(x.fn, x.addr), values: parseRegList(x.amount), timeoutMs: x.to }); const c = { unitId: x.slave, startAddress: raw(x.fn, x.addr), quantity: amountNumber(x), timeoutMs: x.to }; if (x.fn === "fc1") return b.modbus.readCoils(c); if (x.fn === "fc2") return b.modbus.readDiscreteInputs(c); if (x.fn === "fc4") return b.modbus.readInputRegisters(c); return b.modbus.readHoldingRegisters(c); }
-  function writeEchoValues(x) { if (x.fn === "fc5") return [normalizeBool(x.amount)]; if (x.fn === "fc6") return [Number(x.amount)]; if (x.fn === "fc15") return parseBoolList(x.amount); if (x.fn === "fc16") return parseRegList(x.amount); return []; }
-  function summarizeValues(x, vals) { if (!vals?.length) return ""; return vals.slice(0, 4).map((y, j) => `${disp(x.fn, raw(x.fn, x.addr) + j, x.addr)}=${bitFns.has(x.fn) ? boolLabel(y) : y}`).join(", ") + (vals.length > 4 ? ", ..." : ""); }
-  function successDetail(x, vals) { const validationSuffix = x.validationMode === "Valores exactos" ? " Validación de valores OK." : ""; if (x.fn === "fc5") return `Coil escrita en ${boolLabel(x.amount)}.${validationSuffix}`; if (x.fn === "fc6") return `Registro escrito con valor ${Number(x.amount)}.${validationSuffix}`; if (x.fn === "fc15") return `${parseBoolList(x.amount).length} coils escritas: ${summarizeValues(x, vals)}.${validationSuffix}`; if (x.fn === "fc16") return `${parseRegList(x.amount).length} registros escritos: ${summarizeValues(x, vals)}.${validationSuffix}`; return `${amountNumber(x)} ${x.fn === "fc1" ? "coils" : x.fn === "fc2" ? "bits" : "registros"} leídos correctamente.${validationSuffix}`; }
+  function unmount() { document.getElementById(overlayId)?.remove(); }
 
-  function validateStep(x, vals) {
-    const expected = parseExpected(x);
-    if (!expected.length) return { ok: true, expected: [], mode: "Respuesta", message: "Se validó respuesta, función y cantidad; no se definieron valores exactos." };
-    const rows = buildRows(x, vals, expected);
-    const failures = rows.filter((row) => row.ok === false);
-    return { ok: failures.length === 0, expected, mode: "Valores exactos", message: failures.length ? `${failures.length} valor(es) no coinciden con lo esperado.` : "Todos los valores coinciden con lo esperado." };
+  function sync() {
+    try { if (active()) mount(); else unmount(); }
+    catch (error) { console.warn("[JW Modbus Tool] Pruebas runtime protegido", error); unmount(); }
   }
-  function parseExpected(x) {
-    const exp = String(x.exp ?? "").trim();
-    if (!exp || /^OK$/i.test(exp) || /^\d+\s*(regs?|coils?|bits?|inputs?)$/i.test(exp)) return [];
-    const parts = exp.split(/[;\n,]+/).map((p) => p.trim()).filter(Boolean);
-    if (!parts.length) return [];
-    if (parts.some((p) => p.includes("="))) {
-      return parts.map((p) => { const [left, right] = p.split("=").map((z) => z.trim()); const addr = Number(left); const offset = Number.isFinite(addr) ? expectedOffsetFromAddr(x, addr) : null; return { offset, value: normalizeExpectedValue(x.fn, right) }; }).filter((item) => item.offset != null && item.offset >= 0);
-    }
-    return parts.map((value, offset) => ({ offset, value: normalizeExpectedValue(x.fn, value) }));
-  }
-  function expectedOffsetFromAddr(x, addr) { const startRaw = raw(x.fn, x.addr); const startDisplay = disp(x.fn, startRaw, x.addr); if (addr >= startDisplay) return addr - startDisplay; if (addr >= startRaw) return addr - startRaw; return null; }
-  function normalizeExpectedValue(fn, value) { return bitFns.has(fn) ? normalizeBool(value) : Number(value); }
-  function compareValue(fn, actual, expected) { if (expected == null || Number.isNaN(expected)) return null; if (bitFns.has(fn)) return normalizeBool(actual) === normalizeBool(expected); return Number(actual) === Number(expected); }
-  function buildRows(x, vals, expected = []) { const count = Math.max(vals?.length || 0, expected.length || 0, readFns.has(x.fn) ? amountNumber(x) : writeEchoValues(x).length); const startRaw = raw(x.fn, x.addr); return Array.from({ length: count }, (_, i) => { const addr = disp(x.fn, startRaw + i, x.addr); const expectedItem = expected.find((item) => item.offset === i); const actual = vals?.[i]; const ok = expectedItem ? compareValue(x.fn, actual, expectedItem.value) : null; return { addr, name: registerName(x.fn, addr, i), expected: expectedItem?.value, value: actual, type: bitFns.has(x.fn) ? "bool" : "uint16", ok }; }); }
-  function formatCell(value, fn) { if (value === undefined || value === null || Number.isNaN(value)) return `<span class="muted">—</span>`; if (bitFns.has(fn)) return `<span class="badgeBool ${normalizeBool(value) ? "on" : ""}">${boolLabel(value)}</span>`; return esc(value); }
-  function registerName(fn, addr, i) { const holding = { 40000: "Velocidad_Ref", 40001: "Estado_Variador", 40002: "Corriente_Salida", 40003: "Tension_DC", 40004: "Temp_Disipador", 40005: "Horas_Marcha", 40008: "Frecuencia_Salida", 40009: "Estado_Alarma", 40010: "Setpoint_Prueba", 40020: "Bloque_Prueba_0" }; const input = { 30000: "AI_0", 30001: "AI_1", 30002: "AI_2", 30003: "AI_3" }; if (fn === "fc1" || fn === "fc5" || fn === "fc15") return `Q0_${addr}`; if (fn === "fc2") return `I0_${addr - 10000}`; if (fn === "fc4") return input[addr] || `IR_${addr}`; return holding[addr] || `Reg_${addr}`; }
 
-  function applySc(k) { if (!st.scenarios[k]) return; st.sc = k; const custom = st.scenarios[k]?.steps; if (custom?.length) st.steps = custom.map(cleanStep); else { const s = sid(); if (k === "normal") st.steps = plan(s); else if (k === "timeout") st.steps = [mk(247, "fc3", 40000, 1, "Timeout", 350)]; else if (k === "exception") st.steps = [mk(s, "fc3", 49999, 10, "Excepción", 1000)]; else if (k === "crc") st.steps = plan(s).map((x) => ({ ...x, exp: x.exp === "OK" ? "CRC/Error controlado" : x.exp })); else st.steps = plan(s); } st.log = []; st.detailIndex = null; persistPlanMessage(); render(); }
-  function av() { const r = st.log.filter((x) => x.ms != null); return r.length ? Math.round(r.reduce((a, x) => a + x.ms, 0) / r.length) : 0; }
-  function disp(fn, r, b) { if (fn === "fc2") return 10000 + r; if (fn === "fc4") return (b >= 30000 ? 30000 : 0) + r; if (["fc3", "fc6", "fc16"].includes(fn)) return (b >= 40000 ? 40000 : 0) + r; return r; }
-  function markDirty() { st.log = []; st.detailIndex = null; persistPlanMessage(); render(); }
-  function updateStepFromTarget(t, shouldRender = true) { const c = t.dataset?.c; const i = +t.dataset?.i; if (!c || !st.steps[i]) return; const x = st.steps[i]; const v = t.type === "checkbox" ? t.checked : t.value; if (c === "on") x.on = !!v; if (c === "slave") x.slave = Math.max(1, Math.min(247, Number.parseInt(String(v).replace(/\D/g, ""), 10) || 1)); if (c === "fn") { x.fn = v; x.addr = def(v); x.amount = defaultAmount(v); x.exp = defaultExpected(v, x.amount); } if (c === "addr") x.addr = +v; if (c === "amount") { x.amount = String(v); if (readFns.has(x.fn)) x.exp = defaultExpected(x.fn, x.amount); } if (c === "exp") x.exp = v; if (c === "to") x.to = +v; x.res = "Pendiente"; st.log = []; st.detailIndex = null; persistSilent(); if (shouldRender) render(); }
-  function updateScenarioField(t, shouldRender = true) { const field = t.dataset?.sf; if (!field || !st.scenarios[st.sc]) return; st.scenarios[st.sc][field] = field === "color" ? scenarioColor(t.value) : t.value; persistSilent(); if (shouldRender) render(); }
-  function addScenario() { const id = `custom_${Date.now()}`; st.scenarios[id] = { icon: "🧪", name: "Nuevo escenario", desc: "Describe qué condición quieres probar.", color: "cyan", steps: st.steps.map(cleanStep) }; st.sc = id; st.manage = true; persistPlanMessage(); render(); }
-  function duplicateScenario() { const base = normalizeScenario(st.scenarios[st.sc], defaultScenarios[st.sc]); const id = `custom_${Date.now()}`; st.scenarios[id] = { ...clone(base), name: `${base.name} copia`, steps: (base.steps || st.steps).map(cleanStep) }; st.sc = id; st.manage = true; persistPlanMessage(); msg("Escenario duplicado. Edita su nombre, color, ícono y pasos."); render(); }
-  function deleteScenario() { if (defaultScenarioIds.has(st.sc)) { msg("Los escenarios base no se eliminan; puedes editar su texto o restaurarlos."); return; } delete st.scenarios[st.sc]; st.sc = "normal"; st.manage = true; persistPlanMessage(); render(); }
-  function resetScenario() { if (!defaultScenarioIds.has(st.sc)) return; st.scenarios[st.sc] = clone(defaultScenarios[st.sc]); applySc(st.sc); st.manage = true; msg("Escenario base restaurado."); }
-
-  document.addEventListener("click", (e) => { const o = overlay(); const a = e.target.closest?.("[data-a]"); if (!o || !a || !o.contains(a)) return; e.preventDefault(); const n = a.dataset.a; if (n === "run") run(); if (n === "stop") { st.stopped = true; msg(st.running ? "Deteniendo prueba al finalizar el paso actual..." : "No hay una prueba en ejecución."); } if (n === "add") { st.steps.push(mk(sid(), "fc3", 40000, 1, "1 reg", 1000)); markDirty(); } if (n === "del") { st.steps.splice(+a.dataset.i, 1); markDirty(); } if (n === "clear") { st.log = []; st.detailIndex = null; st.steps = st.steps.map(cloneStep); persistSilent(); render(); } if (n === "export") { navigator.clipboard?.writeText(st.log.map((x, i) => `${i + 1}. ${x.at} ${F[x.fn]} S${x.slave} ${x.res} ${x.detail}`).join("\n")); msg("Registro copiado al portapapeles."); } if (n === "save") persistPlanMessage(); if (n === "detail") { st.detailIndex = +a.dataset.i; render(); } if (n === "closeDetail") { st.detailIndex = null; render(); } if (n === "sc") applySc(a.dataset.sc); if (n === "manage") { st.manage = true; render(); } if (n === "scenarioClose") { st.manage = false; persistPlanMessage(); render(); } if (n === "scenarioUsePlan") { st.scenarios[st.sc].steps = st.steps.map(cleanStep); persistPlanMessage(); msg("Plan visible guardado como pasos del escenario seleccionado."); render(); } if (n === "scenarioNew") addScenario(); if (n === "scenarioDuplicate") duplicateScenario(); if (n === "scenarioDelete") deleteScenario(); if (n === "scenarioReset") resetScenario(); if (n === "sim") { st.sim = st.sim === "Detenido" ? "Preparado" : "Detenido"; persistPlanMessage(); render(); } });
-  document.addEventListener("change", (e) => { const o = overlay(); const t = e.target; if (!o || !t || !o.contains(t)) return; if (t.dataset?.sel === "scenario") { st.sc = t.value; render(); return; } if (t.dataset?.sf) { updateScenarioField(t, true); return; } updateStepFromTarget(t, true); });
-  document.addEventListener("input", (e) => { const o = overlay(); const t = e.target; if (!o || !t || !o.contains(t)) return; if (t.dataset?.sf) { updateScenarioField(t, false); return; } if (t.dataset?.c && t.dataset.c !== "fn" && t.type !== "checkbox") updateStepFromTarget(t, false); });
-  function start() { try { exposeRuntimeState(); const pending = window.__jwPendingTestsRuntimeState; if (pending) importRuntimeState(pending); window.setInterval(safeSyncOverlay, 250); window.addEventListener("resize", () => positionOverlay()); new MutationObserver(safeSyncOverlay).observe(document.body, { childList: true, subtree: true }); safeSyncOverlay(); } catch (error) { console.error("[JW Modbus Tool] Simple tests runtime safe init failed", error); } }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
-  else start();
+  exposeRuntimeState();
+  if (window.__jwPendingTestsRuntimeState) importRuntimeState(window.__jwPendingTestsRuntimeState);
+  setInterval(sync, 450);
+  window.addEventListener("resize", sync);
+  window.addEventListener("jw-simple-tests-runtime-import", (event) => importRuntimeState(event.detail));
+  setTimeout(sync, 80);
 }
