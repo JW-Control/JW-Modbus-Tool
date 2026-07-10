@@ -43,13 +43,20 @@ El botón **Gestionar escenarios** queda implementado dentro del mismo panel der
 Funciones incluidas en el MVP:
 
 - Editar nombre, descripción, ícono y color del escenario seleccionado.
-- Crear un escenario nuevo a partir del plan visible.
+- Crear un escenario nuevo desde el plan visible.
 - Duplicar el escenario seleccionado.
-- Asignar el plan actual como pasos del escenario.
-- Restaurar escenarios base a sus valores predeterminados.
-- Eliminar escenarios personalizados.
+- Usar el plan visible como pasos del escenario seleccionado.
+- Restaurar valores base solo en escenarios predeterminados.
+- Eliminar únicamente escenarios personalizados.
 - Scroll interno en la lista/gestor para evitar desplazar la vista completa.
 - Persistencia dentro de `testsRuntime.scenarios`, por lo que se guarda en `.jwmodbus-session` junto con el plan.
+
+Decisiones UI:
+
+- La sección **Pasos del escenario** se retiró del gestor porque duplicaba información que ya vive en la tabla principal del plan.
+- **Usar plan visible como pasos** sirve para tomar la tabla actual de `Plan de pruebas al slave` y guardarla dentro del escenario activo.
+- **Restaurar base** solo aparece en los escenarios predeterminados: Operación normal, Timeout detectado, Error CRC detectado y Excepción Modbus.
+- En escenarios personalizados se muestran acciones más coherentes: duplicar, eliminar y guardar.
 
 Regla de uso: después de editar escenarios o pasos, usar **Guardar plan** o cerrar el gestor con **Guardar y volver**; luego usar **Guardar sesión** para persistirlo en archivo.
 
