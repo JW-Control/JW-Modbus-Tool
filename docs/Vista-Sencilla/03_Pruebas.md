@@ -1,26 +1,48 @@
-# Vista Sencilla — 03 Pruebas
+# Vista Sencilla - 03 Pruebas
 
-Estado: **MVP funcional aplicado**  
-Fecha: 2026-07-09  
-Rama: `feature/simple-mode-mvp`
+Estado: **MVP funcional integrado en React**  
+Fecha: 2026-07-10  
+Rama base: `feature/simple-mode-mvp`  
+Rama de estabilizacion: `codex/stabilize-tests-view`
 
 ---
 
 ## Objetivo
 
-La vista **Pruebas** permite validar un slave Modbus desde la PC actuando como **Master**.
+La vista **Pruebas** permite validar un slave Modbus desde la PC actuando como
+**Master**.
 
-La pantalla permite construir y ejecutar un plan de pasos Modbus contra uno o varios slaves, revisar KPIs de ejecución, ver un registro de resultados y seleccionar/editar escenarios de prueba.
+La pantalla permite construir y ejecutar un plan de pasos Modbus contra uno o
+varios slaves, revisar KPIs de ejecucion, ver un registro de resultados y
+seleccionar/editar escenarios de prueba.
 
 ---
 
-## Funciones Modbus cubiertas en el MVP
+## Integracion actual
 
-El plan de pruebas ya contempla lectura y escritura básica:
+La vista esta implementada como componente React nativo en:
+
+```text
+src/renderer/simple-tests-consolidated.tsx
+```
+
+Se renderiza desde:
+
+```text
+src/renderer/SimpleModeApp.tsx
+```
+
+Ya no se usa overlay, segundo root de React, `document.querySelector`,
+`setTimeout` para imports diferidos, `setInterval`, `localStorage` ni variables
+globales `window.__jw...` para coordinar el estado visual.
+
+---
+
+## Funciones Modbus cubiertas
 
 | FC | Nombre | Tipo | Uso |
 |---|---|---|---|
-| FC01 | Read Coils | Lectura | Leer coils/salidas lógicas |
+| FC01 | Read Coils | Lectura | Leer coils/salidas logicas |
 | FC02 | Read Discrete Inputs | Lectura | Leer entradas discretas |
 | FC03 | Read Holding Registers | Lectura | Leer registros holding |
 | FC04 | Read Input Registers | Lectura | Leer registros de entrada |
@@ -29,136 +51,87 @@ El plan de pruebas ya contempla lectura y escritura básica:
 | FC15 | Write Multiple Coils | Escritura | Escribir varias coils |
 | FC16 | Write Multiple Registers | Escritura | Escribir varios registros |
 
----
-
-## Comportamiento de la columna `Cantidad/Valor`
-
-La columna cambia de significado según la función seleccionada:
-
-| Función | Interpretación |
-|---|---|
-| FC01 / FC02 / FC03 / FC04 | Cantidad a leer |
-| FC05 | Valor lógico: `ON` / `OFF`, `1` / `0`, `true` / `false` |
-| FC06 | Valor numérico único |
-| FC15 | Lista de bits, por ejemplo `1,0,1,0` |
-| FC16 | Lista de registros, por ejemplo `100,200,300` |
+El desplegable de funcion debe mantenerse ordenado por codigo:
+FC01, FC02, FC03, FC04, FC05, FC06, FC15, FC16.
 
 ---
 
-## Decisiones UI aprobadas
+## Tabla del plan
 
-### Encabezado del plan
+Columnas esperadas:
 
-- El título `Plan de pruebas al slave`, subtítulo `PC como Master` y acciones quedan compactados en una sola zona superior.
-- Los botones visibles son:
-  - `Iniciar prueba`
-  - `Detener`
-  - menú `...`
-  - `Agregar paso`
-  - `Guardar plan`
-- Esto libera espacio vertical para la tabla de pasos.
+- Activo
+- Paso
+- Slave
+- Funcion
+- Direccion
+- Cantidad
+- Valor
+- Validacion
+- Esperado
+- Timeout
+- Resultado
+- Accion eliminar
 
-### Tabla del plan
+Decisiones vigentes:
 
-- El campo `Slave` queda como input plano editable, no como spinbox.
-- Motivo: evitar cambios accidentales por rueda del mouse.
-- `Función` queda como desplegable.
-- `Dirección`, `Cantidad/Valor`, `Esperado` y `Timeout` son editables.
-- Las filas de lectura y escritura tienen borde lateral diferenciado para lectura/escritura.
-
-### KPIs
-
-La sección central de resumen queda menos alta, más balanceada y con los indicadores circulares centrados.
-
-KPIs actuales:
-
-- `Tasa de éxito` con indicador circular.
-- `Latencia promedio`.
-- `Errores`.
-- `Pasos completados` con indicador circular.
-
-Los textos dentro del aro se renderizan como bloque centrado (`valor + etiqueta`) para evitar descuadres visuales.
-
-### Escenarios
-
-Se mantiene la altura actual aproximada de la sección de escenarios.
-
-- La lista de escenarios tiene scroll interno.
-- `Gestionar escenarios` abre un panel interno dentro de la misma tarjeta de escenarios.
-- El panel permite editar:
-  - nombre del escenario,
-  - descripción,
-  - color,
-  - ícono,
-  - pasos asociados al escenario usando el plan actual,
-  - duplicar el escenario actual.
-
-### Persistencia de plan y escenarios
-
-El MVP runtime de `Pruebas` trabaja como overlay aislado para no romper el render de React al cambiar entre vistas.
-
-Para que el plan no se pierda, el runtime intercepta el backend de sesiones:
-
-- Al usar `Guardar sesión` o `Guardar como`, se añade un bloque `testsRuntime` dentro del archivo `.jwmodbus-session`.
-- Ese bloque guarda:
-  - pasos del plan,
-  - slave configurado por paso,
-  - función,
-  - dirección,
-  - cantidad/valor,
-  - esperado,
-  - timeout,
-  - escenarios personalizados.
-- Al usar `Abrir sesión`, si el archivo contiene `testsRuntime`, la vista `Pruebas` restaura el plan guardado.
-
-Esto corrige el caso donde se cambiaba el `Slave` de `1` a `2`, se guardaba la sesión, se cerraba la app y al abrir volvía a `1`.
-
-### Simulador slave
-
-El panel `Simulador slave (PC como slave)` se mantiene en la columna derecha, debajo de escenarios.
-
-Estado actual:
-
-- UI preparada.
-- Emulación real del slave queda pendiente para una etapa posterior.
+- `Slave` es un input de texto numerico validado, no spinbox.
+- `Cantidad` y `Valor` estan separados para evitar ambiguedad.
+- En lecturas, `Cantidad` esta activo y `Valor` queda inactivo.
+- En FC05/FC06, `Valor` esta activo y la cantidad es implicita.
+- En FC15/FC16, la cantidad se calcula desde la lista de valores.
+- La columna `Validacion` define el criterio principal.
+- `Esperado` solo queda editable cuando el modo de validacion lo requiere.
 
 ---
 
-## Escenarios iniciales
+## Modos de validacion
 
-### Operación normal
+- `Respuesta OK`: valida respuesta Modbus correcta.
+- `Cantidad solicitada`: valida que llegue la cantidad pedida.
+- `Valores exactos`: compara una secuencia de valores.
+- `Por direccion`: compara pares explicitos `direccion=valor`.
 
-Plan completo de lectura/escritura:
+Ejemplos validos:
 
-1. FC03 Read Holding Registers.
-2. FC06 Write Single Register.
-3. FC05 Write Single Coil.
-4. FC15 Write Multiple Coils.
-5. FC16 Write Multiple Registers.
-6. FC04 Read Input Registers.
-7. FC01 Read Coils.
-8. FC02 Read Discrete Inputs.
+```text
+4096,4097,4098
+ON,OFF,ON
+1,0,1
+40000=4096,40001=4097
+0=ON,1=OFF
+```
 
-### Timeout detectado
-
-Usa un slave improbable o no disponible para validar timeout.
-
-### Error CRC detectado
-
-Por ahora queda como escenario reservado/preparado a nivel UI. La inyección real de CRC inválido depende de una capa más baja del motor Modbus.
-
-### Excepción Modbus
-
-Usa direcciones inválidas para forzar excepciones cuando el slave las implemente correctamente.
+Un paso aprueba solo si la comunicacion fue OK, no hubo timeout/excepcion/CRC
+error y el criterio de validacion se cumple.
 
 ---
 
-## Registro de ejecución
+## Persistencia
+
+La configuracion durable de Pruebas se guarda dentro del archivo
+`.jwmodbus-session` como `testsRuntime`.
+
+Se guarda:
+
+- plan de pasos;
+- escenarios;
+- escenario seleccionado;
+- estado del panel de simulador;
+- slave, funcion, direccion, cantidad, valor, validacion, esperado y timeout.
+
+No se guardan resultados como estado de arranque. Al abrir una sesion o crear
+una nueva, los pasos se muestran en `Pendiente` hasta que el usuario presiona
+**Iniciar prueba**.
+
+---
+
+## Registro de ejecucion
 
 Columnas:
 
 ```text
-Hora | Paso | Slave | Función | Dirección | Cantidad/Valor | Resultado | Tiempo | Detalle
+Hora | Paso | Slave | Funcion | Direccion | Cantidad/Valor | Resultado | Tiempo | Detalle
 ```
 
 Resultados posibles:
@@ -168,34 +141,39 @@ Resultados posibles:
 - `Error`
 - `Timeout`
 - `CRC Error`
-- `Excepción`
+- `Excepcion`
+- `Validacion fallida`
+
+La accion de detalle debe abrirse dentro de la misma zona inferior de la vista,
+sin modal flotante.
 
 ---
 
-## Pendiente técnico
+## Escenarios
 
-1. Migrar este MVP runtime a componente React nativo.
-2. Crear gestor definitivo de escenarios como componente React.
-3. Permitir importar/exportar escenarios como plantillas reutilizables.
-4. Integrar resultados de prueba con la vista `Sesiones` usando el mismo modelo de datos runtime.
-5. Integrar trazas completas con la vista `Tráfico Modbus`.
-6. Conectar `Simulador slave` a un motor real de emulación.
-7. Definir cómo se inyectarán errores CRC reales desde el motor Modbus.
+Escenarios iniciales:
+
+- Operacion normal.
+- Timeout detectado.
+- Error CRC detectado.
+- Excepcion Modbus.
+
+Los escenarios personalizados se guardan dentro de `testsRuntime.scenarios`.
 
 ---
 
-## Nota de implementación actual
+## Simulador slave
 
-Esta vista está implementada como MVP acelerado en:
+El panel `Simulador slave (PC como slave)` queda preparado a nivel UI.
 
-```text
-src/renderer/simple-tests-runtime.ts
-```
+La emulacion real del slave queda pendiente para una etapa posterior.
 
-Se carga desde:
+---
 
-```text
-src/renderer/main.tsx
-```
+## Pendiente funcional
 
-La intención es validar flujo, ergonomía y pruebas reales antes de formalizarlo como componente React definitivo.
+1. Confirmar escrituras por lectura posterior opcional.
+2. Conectar el simulador slave a un motor real.
+3. Integrar trazas completas con `Trafico Modbus`.
+4. Importar/exportar escenarios reutilizables.
+5. Agregar plantillas por modelo de equipo cuando exista mapa de registros.

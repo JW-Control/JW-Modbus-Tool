@@ -504,3 +504,464 @@
     padding: 9px;
   }
 }
+
+.testsNative {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-rows: minmax(0, 1.16fr) 126px minmax(0, .88fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.testsNative .card {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.testsPlanCard {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.testsPlanHeader,
+.testsLogHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.testsPlanHeader h2,
+.testsLogHeader h2,
+.testsSide h2,
+.testsDetailPanel h2 {
+  margin: 0;
+  color: var(--cyan);
+  font-size: 1rem;
+}
+
+.testsPlanHeader p {
+  margin-top: 4px;
+}
+
+.testsPlanActions,
+.testsLogHeader > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.testsPlanActions button,
+.testsLogHeader button,
+.testsSide button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.testsPlanTable,
+.testsExecutionTable {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #2d5c75;
+  border-radius: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: #2d87aa #071d30;
+}
+
+.testsPlanTable table,
+.testsExecutionTable table {
+  width: 100%;
+  min-width: 1320px;
+  border-collapse: collapse;
+}
+
+.testsPlanTable th,
+.testsPlanTable td,
+.testsExecutionTable th,
+.testsExecutionTable td {
+  height: 36px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #2d5c7545;
+  border-right: 1px solid #2d5c7538;
+  color: var(--text);
+  font-size: .8rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.testsPlanTable th,
+.testsExecutionTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #102b3f;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.testsPlanTable td:nth-child(1),
+.testsPlanTable td:nth-child(2),
+.testsExecutionTable td:nth-child(2) {
+  text-align: center;
+}
+
+.testsPlanTable input,
+.testsPlanTable select,
+.testsSide input,
+.testsSide select,
+.testsSide textarea {
+  min-height: 30px;
+  height: 30px;
+  border-color: #2d5c75;
+  background: #061827;
+  font-size: .8rem;
+}
+
+.testsPlanTable textarea,
+.testsSide textarea {
+  height: auto;
+}
+
+.testsPlanTable input:disabled,
+.testsPlanTable select:disabled {
+  color: var(--muted);
+  background: #071d3088;
+}
+
+.testsPlanTable input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  accent-color: var(--green);
+}
+
+.testsInfo {
+  flex: 0 0 auto;
+  margin-top: 9px;
+  padding: 8px 10px;
+  border: 1px solid #00bfff33;
+  border-radius: 7px;
+  background: #00bfff0d;
+  color: var(--muted);
+  font-size: .83rem;
+}
+
+.testsSide {
+  grid-column: 2;
+  grid-row: 1 / 4;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, .96fr);
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.testsScenarioCard,
+.testsSimulatorCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.testsScenarioList {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2d87aa #071d30;
+}
+
+.testsScenarioItem {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  padding: 8px;
+  text-align: left;
+}
+
+.testsScenarioItem.selected {
+  border-color: var(--cyan);
+  background: #00bfff18;
+}
+
+.testsScenarioItem small,
+.testsScenarioItem strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.testsScenarioItem small {
+  margin-top: 3px;
+  white-space: normal;
+}
+
+.testsScenarioItem i {
+  width: 15px;
+  height: 15px;
+  border: 2px solid #6e8a9c;
+  border-radius: 99px;
+}
+
+.testsScenarioItem.selected i {
+  border-color: var(--cyan);
+  box-shadow: inset 0 0 0 3px #082033;
+  background: var(--cyan);
+}
+
+.scenarioIcon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 9px;
+  border: 1px solid #2d5c75;
+  background: #ffffff0b;
+  color: var(--text);
+  font-size: .68rem;
+  font-weight: 900;
+}
+
+.scenarioIcon.shield { color: var(--green); border-color: #69d94577; background: #69d9451a; }
+.scenarioIcon.clock { color: var(--orange); border-color: #ffab2577; background: #ffab251a; }
+.scenarioIcon.warn { color: var(--orange); border-color: #ffab2577; background: #ffab251a; }
+.scenarioIcon.bad { color: var(--red); border-color: #ff525277; background: #ff52521a; }
+.scenarioIcon.cyan { color: var(--cyan); border-color: #00bfff77; background: #00bfff1a; }
+
+.testsScenarioManager {
+  overflow: auto !important;
+  scrollbar-width: thin;
+  scrollbar-color: #2d87aa #071d30;
+}
+
+.testsScenarioManager label,
+.testsSimulatorCard label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+.testsScenarioManager textarea {
+  min-height: 70px;
+  resize: vertical;
+  padding: 8px;
+}
+
+.testsScenarioManager .twoCols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.testsSimulatorCard small {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.testsSimulatorCard .purple {
+  min-height: 36px;
+  margin-top: 3px;
+}
+
+.testsKpis {
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  min-height: 0;
+}
+
+.testsKpiCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+
+.testsKpiCard h3 {
+  margin: 0;
+  font-size: .9rem;
+  color: var(--text);
+}
+
+.testsKpiCard p {
+  margin-top: 4px;
+  font-size: .78rem;
+}
+
+.testsKpiText strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--cyan);
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.testsKpiText strong.danger {
+  color: var(--red);
+}
+
+.testsRing {
+  flex: 0 0 auto;
+  display: grid;
+  width: 70px;
+  height: 70px;
+  place-items: center;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 10px #0b3952;
+}
+
+.testsRing strong,
+.testsRing small {
+  grid-area: 1 / 1;
+}
+
+.testsRing strong {
+  margin-top: -8px;
+  color: #fff;
+  font-size: 1rem;
+}
+
+.testsRing small {
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.testsLogCard {
+  grid-column: 1;
+  grid-row: 3;
+  display: flex;
+  flex-direction: column;
+}
+
+.testsExecutionTable table {
+  min-width: 1180px;
+}
+
+.testsResult {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: .75rem;
+  font-weight: 800;
+}
+
+.testsResult.ok {
+  border: 1px solid #69d94577;
+  background: #69d9451f;
+  color: var(--green);
+}
+
+.testsResult.pending {
+  border: 1px solid #5f7c91;
+  background: #ffffff08;
+  color: var(--muted);
+}
+
+.testsResult.warn {
+  border: 1px solid #ffab2577;
+  background: #ffab251f;
+  color: var(--orange);
+}
+
+.testsResult.bad {
+  border: 1px solid #ff525277;
+  background: #ff52521f;
+  color: var(--red);
+}
+
+.tiny {
+  min-width: 30px;
+  min-height: 26px;
+  height: 26px;
+  padding: 0 8px;
+  font-size: .72rem;
+}
+
+.testsDetailPanel {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  gap: 10px;
+}
+
+.closeDetail {
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+.testsDetailFacts {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.testsDetailFacts span {
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid #2d5c75;
+  border-radius: 8px;
+  background: #071d30;
+}
+
+.testsDetailFacts small {
+  color: var(--muted);
+}
+
+.testsDetailFacts strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.testsDetailTable {
+  flex: 1 1 auto;
+}
+
+@media (max-height: 850px) {
+  .testsNative {
+    grid-template-rows: minmax(0, 1.08fr) 112px minmax(0, .9fr);
+  }
+
+  .testsPlanActions button,
+  .testsLogHeader button,
+  .testsSide button {
+    min-height: 30px;
+  }
+
+  .testsKpiCard {
+    padding: 9px;
+  }
+
+  .testsRing {
+    width: 58px;
+    height: 58px;
+  }
+
+  .testsKpiText strong {
+    font-size: 1.45rem;
+  }
+}

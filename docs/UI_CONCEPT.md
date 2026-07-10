@@ -154,6 +154,11 @@ misma zona inferior. Ese detalle muestra función, slave, dirección, cantidad o
 valor, modo de validación, resultado y una tabla por dirección con esperado vs
 leído/escrito.
 
+Implementación actual: la vista **Pruebas** ya debe permanecer como componente
+React nativo dentro de `SimpleModeApp`. No se deben reintroducir overlays,
+imports diferidos, roots React adicionales ni persistencia temporal por
+`localStorage`.
+
 Pendiente futuro: para escrituras, agregar una opción de **confirmar por lectura
 posterior**. Es decir, escribir con FC05/FC06/FC15/FC16 y luego leer con
 FC01/FC03 para comprobar que el slave conservó el valor.

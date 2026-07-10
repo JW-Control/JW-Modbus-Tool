@@ -9,11 +9,3 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <App />
   </React.StrictMode>
 );
-
-window.setTimeout(() => {
-  void import("./simple-tests-persistence-bridge.js")
-    .then(() => import("./simple-tests-consolidated.js"))
-    .catch((error) => {
-      console.error("[JW Modbus Tool] Simple tests consolidated view failed to load", error);
-    });
-}, 0);

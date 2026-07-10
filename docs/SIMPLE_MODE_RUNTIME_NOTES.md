@@ -1,124 +1,109 @@
-# Modo sencillo — notas de runtime
+# Modo sencillo - notas de runtime
 
 ## Estado actual
 
-El MVP de Modo sencillo usa React como base principal y un overlay puntual para la vista **Pruebas**.
+El Modo sencillo usa React como runtime unico del renderer. La vista **Pruebas**
+ya esta integrada como componente nativo y se monta desde `SimpleModeApp.tsx`
+igual que Dispositivos, Sesiones, Registros y Trafico Modbus.
 
 Archivos activos:
 
-- `src/renderer/simple-tests-runtime-safe.ts`
-- `src/renderer/simple-tests-persistence-bridge.ts`
+- `src/renderer/App.tsx`
+- `src/renderer/main.tsx`
+- `src/renderer/SimpleModeApp.tsx`
+- `src/renderer/simple-tests-consolidated.tsx`
+- `src/renderer/simple-mode-overrides.css`
 
-Carga activa:
+La carga activa es directa:
 
-- `src/renderer/main.tsx` importa primero `./simple-tests-persistence-bridge.js`.
-- Luego importa `./simple-tests-runtime-safe.js`.
-
-El orden importa: el puente de persistencia debe cargarse antes del runtime de Pruebas para poder restaurar el último plan guardado antes de que se pinte el overlay.
+1. `main.tsx` crea un unico root de React.
+2. `App.tsx` renderiza `SimpleModeApp`.
+3. `SimpleModeApp` muestra `TestsView` cuando la navegacion selecciona
+   **Pruebas**.
 
 ## Limpieza realizada
 
-Se eliminó el runtime anterior:
+Se retiro el enfoque de runtime paralelo para Pruebas:
 
-- `src/renderer/simple-tests-runtime.ts`
+- no hay `setTimeout(() => import(...))` desde `main.tsx`;
+- no hay segundo `ReactDOM.createRoot`;
+- no hay montaje por `document.querySelector`;
+- no hay overlay sobre la aplicacion principal;
+- no hay `simple-tests-persistence-bridge.ts`;
+- no hay estado de Pruebas en `localStorage`;
+- no hay variables globales `window.__jw...` para coordinar UI.
 
-Ese archivo quedó obsoleto porque intentaba montar la vista de Pruebas y además parcheaba el backend de sesiones de forma agresiva. Ese enfoque provocó pantallas azules/fondo vacío cuando el runtime fallaba antes de renderizar.
+Esto corrige el parpadeo donde aparecia una vista anterior de Pruebas y luego
+otra capa la reemplazaba.
 
 ## Persistencia de Pruebas
 
-La vista **Pruebas** mantiene su estado en `simple-tests-runtime-safe.ts`, separado temporalmente del estado React principal.
+El plan, escenarios y estado de simulador se guardan dentro del documento de
+sesion como `testsRuntime`.
 
-Para no perder cambios al cerrar/abrir la app o al guardar una sesión, se agregó `simple-tests-persistence-bridge.ts`:
+`testsRuntime` conserva solo configuracion durable:
 
-- Escucha el evento `jw-simple-tests-plan-updated`.
-- Guarda el plan en `localStorage` bajo `jw-modbus-tool.simple.tests-runtime.v1`.
-- Inyecta `testsRuntime` dentro del documento `.jwmodbus-session` cuando se usa `Guardar` o `Guardar como`.
-- Lee `testsRuntime` al usar `Abrir sesión` y lo vuelve a importar al runtime.
-- Deja el estado en `window.__jwPendingTestsRuntimeState` antes de cargar el overlay, para restaurar el plan al iniciar.
+- pasos del plan;
+- slave por paso;
+- funcion Modbus;
+- direccion;
+- cantidad;
+- valor;
+- modo de validacion;
+- esperado;
+- timeout;
+- escenario seleccionado;
+- escenarios personalizados;
+- estado preparado/detenido del panel de simulador.
 
-## Registro de ejecución y validación de valores
+Los resultados de ejecucion no se restauran como resultados vivos. Al abrir una
+sesion o crear una nueva sesion, los pasos vuelven a `Pendiente`. Esto evita que
+aparezcan pasos aprobados sin que el usuario presione **Iniciar prueba**.
 
-La tabla **Registro de ejecución** ahora tiene una columna **Info**.
+## Vista Pruebas
 
-Al abrir el detalle de un paso ejecutado, la misma zona del registro cambia a una vista de detalle con:
+La vista soporta el plan Modbus basico completo:
 
-- paso, función, slave, dirección inicial, cantidad/valor, duración y resultado;
-- tabla de valores por dirección;
-- nombre referencial del registro o bit;
-- valor esperado;
-- valor leído o escrito;
-- tipo básico (`bool` o `uint16`);
-- resultado de validación por fila.
+- FC01 Read Coils
+- FC02 Read Discrete Inputs
+- FC03 Read Holding Registers
+- FC04 Read Input Registers
+- FC05 Write Single Coil
+- FC06 Write Single Register
+- FC15 Write Multiple Coils
+- FC16 Write Multiple Registers
 
-El resultado del paso ya no debe entenderse solo como comunicación exitosa. Ahora queda definido así:
+La tabla separa `Cantidad` y `Valor`:
 
-- **Aprobado** = comunicación OK + validación OK.
-- **Validación fallida** = hubo respuesta Modbus, pero uno o más valores no coinciden con el campo `Esperado`.
-- **Timeout** = el slave no respondió dentro del tiempo definido.
-- **Excepción** = el slave respondió con excepción Modbus.
-- **CRC Error** = la respuesta fue marcada como inválida por CRC.
-- **Error** = error interno o de comunicación no clasificado.
+- lecturas usan `Cantidad`;
+- escrituras usan `Valor`;
+- FC15/FC16 calculan cantidad desde la lista escrita;
+- FC05/FC06 trabajan como escritura de valor unico.
 
-### Campo Esperado
+La validacion se define con modos explicitos:
 
-El campo `Esperado` admite tres niveles:
+- `Respuesta OK`
+- `Cantidad solicitada`
+- `Valores exactos`
+- `Por direccion`
 
-1. **Validar solo respuesta/cantidad**
-   - `OK`
-   - `10 regs`
-   - `8 coils`
-   - `8 bits`
+El registro de ejecucion y el detalle del paso se mantienen dentro de la misma
+vista, sin modales flotantes.
 
-2. **Validar valores secuenciales**
-   - `4096,4097,4098`
-   - `ON,OFF,ON,OFF`
+## Reglas para proximos cambios
 
-3. **Validar valores por dirección**
-   - `40000=4096,40001=4097`
-   - `0=ON,1=OFF`
+1. Mantener Pruebas como componente React nativo.
+2. No reintroducir overlays, imports diferidos ni roots React adicionales.
+3. No parchear el backend de sesiones desde el renderer.
+4. Guardar estado durable de Pruebas solo mediante `testsRuntime`.
+5. No guardar resultados temporales como estado de arranque.
+6. Cualquier nueva accion de prueba debe pasar por el bridge `window.jwModbus`.
+7. Antes de tocar Pruebas, verificar `typecheck`, tests y build.
 
-Para escrituras, el MVP valida contra el valor solicitado o eco lógico de escritura. La lectura posterior automática para confirmar que el slave realmente conservó el valor queda como mejora futura.
+## Pendiente funcional
 
-## Gestionar escenarios
-
-El botón **Gestionar escenarios** queda implementado dentro del mismo panel derecho de **Pruebas**.
-
-Funciones incluidas en el MVP:
-
-- Editar nombre, descripción, ícono y color del escenario seleccionado.
-- Crear un escenario nuevo desde el plan visible.
-- Duplicar el escenario seleccionado.
-- Usar el plan visible como pasos del escenario seleccionado.
-- Restaurar valores base solo en escenarios predeterminados.
-- Eliminar únicamente escenarios personalizados.
-- Scroll interno en la lista/gestor para evitar desplazar la vista completa.
-- Persistencia dentro de `testsRuntime.scenarios`, por lo que se guarda en `.jwmodbus-session` junto con el plan.
-
-Decisiones UI:
-
-- La sección **Pasos del escenario** se retiró del gestor porque duplicaba información que ya vive en la tabla principal del plan.
-- **Usar plan visible como pasos** sirve para tomar la tabla actual de `Plan de pruebas al slave` y guardarla dentro del escenario activo.
-- **Restaurar base** solo aparece en los escenarios predeterminados: Operación normal, Timeout detectado, Error CRC detectado y Excepción Modbus.
-- En escenarios personalizados se muestran acciones más coherentes: duplicar, eliminar y guardar.
-
-Regla de uso: después de editar escenarios o pasos, usar **Guardar plan** o cerrar el gestor con **Guardar y volver**; luego usar **Guardar sesión** para persistirlo en archivo.
-
-## Regla para próximos cambios
-
-Para evitar repetir el bloqueo:
-
-1. No crear otro runtime paralelo para la misma vista.
-2. No importar de nuevo `simple-tests-runtime.js`.
-3. Mantener `simple-tests-runtime-safe.ts` como único overlay temporal de **Pruebas** mientras la vista se integra de forma nativa en React.
-4. Mantener `simple-tests-persistence-bridge.ts` como único puente de persistencia para ese overlay.
-5. Cualquier integración con sesiones debe ser tolerante a fallos: si el guardado del plan no se puede inyectar, la vista debe seguir cargando.
-6. El overlay debe estar envuelto en `try/catch` o funciones seguras para no bloquear el resto de la aplicación.
-7. Antes de tocar el runtime de Pruebas, verificar que **Dispositivos** y **Sesiones** siguen cargando sin pantalla azul.
-
-## Pendiente técnico
-
-La solución correcta a mediano plazo es migrar la vista **Pruebas** desde overlay hacia un componente React nativo, con persistencia formal dentro del documento `.jwmodbus-session`.
-
-Hasta cerrar esa migración, el overlay seguro + puente de persistencia quedan como implementación canónica del MVP.
-
-Pendiente funcional importante: agregar opción **verificar escritura después de escribir**, donde FC05/FC06/FC15/FC16 ejecuten una lectura posterior FC01/FC03 para confirmar que el valor quedó realmente aplicado en el slave.
+- Confirmar escrituras por lectura posterior opcional: FC05/FC15 contra FC01 y
+  FC06/FC16 contra FC03.
+- Conectar el panel de simulador slave a un motor real de emulacion.
+- Integrar trazas completas de Pruebas con la vista Trafico Modbus.
+- Permitir importar/exportar escenarios como plantillas reutilizables.
