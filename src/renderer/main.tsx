@@ -11,7 +11,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 );
 
 window.setTimeout(() => {
-  void import("./simple-tests-runtime.js").catch((error) => {
+  void import("./simple-tests-runtime-safe.js").catch((error) => {
     console.error("[JW Modbus Tool] Simple tests runtime failed to load", error);
   });
 }, 0);
