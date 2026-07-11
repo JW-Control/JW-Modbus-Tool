@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import type { SerialOperationResult } from "../shared/serial/types.js";
 
 export type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc5" | "fc6" | "fc15" | "fc16";
 export type Result = "Pendiente" | "Ejecutando" | "Aprobado" | "Timeout" | "CRC Error" | "Excepcion" | "Validacion fallida" | "Error";
@@ -92,7 +91,7 @@ interface TestsState {
 
 export interface TestsRuntimeState {
   format: "jwmodbus-tests-runtime";
-  version: 5;
+  version: 6;
   savedAt: string;
   selectedScenario: string;
   simulatorState: SimulatorState;
@@ -110,6 +109,20 @@ interface TestsViewProps {
   onRuntimeStateChange: (state: TestsRuntimeState) => void;
   onMessage: (message: string) => void;
 }
+
+type LegacyStepFields = {
+  id?: string;
+  fn?: unknown;
+  exp?: unknown;
+  amount?: unknown;
+  addr?: unknown;
+  count?: unknown;
+  expectedValue?: unknown;
+  to?: unknown;
+  timeout?: unknown;
+  res?: Result;
+  ms?: number | null;
+};
 
 const runtimeFormat = "jwmodbus-tests-runtime";
 
@@ -210,10 +223,14 @@ function defaultValidation(fn: Fn): ValidationMode {
   return isRead(fn) ? "count" : "response";
 }
 
+function splitValues(value: unknown) {
+  return String(value ?? "").split(/[;,\s]+/).map((part) => part.trim()).filter(Boolean);
+}
+
 function parseInteger(value: unknown, label: string) {
   const text = String(value ?? "").trim();
   if (!text) throw new Error(`${label} requerido.`);
-  const parsed = Number(text);
+  const parsed = text.toLowerCase().startsWith("0x") ? Number.parseInt(text, 16) : Number(text);
   if (!Number.isInteger(parsed)) throw new Error(`${label} debe ser un entero decimal o hexadecimal.`);
   return parsed;
 }
@@ -222,17 +239,6 @@ function parseBoundedInteger(value: unknown, label: string, min: number, max: nu
   const parsed = parseInteger(value, label);
   if (parsed < min || parsed > max) throw new Error(`${label} debe estar entre ${min} y ${max}.`);
   return parsed;
-}
-
-function splitValues(value: unknown) {
-  return String(value ?? "").split(/[;,\s]+/).map((part) => part.trim()).filter(Boolean);
-}
-
-function parsePlanCoilValue(value: unknown, label = "Valor de bobina") {
-  const text = String(value ?? "").trim().toLowerCase();
-  if (["1", "true", "on", "si", "sí", "yes", "high"].includes(text)) return true;
-  if (["0", "false", "off", "no", "low"].includes(text)) return false;
-  throw new Error(`${label} invalido. Usa ON/OFF o 1/0.`);
 }
 
 function normalizeBool(value: unknown) {
@@ -244,24 +250,31 @@ function boolText(value: unknown) {
   return normalizeBool(value) ? "ON" : "OFF";
 }
 
+function parsePlanCoilValue(value: unknown, label = "Valor de bobina") {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (["1", "true", "on", "si", "sí", "yes", "high"].includes(text)) return true;
+  if (["0", "false", "off", "no", "low"].includes(text)) return false;
+  throw new Error(`${label} invalido. Usa ON/OFF o 1/0.`);
+}
+
 function parseBoolList(value: unknown) {
-  return splitValues(value).map(normalizeBool);
-}
-
-function parseRegisterList(value: unknown) {
-  return splitValues(value).map((part) => Number(part)).filter(Number.isFinite);
-}
-
-export function parsePlanCoilValues(value: unknown) {
   const tokens = splitValues(value);
   if (tokens.length === 0) throw new Error("Valor de bobinas requerido. Usa ON/OFF o 1/0 separados por coma.");
   return tokens.map((token, index) => parsePlanCoilValue(token, `Valor de bobina ${index + 1}`));
 }
 
-export function parsePlanRegisterValues(value: unknown) {
+function parseRegisterList(value: unknown) {
   const tokens = splitValues(value);
   if (tokens.length === 0) throw new Error("Valor de registros requerido. Usa enteros separados por coma.");
   return tokens.map((token, index) => parseBoundedInteger(token, `Valor ${index + 1}`, 0, 0xffff));
+}
+
+export function parsePlanCoilValues(value: unknown) {
+  return parseBoolList(value);
+}
+
+export function parsePlanRegisterValues(value: unknown) {
+  return parseRegisterList(value);
 }
 
 function rawAddress(fn: Fn, address: number) {
@@ -290,8 +303,8 @@ function maxReadQuantity(fn: Fn) {
 
 function countFor(step: Pick<TestStep, "fn" | "quantity" | "value">) {
   if (isRead(step.fn)) return Math.max(1, numeric(step.quantity, 1));
-  if (step.fn === "fc15") return Math.max(1, parseBoolList(step.value).length);
-  if (step.fn === "fc16") return Math.max(1, parseRegisterList(step.value).length);
+  if (step.fn === "fc15") return Math.max(1, splitValues(step.value).length);
+  if (step.fn === "fc16") return Math.max(1, splitValues(step.value).length);
   return 1;
 }
 
@@ -318,20 +331,6 @@ function inferExpected(expected: unknown) {
   if (!text || /^ok$/i.test(text) || /^\d+\s*(regs?|coils?|bits?)$/i.test(text)) return "";
   return text;
 }
-
-type LegacyStepFields = {
-  id?: string;
-  fn?: unknown;
-  exp?: unknown;
-  amount?: unknown;
-  addr?: unknown;
-  count?: unknown;
-  expectedValue?: unknown;
-  to?: unknown;
-  timeout?: unknown;
-  res?: Result;
-  ms?: number | null;
-};
 
 function normalizeStep(input: Partial<TestStep> & Partial<StoredStep> & LegacyStepFields, defaultSlave = 2): TestStep {
   const fn = functionOrder.includes(input.fn as Fn) ? input.fn as Fn : "fc3";
@@ -510,7 +509,7 @@ export function normalizeTestsRuntimeState(data: unknown, defaultSlave = 2): Tes
   const selectedScenario = scenarios[source.selectedScenario] ? source.selectedScenario : "normal";
   return {
     format: runtimeFormat,
-    version: 5,
+    version: 6,
     savedAt: new Date().toISOString(),
     selectedScenario,
     simulatorState: source.simulatorState === "Preparado" ? "Preparado" : "Detenido",
@@ -539,7 +538,7 @@ function createInitialState(runtimeState: TestsRuntimeState | null, defaultSlave
 function exportRuntimeState(state: TestsState): TestsRuntimeState {
   return {
     format: runtimeFormat,
-    version: 5,
+    version: 6,
     savedAt: new Date().toISOString(),
     selectedScenario: state.selectedScenario,
     simulatorState: state.simulatorState,
@@ -615,12 +614,12 @@ function buildRows(step: TestStep, action: any): StepDetailRow[] {
     const address = displayAddress(step.fn, numeric(step.address), index);
     const actual = isBit ? boolText(actualValues[index]) : String(actualValues[index] ?? "");
     const expected = byAddress.get(address) ?? sequence[index] ?? "";
-    const hasCriterion = step.validationMode === "exact" || step.validationMode === "byAddress";
+    const hasCriterion = (step.validationMode === "exact" || step.validationMode === "byAddress") && Boolean(expected);
     const ok = hasCriterion ? sameValue(actual, expected, isBit) : true;
     rows.push({
       address,
       name: registerName(step.fn, address),
-      expected: hasCriterion ? expected || "-" : "-",
+      expected: hasCriterion ? expected : "-",
       actual: actual || "-",
       type: isBit ? "bool" : "uint16",
       validation: hasCriterion ? (ok ? "OK" : "No coincide") : "Sin criterio",
@@ -646,6 +645,9 @@ function validateStep(step: TestStep, action: any, rows: StepDetailRow[]) {
       result: ok ? "Aprobado" as Result : "Validacion fallida" as Result,
       detail: ok ? `${expected} valor(es) recibidos correctamente.` : `Se esperaban ${expected} valor(es) y llegaron ${received}.`
     };
+  }
+  if ((step.validationMode === "exact" || step.validationMode === "byAddress") && !rows.some((row) => row.expected !== "-")) {
+    return { result: "Validacion fallida" as Result, detail: "Define al menos un valor esperado para validar." };
   }
   const allOk = rows.every((row) => row.ok);
   return {
@@ -674,13 +676,13 @@ function validateExecutableStep(step: TestStep): ExecutableStepCommand {
     return { unitId, timeoutMs, address, quantity: 1, registerValue: parseBoundedInteger(step.value, "Valor de registro", 0, 0xffff) };
   }
   if (step.fn === "fc15") {
-    const coilValues = parsePlanCoilValues(step.value);
+    const coilValues = parseBoolList(step.value);
     if (coilValues.length > 1968) throw new Error("FC15 permite maximo 1968 bobinas.");
     validateAddressWindow(address, coilValues.length);
     return { unitId, timeoutMs, address, quantity: coilValues.length, coilValues };
   }
   if (step.fn === "fc16") {
-    const registerValues = parsePlanRegisterValues(step.value);
+    const registerValues = parseRegisterList(step.value);
     if (registerValues.length > 123) throw new Error("FC16 permite maximo 123 registros.");
     validateAddressWindow(address, registerValues.length);
     return { unitId, timeoutMs, address, quantity: registerValues.length, registerValues };
@@ -688,12 +690,8 @@ function validateExecutableStep(step: TestStep): ExecutableStepCommand {
   throw new Error("Funcion Modbus no soportada.");
 }
 
-function isSerialOperationResult<T>(value: unknown): value is SerialOperationResult<T> {
-  return typeof value === "object" && value !== null && "ok" in value && typeof (value as { ok?: unknown }).ok === "boolean";
-}
-
-export function unwrapModbusActionResult<T>(action: SerialOperationResult<T> | T): T {
-  if (!isSerialOperationResult<T>(action)) return action;
+function unwrapModbusActionResult(action: any) {
+  if (!action || typeof action !== "object" || typeof action.ok !== "boolean") return action;
   if (!action.ok) throw new Error(action.error || "Error de comunicacion Modbus.");
   return action.value;
 }
@@ -721,7 +719,7 @@ async function executeStep(step: TestStep) {
   else if (step.fn === "fc15") action = await modbus.writeMultipleCoils({ ...base, startAddress: address, values: command.coilValues ?? [] });
   else if (step.fn === "fc16") action = await modbus.writeMultipleRegisters({ ...base, startAddress: address, values: command.registerValues ?? [] });
 
-  const payload = unwrapModbusActionResult<any>(action);
+  const payload = unwrapModbusActionResult(action);
   const rows = buildRows(step, payload);
   const validation = validateStep(step, payload, rows);
   const elapsedMs = Math.round(payload?.elapsedMs ?? performance.now() - started);
@@ -736,6 +734,43 @@ async function executeStep(step: TestStep) {
     values: rows.map((row) => `${row.address}=${row.actual}`).join(", "),
     at
   };
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? "").replace(/\r?\n/g, " ");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function executionCsv(steps: TestStep[]) {
+  const header = ["Hora", "Paso", "Slave", "Funcion", "Direccion", "Cantidad", "Valor", "Validacion", "Esperado", "Resultado", "Tiempo ms", "Detalle", "Valores"];
+  const rows = steps.map((step, index) => [
+    step.at || "",
+    index + 1,
+    step.slave,
+    labels[step.fn],
+    step.address,
+    isRead(step.fn) ? countFor(step) : "",
+    isRead(step.fn) ? "" : step.value,
+    validationLabels[step.validationMode],
+    expectedAutoText(step),
+    step.result,
+    step.elapsedMs ?? "",
+    step.detail || "Pendiente de ejecucion.",
+    step.values || step.rows.map((row) => `${row.address}=${row.actual}`).join("; ")
+  ]);
+  return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob(["\ufeff", content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, onRuntimeStateChange, onMessage }: TestsViewProps) {
@@ -834,6 +869,17 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
     setState((current) => ({ ...current, selectedScenario: id, steps: scenarioSteps(id, current.scenarios[id], defaultSlave), detailIndex: null }));
   }
 
+  function exportLog() {
+    const executed = state.steps.filter((step) => isFinalResult(step.result));
+    if (executed.length === 0) {
+      onMessage("Aun no hay una ejecucion para exportar.");
+      return;
+    }
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    downloadTextFile(`jw-modbus-pruebas-${stamp}.csv`, executionCsv(state.steps), "text/csv;charset=utf-8");
+    onMessage("Registro de ejecucion exportado a CSV.");
+  }
+
   async function runPlan() {
     if (stateRef.current.running) return;
     let working = stateRef.current.steps.map(resetExecution);
@@ -843,7 +889,16 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
       if (stateRef.current.stopRequested) break;
       const step = working[index];
       if (!step?.enabled) continue;
-      const runningStep: TestStep = { ...step, result: "Ejecutando", elapsedMs: null, detail: "Ejecutando solicitud Modbus...", rows: [], values: "", at: new Date().toLocaleTimeString("es-PE", { hour12: false }) };
+
+      const runningStep: TestStep = {
+        ...step,
+        result: "Ejecutando",
+        elapsedMs: null,
+        detail: "Ejecutando solicitud Modbus...",
+        rows: [],
+        values: "",
+        at: new Date().toLocaleTimeString("es-PE", { hour12: false })
+      };
       working = working.map((item, itemIndex) => itemIndex === index ? runningStep : item);
       setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? runningStep : item) }));
 
@@ -854,7 +909,15 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
       } catch (error) {
         const message = String(error instanceof Error ? error.message : error || "Error de comunicacion.");
         const result = classifyStepErrorResult(message);
-        const failed: TestStep = { ...step, result, elapsedMs: result === "Timeout" ? numeric(step.timeoutMs, 1000) : null, detail: message, rows: [], values: "", at: new Date().toLocaleTimeString("es-PE", { hour12: false }) };
+        const failed: TestStep = {
+          ...step,
+          result,
+          elapsedMs: result === "Timeout" ? numeric(step.timeoutMs, 1000) : null,
+          detail: message,
+          rows: [],
+          values: "",
+          at: new Date().toLocaleTimeString("es-PE", { hour12: false })
+        };
         working = working.map((item, itemIndex) => itemIndex === index ? failed : item);
         setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item) }));
       }
@@ -896,14 +959,20 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
       </div>
 
       <div className="testsKpis">
-        <KpiRing title="Tasa de éxito" value={`${summary.rate}%`} sub={summary.executed ? `Ultima ejecucion: ${summary.passed}/${summary.executed} aprobados` : "Sin ejecucion"} tone="success" />
+        <KpiRing title="Tasa de exito" value={`${summary.rate}%`} sub={summary.executed ? `Ultima ejecucion: ${summary.passed}/${summary.executed} aprobados` : "Sin ejecucion"} tone="success" />
         <KpiText title="Latencia promedio" value={summary.avg == null ? "-" : `${summary.avg} ms`} sub={summary.responsive ? `Ultima ejecucion: ${summary.responsive} respuesta(s)${summary.timeouts ? `; ${summary.timeouts} timeout(s) excluidos` : ""}` : summary.running ? "Esperando respuesta" : "Sin datos todavia"} />
         <KpiText title="Errores" value={String(summary.failed)} sub={summary.failed ? `${summary.timeouts} timeout(s), ${summary.otherFailed} otro(s)` : "Ultima ejecucion"} danger={summary.failed > 0} />
         <KpiRing title="Pasos completados" value={`${summary.executed}/${summary.active}`} sub={summary.running ? `${summary.running} en curso` : "Ultima ejecucion"} tone="steps" />
       </div>
 
       <section className="card testsLogCard">
-        <div className="testsLogHeader"><h2>Registro de ejecucion</h2><div><button onClick={() => setState((current) => ({ ...current, detailIndex: null, steps: current.steps.map(resetExecution) }))}>Limpiar registro</button><button disabled>Exportar</button></div></div>
+        <div className="testsLogHeader">
+          <h2>Registro de ejecucion</h2>
+          <div>
+            <button onClick={() => setState((current) => ({ ...current, detailIndex: null, steps: current.steps.map(resetExecution) }))}>Limpiar registro</button>
+            <button onClick={exportLog} disabled={!state.steps.some((step) => isFinalResult(step.result))}>Exportar CSV</button>
+          </div>
+        </div>
         {state.detailIndex == null ? <ExecutionTable steps={state.steps} onDetail={(index) => setState((current) => ({ ...current, detailIndex: index }))} /> : <StepDetail step={state.steps[state.detailIndex]} index={state.detailIndex} onClose={() => setState((current) => ({ ...current, detailIndex: null }))} />}
       </section>
     </div>
