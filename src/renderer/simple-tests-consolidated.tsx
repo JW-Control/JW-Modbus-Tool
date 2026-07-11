@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SerialOperationResult } from "../shared/serial/types.js";
 
-type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc5" | "fc6" | "fc15" | "fc16";
+export type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc5" | "fc6" | "fc15" | "fc16";
 export type Result = "Pendiente" | "Ejecutando" | "Aprobado" | "Timeout" | "CRC Error" | "Excepcion" | "Validacion fallida" | "Error";
-type ValidationMode = "response" | "count" | "exact" | "byAddress";
+export type ValidationMode = "response" | "count" | "exact" | "byAddress";
 type ScenarioColor = "shield" | "clock" | "warn" | "bad" | "cyan";
 type SimulatorState = "Detenido" | "Preparado";
 
@@ -47,7 +47,7 @@ interface ExecutableStepCommand {
   registerValues?: number[];
 }
 
-interface StoredStep {
+export interface StoredStep {
   enabled: boolean;
   slave: string;
   fn: Fn;
@@ -57,6 +57,18 @@ interface StoredStep {
   validationMode: ValidationMode;
   expected: string;
   timeoutMs: string;
+}
+
+export interface TestsRunSummary {
+  total: number;
+  executed: number;
+  passed: number;
+  failed: number;
+  timeouts: number;
+  otherFailed: number;
+  responsive: number;
+  avgMs: number | null;
+  lastRunAt: string | null;
 }
 
 interface Scenario {
@@ -81,12 +93,13 @@ interface TestsState {
 
 export interface TestsRuntimeState {
   format: "jwmodbus-tests-runtime";
-  version: 4;
+  version: 5;
   savedAt: string;
   selectedScenario: string;
   simulatorState: SimulatorState;
   steps: StoredStep[];
   scenarios: Record<string, Scenario>;
+  lastRun: TestsRunSummary;
 }
 
 interface TestsViewProps {
@@ -318,6 +331,70 @@ function isResponsiveResult(result: Result) {
   return isFinalResult(result) && result !== "Timeout" && result !== "Error";
 }
 
+function blankRunSummary(total = 0): TestsRunSummary {
+  return {
+    total,
+    executed: 0,
+    passed: 0,
+    failed: 0,
+    timeouts: 0,
+    otherFailed: 0,
+    responsive: 0,
+    avgMs: null,
+    lastRunAt: null
+  };
+}
+
+function boundedCount(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.round(parsed);
+}
+
+export function summarizeTestsRun(steps: Array<{ enabled?: boolean; result?: Result; elapsedMs?: number | null; at?: string }>): TestsRunSummary {
+  const active = steps.filter((step) => step.enabled !== false);
+  const executed = active.filter((step) => step.result && isFinalResult(step.result));
+  const responsive = executed.filter((step) => step.result && isResponsiveResult(step.result) && step.elapsedMs != null);
+  const passed = executed.filter((step) => step.result === "Aprobado").length;
+  const failed = executed.filter((step) => step.result !== "Aprobado").length;
+  const timeouts = executed.filter((step) => step.result === "Timeout").length;
+  const otherFailed = Math.max(0, failed - timeouts);
+  const avgMs = responsive.length
+    ? Math.round(responsive.reduce((sum, step) => sum + (step.elapsedMs ?? 0), 0) / responsive.length)
+    : null;
+  const lastRunAt = [...executed].reverse().find((step) => step.at)?.at ?? null;
+  return {
+    total: active.length,
+    executed: executed.length,
+    passed,
+    failed,
+    timeouts,
+    otherFailed,
+    responsive: responsive.length,
+    avgMs,
+    lastRunAt
+  };
+}
+
+function normalizeTestsRunSummary(input: unknown, total: number): TestsRunSummary {
+  if (!input || typeof input !== "object") return blankRunSummary(total);
+  const source = input as Partial<TestsRunSummary>;
+  const executed = boundedCount(source.executed, 0);
+  const failed = boundedCount(source.failed, 0);
+  const timeouts = boundedCount(source.timeouts, 0);
+  return {
+    total: boundedCount(source.total, total),
+    executed,
+    passed: boundedCount(source.passed, 0),
+    failed,
+    timeouts,
+    otherFailed: boundedCount(source.otherFailed, Math.max(0, failed - timeouts)),
+    responsive: boundedCount(source.responsive, 0),
+    avgMs: source.avgMs == null ? null : boundedCount(source.avgMs, 0),
+    lastRunAt: typeof source.lastRunAt === "string" ? source.lastRunAt : null
+  };
+}
+
 function countFor(step: TestStep) {
   if (isRead(step.fn)) return Math.max(1, numeric(step.quantity, 1));
   if (step.fn === "fc15") return Math.max(1, parseBoolList(step.value).length);
@@ -421,6 +498,49 @@ function defaultPlan(defaultSlave = 2) {
   ];
 }
 
+function alternateSlave(defaultSlave = 2) {
+  return defaultSlave === 1 ? 247 : 1;
+}
+
+function timeoutPlan(defaultSlave = 2) {
+  const unavailableSlave = alternateSlave(defaultSlave);
+  return defaultPlan(unavailableSlave).map((step) => resetExecution({ ...step, timeoutMs: "1000" }));
+}
+
+function crcDiagnosticPlan(defaultSlave = 2) {
+  return defaultPlan(defaultSlave).map((step, index) => {
+    if (index !== 1) return step;
+    return resetExecution({ ...step, validationMode: "exact", expected: "65535" });
+  });
+}
+
+function exceptionPlan(defaultSlave = 2) {
+  return [
+    createStep(defaultSlave, "fc3", "105535", "1", "", "response"),
+    createStep(defaultSlave, "fc4", "95535", "1", "", "response"),
+    createStep(defaultSlave, "fc1", "65535", "1", "", "response"),
+    createStep(defaultSlave, "fc2", "75535", "1", "", "response"),
+    createStep(defaultSlave, "fc6", "105535", "1", "1234", "response"),
+    createStep(defaultSlave, "fc5", "65535", "1", "ON", "response")
+  ];
+}
+
+function scenarioPlan(id: string, defaultSlave = 2) {
+  if (id === "timeout") return timeoutPlan(defaultSlave);
+  if (id === "crc") return crcDiagnosticPlan(defaultSlave);
+  if (id === "exception") return exceptionPlan(defaultSlave);
+  return defaultPlan(defaultSlave);
+}
+
+export function createScenarioPlan(id: string, defaultSlave = 2): StoredStep[] {
+  return scenarioPlan(id, defaultSlave).map(stripStep);
+}
+
+function scenarioSteps(id: string, scenario: Scenario | undefined, defaultSlave: number) {
+  const source = scenario?.steps?.length ? scenario.steps : createScenarioPlan(id, defaultSlave);
+  return source.map((step) => resetExecution(normalizeStep(step, defaultSlave)));
+}
+
 function normalizeScenario(input: Partial<Scenario> | undefined, fallback = defaultScenarios.normal): Scenario {
   return {
     icon: String(input?.icon ?? fallback.icon ?? "OK").slice(0, 6),
@@ -445,26 +565,31 @@ export function normalizeTestsRuntimeState(data: unknown, defaultSlave = 2): Tes
   const source = (data as any)?.format === runtimeFormat ? data as TestsRuntimeState : (data as any)?.testsRuntime;
   if (!source || source.format !== runtimeFormat || !Array.isArray(source.steps)) return null;
   const steps = source.steps as Array<Partial<TestStep> & Partial<StoredStep> & LegacyStepFields>;
+  const normalizedSteps = steps.map((step) => stripStep(normalizeStep(step, defaultSlave)));
   const scenarios = normalizeScenarios(source.scenarios);
   const selectedScenario = scenarios[source.selectedScenario] ? source.selectedScenario : "normal";
   return {
     format: runtimeFormat,
-    version: 4,
+    version: 5,
     savedAt: new Date().toISOString(),
     selectedScenario,
     simulatorState: source.simulatorState === "Preparado" ? "Preparado" : "Detenido",
-    steps: steps.map((step) => stripStep(normalizeStep(step, defaultSlave))),
-    scenarios
+    steps: normalizedSteps,
+    scenarios,
+    lastRun: normalizeTestsRunSummary(source.lastRun, normalizedSteps.length)
   };
 }
 
 function createInitialState(runtimeState: TestsRuntimeState | null, defaultSlave: number): TestsState {
   const runtime = normalizeTestsRuntimeState(runtimeState, defaultSlave);
   const scenarios = runtime?.scenarios ?? clone(defaultScenarios);
+  const selectedScenario = runtime?.selectedScenario ?? "normal";
   return {
-    selectedScenario: runtime?.selectedScenario ?? "normal",
+    selectedScenario,
     simulatorState: runtime?.simulatorState ?? "Detenido",
-    steps: runtime?.steps.map((step) => resetExecution(normalizeStep(step, defaultSlave))) ?? defaultPlan(defaultSlave),
+    steps: runtime?.steps.length
+      ? runtime.steps.map((step) => resetExecution(normalizeStep(step, defaultSlave)))
+      : scenarioSteps(selectedScenario, scenarios[selectedScenario], defaultSlave),
     scenarios,
     running: false,
     stopRequested: false,
@@ -477,14 +602,15 @@ function createInitialState(runtimeState: TestsRuntimeState | null, defaultSlave
 function exportRuntimeState(state: TestsState): TestsRuntimeState {
   return {
     format: runtimeFormat,
-    version: 4,
+    version: 5,
     savedAt: new Date().toISOString(),
     selectedScenario: state.selectedScenario,
     simulatorState: state.simulatorState,
     steps: state.steps.map(stripStep),
     scenarios: Object.fromEntries(
       Object.entries(state.scenarios).map(([key, scenario]) => [key, normalizeScenario(scenario)])
-    )
+    ),
+    lastRun: summarizeTestsRun(state.steps)
   };
 }
 
@@ -713,7 +839,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   function selectScenario(id: string) {
     setState((current) => {
       const scenario = current.scenarios[id];
-      const steps = scenario?.steps?.length ? scenario.steps.map((step) => resetExecution(normalizeStep(step, defaultSlave))) : defaultPlan(defaultSlave);
+      const steps = scenarioSteps(id, scenario, defaultSlave);
       return { ...current, selectedScenario: id, steps, detailIndex: null, executionLog: [] };
     });
   }
@@ -833,10 +959,10 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
       </div>
 
       <div className="testsKpis">
-        <KpiRing title="Tasa de exito" value={`${summary.rate}%`} sub={summary.executed ? `${summary.passed}/${summary.executed} aprobados` : "Sin ejecucion"} tone="success" />
-        <KpiText title="Latencia respuesta" value={summary.avg == null ? "-" : `${summary.avg} ms`} sub={summary.responsive ? `${summary.responsive} respuesta(s)${summary.timeouts ? `; ${summary.timeouts} timeout(s) excluidos` : ""}` : summary.running ? "Esperando respuesta" : "Sin datos todavia"} />
-        <KpiText title="Fallos" value={String(summary.failed)} sub={summary.failed ? `${summary.timeouts} timeout(s), ${summary.otherFailed} otro(s)` : "Ultima ejecucion"} danger={summary.failed > 0} />
-        <KpiRing title="Pasos ejecutados" value={`${summary.executed}/${summary.active}`} sub={summary.running ? `${summary.running} en curso` : "Ultima ejecucion"} tone="steps" />
+        <KpiRing title="Tasa de éxito" value={`${summary.rate}%`} sub={summary.executed ? `Última ejecución: ${summary.passed}/${summary.executed} aprobados` : "Sin ejecución"} tone="success" />
+        <KpiText title="Latencia promedio" value={summary.avg == null ? "-" : `${summary.avg} ms`} sub={summary.responsive ? `Última ejecución: ${summary.responsive} respuesta(s)${summary.timeouts ? `; ${summary.timeouts} timeout(s) excluidos` : ""}` : summary.running ? "Esperando respuesta" : "Sin datos todavía"} />
+        <KpiText title="Errores" value={String(summary.failed)} sub={summary.failed ? `${summary.timeouts} timeout(s), ${summary.otherFailed} otro(s)` : "Última ejecución"} danger={summary.failed > 0} />
+        <KpiRing title="Pasos completados" value={`${summary.executed}/${summary.active}`} sub={summary.running ? `${summary.running} en curso` : "Última ejecución"} tone="steps" />
       </div>
 
       <section className="card testsLogCard">
@@ -915,7 +1041,7 @@ function ScenarioManager({ state, setState, savePlan, defaultSlave }: { state: T
       <h2>Gestionar escenarios</h2>
       <label>Escenario activo<select value={state.selectedScenario} onChange={(event) => {
         const id = event.target.value;
-        setState((current) => ({ ...current, selectedScenario: id, steps: current.scenarios[id]?.steps?.map((step) => resetExecution(normalizeStep(step, defaultSlave))) ?? current.steps }));
+        setState((current) => ({ ...current, selectedScenario: id, steps: scenarioSteps(id, current.scenarios[id], defaultSlave), detailIndex: null, executionLog: [] }));
       }}>{Object.entries(state.scenarios).map(([id, item]) => <option key={id} value={id}>{item.name}</option>)}</select></label>
       <label>Nombre<input value={scenario.name} onChange={(event) => patchScenario({ name: event.target.value })} /></label>
       <label>Descripcion<textarea value={scenario.desc} onChange={(event) => patchScenario({ desc: event.target.value })} /></label>
@@ -930,11 +1056,20 @@ function ScenarioManager({ state, setState, savePlan, defaultSlave }: { state: T
           setState((current) => ({ ...current, selectedScenario: id, scenarios: { ...current.scenarios, [id]: normalizeScenario({ ...clone(scenario), name: `${scenario.name} copia`, steps: current.steps.map(stripStep) }) } }));
         }}>Duplicar</button>
         {isDefault
-          ? <button onClick={() => setState((current) => ({ ...current, scenarios: { ...current.scenarios, [current.selectedScenario]: normalizeScenario(defaultScenarios[current.selectedScenario], defaultScenarios[current.selectedScenario]) }, steps: defaultPlan(defaultSlave) }))}>Restaurar base</button>
+          ? <button onClick={() => setState((current) => {
+            const base = defaultScenarios[current.selectedScenario] ?? defaultScenarios.normal;
+            return {
+              ...current,
+              scenarios: { ...current.scenarios, [current.selectedScenario]: normalizeScenario(base, base) },
+              steps: scenarioSteps(current.selectedScenario, undefined, defaultSlave),
+              detailIndex: null,
+              executionLog: []
+            };
+          })}>Restaurar base</button>
           : <button onClick={() => setState((current) => {
             const scenarios = { ...current.scenarios };
             delete scenarios[current.selectedScenario];
-            return { ...current, selectedScenario: "normal", scenarios, steps: scenarios.normal.steps?.map((step) => resetExecution(normalizeStep(step, defaultSlave))) ?? defaultPlan(defaultSlave) };
+            return { ...current, selectedScenario: "normal", scenarios, steps: scenarioSteps("normal", scenarios.normal, defaultSlave), detailIndex: null, executionLog: [] };
           })}>Eliminar</button>}
       </div>
       <button onClick={() => {

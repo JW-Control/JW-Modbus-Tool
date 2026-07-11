@@ -126,10 +126,13 @@ Se guarda:
 - escenario seleccionado;
 - estado del panel de simulador;
 - slave, funcion, direccion, cantidad, valor, validacion, esperado y timeout.
+- resumen de la ultima ejecucion (`testsRuntime.lastRun`) para que Sesiones
+  pueda mostrar contadores como `7/8` sin depender de la tabla legacy.
 
-No se guardan resultados como estado de arranque. Al abrir una sesion o crear
-una nueva, los pasos se muestran en `Pendiente` hasta que el usuario presiona
-**Iniciar prueba**.
+No se restauran resultados fila por fila como estado de arranque. Al abrir una
+sesion o crear una nueva, los pasos se muestran en `Pendiente` hasta que el
+usuario presiona **Iniciar prueba**. El resumen de la ultima ejecucion solo se
+usa para indicadores de Sesiones y sesiones recientes.
 
 ---
 
@@ -166,10 +169,14 @@ sin modal flotante.
 
 Escenarios iniciales:
 
-- Operacion normal.
-- Timeout detectado.
-- Error CRC detectado.
-- Excepcion Modbus.
+- Operacion normal: plan base contra el slave activo/default.
+- Timeout detectado: plan base contra un slave intencionalmente no disponible
+  (`1` cuando el activo/default es `2`; `247` cuando el activo/default es `1`).
+- Error CRC detectado: hasta que exista inyector de CRC/simulador real, usa una
+  validacion negativa contra una respuesta viva para confirmar que la UI detecta
+  datos inesperados. No corrompe fisicamente la trama.
+- Excepcion Modbus: usa direcciones limite/fuera de ventana para provocar
+  excepciones Modbus o fallos de direccion segun el comportamiento del slave.
 
 Los escenarios personalizados se guardan dentro de `testsRuntime.scenarios`.
 
