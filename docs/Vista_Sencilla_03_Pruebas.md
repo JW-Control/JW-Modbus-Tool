@@ -89,6 +89,8 @@ El botón **Info** abre un detalle del paso con:
 - Resultado.
 - Tabla de direcciones con nombre, esperado, leído/escrito, tipo y validación.
 
+El botón **Exportar CSV** descarga el registro de ejecución visible con una fila por paso. Incluye hora, paso, slave, función, dirección, cantidad, valor, validación, esperado, resultado, tiempo, detalle y valores leídos/escritos.
+
 ## KPIs
 
 Los KPIs deben conservar el estilo visual aprobado:
@@ -127,7 +129,7 @@ Los pasos del escenario no deben mostrarse como lista larga dentro de gestionar 
 
 - **Guardar plan** guarda el plan visible dentro del escenario activo en memoria de la vista.
 - Para persistirlo en archivo, luego se debe usar **Sesiones → Guardar** o **Guardar como**.
-- El runtime de pruebas se guarda dentro de la sesión bajo formato `jwmodbus-tests-runtime`.
+- El runtime de pruebas se guarda dentro de la sesión bajo formato `jwmodbus-tests-runtime` versión 6.
 - Al reabrir sesión, deben recuperarse slave, función, dirección, cantidad, valor, validación, esperado, timeout, escenarios y simulador.
 - Los resultados de ejecución no deben dispararse ni recalcularse automáticamente al abrir; deben iniciar como **Pendiente** hasta presionar **Iniciar prueba**.
 
@@ -140,10 +142,11 @@ Los pasos del escenario no deben mostrarse como lista larga dentro de gestionar 
 - Se separó el modo de `Validación` del campo `Esperado`.
 - Se mejoró la extracción de valores para FC01/FC02/FC03/FC04 al validar cantidad y valores leídos.
 - Se evita mostrar resultados aprobados/fallidos al abrir la vista antes de ejecutar.
+- Se habilitó exportación CSV del registro de ejecución sin depender del backend de sesiones.
 
 ## Pendientes después del MVP
 
-1. Exportar el registro de ejecución a CSV/MD/PDF.
+1. Exportar reporte completo en MD/PDF con resumen, evidencias y observaciones.
 2. Integrar nombres reales de slaves y mapas de registros desde la sesión.
 3. Mejorar editor de escenarios con iconos predefinidos en vez de solo texto.
 4. Implementar simulador slave real y su configuración avanzada.
