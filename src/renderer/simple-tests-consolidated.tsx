@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { SerialOperationResult } from "../shared/serial/types.js";
 
 export type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc5" | "fc6" | "fc15" | "fc16";
@@ -88,7 +88,6 @@ interface TestsState {
   stopRequested: boolean;
   managingScenarios: boolean;
   detailIndex: number | null;
-  executionLog: Array<TestStep & { index: number }>;
 }
 
 export interface TestsRuntimeState {
@@ -168,10 +167,21 @@ function isWrite(fn: Fn) {
   return !readFns.has(fn);
 }
 
+function numeric(value: unknown, fallback = 0) {
+  const text = String(value ?? "").trim();
+  if (!text) return fallback;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function clampSlave(value: unknown, fallback = 2) {
   const parsed = Number.parseInt(String(value ?? fallback), 10);
   if (!Number.isFinite(parsed)) return String(fallback);
   return String(Math.max(1, Math.min(247, parsed)));
+}
+
+function sanitizeNumericText(value: string, maxLength = 8) {
+  return value.replace(/[^0-9xXa-fA-F]/g, "").slice(0, maxLength);
 }
 
 function defaultAddress(fn: Fn) {
@@ -200,13 +210,6 @@ function defaultValidation(fn: Fn): ValidationMode {
   return isRead(fn) ? "count" : "response";
 }
 
-function numeric(value: unknown, fallback = 0) {
-  const text = String(value ?? "").trim();
-  if (!text) return fallback;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function parseInteger(value: unknown, label: string) {
   const text = String(value ?? "").trim();
   if (!text) throw new Error(`${label} requerido.`);
@@ -221,39 +224,24 @@ function parseBoundedInteger(value: unknown, label: string, min: number, max: nu
   return parsed;
 }
 
+function splitValues(value: unknown) {
+  return String(value ?? "").split(/[;,\s]+/).map((part) => part.trim()).filter(Boolean);
+}
+
 function parsePlanCoilValue(value: unknown, label = "Valor de bobina") {
   const text = String(value ?? "").trim().toLowerCase();
-  if (["1", "true", "on", "si", "yes", "high"].includes(text)) return true;
+  if (["1", "true", "on", "si", "sí", "yes", "high"].includes(text)) return true;
   if (["0", "false", "off", "no", "low"].includes(text)) return false;
   throw new Error(`${label} invalido. Usa ON/OFF o 1/0.`);
 }
 
-function rawAddress(fn: Fn, address: number) {
-  if ((fn === "fc3" || fn === "fc6" || fn === "fc16") && address >= 40000) return address - 40000;
-  if (fn === "fc4" && address >= 30000) return address - 30000;
-  if (fn === "fc2" && address >= 10000) return address - 10000;
-  return address;
-}
-
-function displayAddress(fn: Fn, base: number, index = 0) {
-  const value = base + index;
-  if (fn === "fc3" || fn === "fc6" || fn === "fc16") return value >= 40000 ? value : 40000 + value;
-  if (fn === "fc4") return value >= 30000 ? value : 30000 + value;
-  if (fn === "fc2") return value >= 10000 ? value : 10000 + value;
-  return value;
-}
-
 function normalizeBool(value: unknown) {
   const text = String(value ?? "").trim().toLowerCase();
-  return ["1", "true", "on", "si", "yes", "high"].includes(text);
+  return ["1", "true", "on", "si", "sí", "yes", "high"].includes(text);
 }
 
 function boolText(value: unknown) {
   return normalizeBool(value) ? "ON" : "OFF";
-}
-
-function splitValues(value: unknown) {
-  return String(value ?? "").split(/[;,\s]+/).map((part) => part.trim()).filter(Boolean);
 }
 
 function parseBoolList(value: unknown) {
@@ -276,6 +264,21 @@ export function parsePlanRegisterValues(value: unknown) {
   return tokens.map((token, index) => parseBoundedInteger(token, `Valor ${index + 1}`, 0, 0xffff));
 }
 
+function rawAddress(fn: Fn, address: number) {
+  if ((fn === "fc3" || fn === "fc6" || fn === "fc16") && address >= 40000) return address - 40000;
+  if (fn === "fc4" && address >= 30000) return address - 30000;
+  if (fn === "fc2" && address >= 10000) return address - 10000;
+  return address;
+}
+
+function displayAddress(fn: Fn, base: number, index = 0) {
+  const value = base + index;
+  if (fn === "fc3" || fn === "fc6" || fn === "fc16") return value >= 40000 ? value : 40000 + value;
+  if (fn === "fc4") return value >= 30000 ? value : 30000 + value;
+  if (fn === "fc2") return value >= 10000 ? value : 10000 + value;
+  return value;
+}
+
 function validateAddressWindow(address: number, quantity: number) {
   if (address < 0 || address > 0xffff) throw new Error("Direccion Modbus fuera de rango 0..65535.");
   if (address + quantity - 1 > 0xffff) throw new Error("El rango direccion + cantidad supera 65535.");
@@ -285,124 +288,14 @@ function maxReadQuantity(fn: Fn) {
   return fn === "fc1" || fn === "fc2" ? 2000 : 125;
 }
 
-function validateExecutableStep(step: TestStep): ExecutableStepCommand {
-  const unitId = parseBoundedInteger(step.slave, "Slave", 1, 247);
-  const timeoutMs = parseBoundedInteger(step.timeoutMs, "Timeout", 50, 60000);
-  const address = rawAddress(step.fn, parseInteger(step.address, "Direccion"));
-
-  if (isRead(step.fn)) {
-    const quantity = parseBoundedInteger(step.quantity, "Cantidad", 1, maxReadQuantity(step.fn));
-    validateAddressWindow(address, quantity);
-    return { unitId, timeoutMs, address, quantity };
-  }
-
-  if (step.fn === "fc5") {
-    validateAddressWindow(address, 1);
-    return { unitId, timeoutMs, address, quantity: 1, coilValue: parsePlanCoilValue(step.value) };
-  }
-
-  if (step.fn === "fc6") {
-    validateAddressWindow(address, 1);
-    return { unitId, timeoutMs, address, quantity: 1, registerValue: parseBoundedInteger(step.value, "Valor de registro", 0, 0xffff) };
-  }
-
-  if (step.fn === "fc15") {
-    const coilValues = parsePlanCoilValues(step.value);
-    if (coilValues.length > 1968) throw new Error("FC15 permite maximo 1968 bobinas.");
-    validateAddressWindow(address, coilValues.length);
-    return { unitId, timeoutMs, address, quantity: coilValues.length, coilValues };
-  }
-
-  if (step.fn === "fc16") {
-    const registerValues = parsePlanRegisterValues(step.value);
-    if (registerValues.length > 123) throw new Error("FC16 permite maximo 123 registros.");
-    validateAddressWindow(address, registerValues.length);
-    return { unitId, timeoutMs, address, quantity: registerValues.length, registerValues };
-  }
-
-  throw new Error("Funcion Modbus no soportada.");
-}
-
-function isFinalResult(result: Result) {
-  return result !== "Pendiente" && result !== "Ejecutando";
-}
-
-function isResponsiveResult(result: Result) {
-  return isFinalResult(result) && result !== "Timeout" && result !== "Error";
-}
-
-function blankRunSummary(total = 0): TestsRunSummary {
-  return {
-    total,
-    executed: 0,
-    passed: 0,
-    failed: 0,
-    timeouts: 0,
-    otherFailed: 0,
-    responsive: 0,
-    avgMs: null,
-    lastRunAt: null
-  };
-}
-
-function boundedCount(value: unknown, fallback: number) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return Math.round(parsed);
-}
-
-export function summarizeTestsRun(steps: Array<{ enabled?: boolean; result?: Result; elapsedMs?: number | null; at?: string }>): TestsRunSummary {
-  const active = steps.filter((step) => step.enabled !== false);
-  const executed = active.filter((step) => step.result && isFinalResult(step.result));
-  const responsive = executed.filter((step) => step.result && isResponsiveResult(step.result) && step.elapsedMs != null);
-  const passed = executed.filter((step) => step.result === "Aprobado").length;
-  const failed = executed.filter((step) => step.result !== "Aprobado").length;
-  const timeouts = executed.filter((step) => step.result === "Timeout").length;
-  const otherFailed = Math.max(0, failed - timeouts);
-  const avgMs = responsive.length
-    ? Math.round(responsive.reduce((sum, step) => sum + (step.elapsedMs ?? 0), 0) / responsive.length)
-    : null;
-  const lastRunAt = [...executed].reverse().find((step) => step.at)?.at ?? null;
-  return {
-    total: active.length,
-    executed: executed.length,
-    passed,
-    failed,
-    timeouts,
-    otherFailed,
-    responsive: responsive.length,
-    avgMs,
-    lastRunAt
-  };
-}
-
-function normalizeTestsRunSummary(input: unknown, total: number): TestsRunSummary {
-  if (!input || typeof input !== "object") return blankRunSummary(total);
-  const source = input as Partial<TestsRunSummary>;
-  const executed = boundedCount(source.executed, 0);
-  const failed = boundedCount(source.failed, 0);
-  const timeouts = boundedCount(source.timeouts, 0);
-  return {
-    total: boundedCount(source.total, total),
-    executed,
-    passed: boundedCount(source.passed, 0),
-    failed,
-    timeouts,
-    otherFailed: boundedCount(source.otherFailed, Math.max(0, failed - timeouts)),
-    responsive: boundedCount(source.responsive, 0),
-    avgMs: source.avgMs == null ? null : boundedCount(source.avgMs, 0),
-    lastRunAt: typeof source.lastRunAt === "string" ? source.lastRunAt : null
-  };
-}
-
-function countFor(step: TestStep) {
+function countFor(step: Pick<TestStep, "fn" | "quantity" | "value">) {
   if (isRead(step.fn)) return Math.max(1, numeric(step.quantity, 1));
   if (step.fn === "fc15") return Math.max(1, parseBoolList(step.value).length);
   if (step.fn === "fc16") return Math.max(1, parseRegisterList(step.value).length);
   return 1;
 }
 
-function expectedAutoText(step: TestStep) {
+function expectedAutoText(step: Pick<TestStep, "fn" | "quantity" | "value" | "validationMode" | "expected">) {
   if (step.validationMode === "response") return "OK";
   if (step.validationMode === "count") {
     const suffix = step.fn === "fc1" ? "coils" : step.fn === "fc2" ? "bits" : "regs";
@@ -427,6 +320,7 @@ function inferExpected(expected: unknown) {
 }
 
 type LegacyStepFields = {
+  id?: string;
   fn?: unknown;
   exp?: unknown;
   amount?: unknown;
@@ -503,15 +397,11 @@ function alternateSlave(defaultSlave = 2) {
 }
 
 function timeoutPlan(defaultSlave = 2) {
-  const unavailableSlave = alternateSlave(defaultSlave);
-  return defaultPlan(unavailableSlave).map((step) => resetExecution({ ...step, timeoutMs: "1000" }));
+  return defaultPlan(alternateSlave(defaultSlave)).map((step) => resetExecution({ ...step, timeoutMs: "1000" }));
 }
 
 function crcDiagnosticPlan(defaultSlave = 2) {
-  return defaultPlan(defaultSlave).map((step, index) => {
-    if (index !== 1) return step;
-    return resetExecution({ ...step, validationMode: "exact", expected: "65535" });
-  });
+  return defaultPlan(defaultSlave).map((step, index) => index === 1 ? resetExecution({ ...step, validationMode: "exact", expected: "65535" }) : step);
 }
 
 function exceptionPlan(defaultSlave = 2) {
@@ -561,6 +451,56 @@ function normalizeScenarios(input: unknown): Record<string, Scenario> {
   return result;
 }
 
+function isFinalResult(result: Result) {
+  return result !== "Pendiente" && result !== "Ejecutando";
+}
+
+function isResponsiveResult(result: Result) {
+  return isFinalResult(result) && result !== "Timeout" && result !== "Error";
+}
+
+function blankRunSummary(total = 0): TestsRunSummary {
+  return { total, executed: 0, passed: 0, failed: 0, timeouts: 0, otherFailed: 0, responsive: 0, avgMs: null, lastRunAt: null };
+}
+
+function boundedCount(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.round(parsed);
+}
+
+export function summarizeTestsRun(steps: Array<{ enabled?: boolean; result?: Result; elapsedMs?: number | null; at?: string }>): TestsRunSummary {
+  const active = steps.filter((step) => step.enabled !== false);
+  const executed = active.filter((step) => step.result && isFinalResult(step.result));
+  const responsive = executed.filter((step) => step.result && isResponsiveResult(step.result) && step.elapsedMs != null);
+  const passed = executed.filter((step) => step.result === "Aprobado").length;
+  const failed = executed.filter((step) => step.result !== "Aprobado").length;
+  const timeouts = executed.filter((step) => step.result === "Timeout").length;
+  const otherFailed = Math.max(0, failed - timeouts);
+  const avgMs = responsive.length ? Math.round(responsive.reduce((sum, step) => sum + (step.elapsedMs ?? 0), 0) / responsive.length) : null;
+  const lastRunAt = [...executed].reverse().find((step) => step.at)?.at ?? null;
+  return { total: active.length, executed: executed.length, passed, failed, timeouts, otherFailed, responsive: responsive.length, avgMs, lastRunAt };
+}
+
+function normalizeTestsRunSummary(input: unknown, total: number): TestsRunSummary {
+  if (!input || typeof input !== "object") return blankRunSummary(total);
+  const source = input as Partial<TestsRunSummary>;
+  const executed = boundedCount(source.executed, 0);
+  const failed = boundedCount(source.failed, 0);
+  const timeouts = boundedCount(source.timeouts, 0);
+  return {
+    total: boundedCount(source.total, total),
+    executed,
+    passed: boundedCount(source.passed, 0),
+    failed,
+    timeouts,
+    otherFailed: boundedCount(source.otherFailed, Math.max(0, failed - timeouts)),
+    responsive: boundedCount(source.responsive, 0),
+    avgMs: source.avgMs == null ? null : boundedCount(source.avgMs, 0),
+    lastRunAt: typeof source.lastRunAt === "string" ? source.lastRunAt : null
+  };
+}
+
 export function normalizeTestsRuntimeState(data: unknown, defaultSlave = 2): TestsRuntimeState | null {
   const source = (data as any)?.format === runtimeFormat ? data as TestsRuntimeState : (data as any)?.testsRuntime;
   if (!source || source.format !== runtimeFormat || !Array.isArray(source.steps)) return null;
@@ -587,15 +527,12 @@ function createInitialState(runtimeState: TestsRuntimeState | null, defaultSlave
   return {
     selectedScenario,
     simulatorState: runtime?.simulatorState ?? "Detenido",
-    steps: runtime?.steps.length
-      ? runtime.steps.map((step) => resetExecution(normalizeStep(step, defaultSlave)))
-      : scenarioSteps(selectedScenario, scenarios[selectedScenario], defaultSlave),
+    steps: runtime?.steps.length ? runtime.steps.map((step) => resetExecution(normalizeStep(step, defaultSlave))) : scenarioSteps(selectedScenario, scenarios[selectedScenario], defaultSlave),
     scenarios,
     running: false,
     stopRequested: false,
     managingScenarios: false,
-    detailIndex: null,
-    executionLog: []
+    detailIndex: null
   };
 }
 
@@ -607,9 +544,7 @@ function exportRuntimeState(state: TestsState): TestsRuntimeState {
     selectedScenario: state.selectedScenario,
     simulatorState: state.simulatorState,
     steps: state.steps.map(stripStep),
-    scenarios: Object.fromEntries(
-      Object.entries(state.scenarios).map(([key, scenario]) => [key, normalizeScenario(scenario)])
-    ),
+    scenarios: Object.fromEntries(Object.entries(state.scenarios).map(([key, scenario]) => [key, normalizeScenario(scenario)])),
     lastRun: summarizeTestsRun(state.steps)
   };
 }
@@ -654,8 +589,8 @@ function sameValue(actual: string, expected: string, isBit: boolean) {
 
 function extractValues(action: any, register = false): unknown[] {
   const candidates = register
-    ? [action?.registerValues, action?.values, action?.data, action?.response?.registerValues, action?.response?.values]
-    : [action?.values, action?.registerValues, action?.data, action?.response?.values];
+    ? [action?.registerValues, action?.values, action?.data, action?.response?.registerValues, action?.response?.values, action?.response?.data]
+    : [action?.values, action?.registerValues, action?.data, action?.response?.values, action?.response?.registerValues, action?.response?.data];
   const found = candidates.find(Array.isArray);
   return Array.isArray(found) ? found : [];
 }
@@ -719,6 +654,40 @@ function validateStep(step: TestStep, action: any, rows: StepDetailRow[]) {
   };
 }
 
+function validateExecutableStep(step: TestStep): ExecutableStepCommand {
+  const unitId = parseBoundedInteger(step.slave, "Slave", 1, 247);
+  const timeoutMs = parseBoundedInteger(step.timeoutMs, "Timeout", 50, 60000);
+  const address = rawAddress(step.fn, parseInteger(step.address, "Direccion"));
+
+  if (isRead(step.fn)) {
+    const quantity = parseBoundedInteger(step.quantity, "Cantidad", 1, maxReadQuantity(step.fn));
+    validateAddressWindow(address, quantity);
+    return { unitId, timeoutMs, address, quantity };
+  }
+
+  if (step.fn === "fc5") {
+    validateAddressWindow(address, 1);
+    return { unitId, timeoutMs, address, quantity: 1, coilValue: parsePlanCoilValue(step.value) };
+  }
+  if (step.fn === "fc6") {
+    validateAddressWindow(address, 1);
+    return { unitId, timeoutMs, address, quantity: 1, registerValue: parseBoundedInteger(step.value, "Valor de registro", 0, 0xffff) };
+  }
+  if (step.fn === "fc15") {
+    const coilValues = parsePlanCoilValues(step.value);
+    if (coilValues.length > 1968) throw new Error("FC15 permite maximo 1968 bobinas.");
+    validateAddressWindow(address, coilValues.length);
+    return { unitId, timeoutMs, address, quantity: coilValues.length, coilValues };
+  }
+  if (step.fn === "fc16") {
+    const registerValues = parsePlanRegisterValues(step.value);
+    if (registerValues.length > 123) throw new Error("FC16 permite maximo 123 registros.");
+    validateAddressWindow(address, registerValues.length);
+    return { unitId, timeoutMs, address, quantity: registerValues.length, registerValues };
+  }
+  throw new Error("Funcion Modbus no soportada.");
+}
+
 function isSerialOperationResult<T>(value: unknown): value is SerialOperationResult<T> {
   return typeof value === "object" && value !== null && "ok" in value && typeof (value as { ok?: unknown }).ok === "boolean";
 }
@@ -773,15 +742,37 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   const defaultSlave = activeSlaveId ?? 2;
   const [state, setState] = useState<TestsState>(() => createInitialState(runtimeState, defaultSlave));
   const stateRef = useRef(state);
+  const publishTimerRef = useRef<number | null>(null);
+  const publishReadyRef = useRef(false);
+  const onRuntimeStateChangeRef = useRef(onRuntimeStateChange);
   stateRef.current = state;
+
+  useEffect(() => {
+    onRuntimeStateChangeRef.current = onRuntimeStateChange;
+  }, [onRuntimeStateChange]);
 
   useEffect(() => {
     setState(createInitialState(runtimeState, defaultSlave));
   }, [resetKey]);
 
+  function publishNow(snapshot: TestsState) {
+    if (publishTimerRef.current != null) window.clearTimeout(publishTimerRef.current);
+    publishTimerRef.current = null;
+    onRuntimeStateChangeRef.current(exportRuntimeState(snapshot));
+  }
+
   useEffect(() => {
-    onRuntimeStateChange(exportRuntimeState(state));
-  }, [state.selectedScenario, state.simulatorState, state.steps, state.scenarios, onRuntimeStateChange]);
+    if (!publishReadyRef.current) {
+      publishReadyRef.current = true;
+      return;
+    }
+    if (publishTimerRef.current != null) window.clearTimeout(publishTimerRef.current);
+    publishTimerRef.current = window.setTimeout(() => publishNow(stateRef.current), 300);
+  }, [state.selectedScenario, state.simulatorState, state.steps, state.scenarios]);
+
+  useEffect(() => () => {
+    if (publishTimerRef.current != null) window.clearTimeout(publishTimerRef.current);
+  }, []);
 
   const summary = useMemo(() => {
     const active = state.steps.filter((step) => step.enabled);
@@ -806,14 +797,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   }
 
   function changeFn(index: number, fn: Fn) {
-    patchStep(index, {
-      fn,
-      address: defaultAddress(fn),
-      quantity: defaultQuantity(fn),
-      value: defaultValue(fn),
-      validationMode: defaultValidation(fn),
-      expected: ""
-    });
+    patchStep(index, { fn, address: defaultAddress(fn), quantity: defaultQuantity(fn), value: defaultValue(fn), validationMode: defaultValidation(fn), expected: "" });
   }
 
   function changeValue(index: number, value: string) {
@@ -822,81 +806,66 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
     patchStep(index, { value, quantity: isRead(step.fn) ? step.quantity : String(countFor(next)) });
   }
 
+  function changeValidation(index: number, mode: ValidationMode) {
+    const step = state.steps[index];
+    const expected = mode === "exact" && isWrite(step.fn) ? step.value : "";
+    patchStep(index, { validationMode: mode, expected });
+  }
+
   function savePlanToScenario() {
-    setState((current) => ({
-      ...current,
-      scenarios: {
-        ...current.scenarios,
-        [current.selectedScenario]: normalizeScenario({
-          ...current.scenarios[current.selectedScenario],
-          steps: current.steps.map(stripStep)
-        })
-      }
-    }));
+    setState((current) => {
+      const next = {
+        ...current,
+        scenarios: {
+          ...current.scenarios,
+          [current.selectedScenario]: normalizeScenario({
+            ...current.scenarios[current.selectedScenario],
+            steps: current.steps.map(stripStep)
+          })
+        }
+      };
+      publishNow(next);
+      return next;
+    });
     onMessage("Plan visible guardado en el escenario actual. Usa Guardar sesion para persistirlo en archivo.");
   }
 
   function selectScenario(id: string) {
-    setState((current) => {
-      const scenario = current.scenarios[id];
-      const steps = scenarioSteps(id, scenario, defaultSlave);
-      return { ...current, selectedScenario: id, steps, detailIndex: null, executionLog: [] };
-    });
+    setState((current) => ({ ...current, selectedScenario: id, steps: scenarioSteps(id, current.scenarios[id], defaultSlave), detailIndex: null }));
   }
 
   async function runPlan() {
     if (stateRef.current.running) return;
-    const resetSteps = stateRef.current.steps.map(resetExecution);
-    setState((current) => ({ ...current, running: true, stopRequested: false, detailIndex: null, executionLog: [], steps: resetSteps }));
+    let working = stateRef.current.steps.map(resetExecution);
+    setState((current) => ({ ...current, running: true, stopRequested: false, detailIndex: null, steps: working }));
 
-    for (let index = 0; index < resetSteps.length; index += 1) {
-      const currentState = stateRef.current;
-      if (currentState.stopRequested) break;
-      const step = currentState.steps[index];
+    for (let index = 0; index < working.length; index += 1) {
+      if (stateRef.current.stopRequested) break;
+      const step = working[index];
       if (!step?.enabled) continue;
-      const runningStep = {
-        ...step,
-        result: "Ejecutando" as Result,
-        elapsedMs: null,
-        detail: "Ejecutando solicitud Modbus...",
-        rows: [],
-        values: "",
-        at: new Date().toLocaleTimeString("es-PE", { hour12: false })
-      };
-      setState((current) => ({
-        ...current,
-        steps: current.steps.map((item, itemIndex) => itemIndex === index ? runningStep : item)
-      }));
+      const runningStep: TestStep = { ...step, result: "Ejecutando", elapsedMs: null, detail: "Ejecutando solicitud Modbus...", rows: [], values: "", at: new Date().toLocaleTimeString("es-PE", { hour12: false }) };
+      working = working.map((item, itemIndex) => itemIndex === index ? runningStep : item);
+      setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? runningStep : item) }));
 
       try {
         const executed = await executeStep(step);
-        setState((current) => ({
-          ...current,
-          steps: current.steps.map((item, itemIndex) => itemIndex === index ? executed : item),
-          executionLog: [{ ...executed, index: index + 1 }, ...current.executionLog]
-        }));
+        working = working.map((item, itemIndex) => itemIndex === index ? executed : item);
+        setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? executed : item) }));
       } catch (error) {
         const message = String(error instanceof Error ? error.message : error || "Error de comunicacion.");
         const result = classifyStepErrorResult(message);
-        const failed = {
-          ...step,
-          result,
-          elapsedMs: result === "Timeout" ? numeric(step.timeoutMs, 1000) : null,
-          detail: message,
-          rows: [],
-          values: "",
-          at: new Date().toLocaleTimeString("es-PE", { hour12: false })
-        };
-        setState((current) => ({
-          ...current,
-          steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item),
-          executionLog: [{ ...failed, index: index + 1 }, ...current.executionLog]
-        }));
+        const failed: TestStep = { ...step, result, elapsedMs: result === "Timeout" ? numeric(step.timeoutMs, 1000) : null, detail: message, rows: [], values: "", at: new Date().toLocaleTimeString("es-PE", { hour12: false }) };
+        working = working.map((item, itemIndex) => itemIndex === index ? failed : item);
+        setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item) }));
       }
     }
 
     const stopped = stateRef.current.stopRequested;
-    setState((current) => ({ ...current, running: false, stopRequested: false }));
+    setState((current) => {
+      const next = { ...current, running: false, stopRequested: false };
+      publishNow(next);
+      return next;
+    });
     onMessage(stopped ? "Plan detenido. La solicitud en curso pudo terminar antes de pausar la secuencia." : "Plan ejecutado. Cada paso aprobado requiere comunicacion OK y validacion OK.");
   }
 
@@ -904,10 +873,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
     <div className="testsNative">
       <section className="card testsPlanCard">
         <div className="testsPlanHeader">
-          <div>
-            <h2>Plan de pruebas al slave</h2>
-            <p>PC como Master</p>
-          </div>
+          <div><h2>Plan de pruebas al slave</h2><p>PC como Master</p></div>
           <div className="testsPlanActions">
             <button className="primary" onClick={runPlan} disabled={state.running}>Iniciar prueba</button>
             <button onClick={() => setState((current) => ({ ...current, stopRequested: true }))} disabled={!state.running}>Detener</button>
@@ -917,196 +883,88 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
         </div>
         <div className="testsPlanTable">
           <table>
-            <thead>
-              <tr>
-                <th>Activo</th>
-                <th>Paso</th>
-                <th>Slave</th>
-                <th>Funcion</th>
-                <th>Direccion</th>
-                <th>Cantidad</th>
-                <th>Valor</th>
-                <th>Validacion</th>
-                <th>Esperado</th>
-                <th>Timeout</th>
-                <th>Resultado</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {state.steps.map((step, index) => (
-                <StepRow
-                  key={step.id}
-                  step={step}
-                  index={index}
-                  onPatch={(patch) => patchStep(index, patch)}
-                  onFn={(fn) => changeFn(index, fn)}
-                  onValue={(value) => changeValue(index, value)}
-                  onDelete={() => setState((current) => ({ ...current, steps: current.steps.filter((_, itemIndex) => itemIndex !== index), detailIndex: null }))}
-                />
-              ))}
-            </tbody>
+            <thead><tr><th>Activo</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad</th><th>Valor</th><th>Validacion</th><th>Esperado</th><th>Timeout</th><th>Resultado</th><th /></tr></thead>
+            <tbody>{state.steps.map((step, index) => <StepRow key={step.id} step={step} index={index} onPatch={(patch) => patchStep(index, patch)} onFn={(fn) => changeFn(index, fn)} onValue={(value) => changeValue(index, value)} onValidation={(mode) => changeValidation(index, mode)} onDelete={() => setState((current) => ({ ...current, steps: current.steps.filter((_, itemIndex) => itemIndex !== index), detailIndex: null }))} />)}</tbody>
           </table>
         </div>
         <p className="testsInfo">Cantidad se usa en lecturas. Valor se usa en escrituras. Validacion define si basta respuesta/cantidad o si se comparan valores exactos.</p>
       </section>
 
       <div className="testsSide">
-        {state.managingScenarios
-          ? <ScenarioManager state={state} setState={setState} savePlan={savePlanToScenario} defaultSlave={defaultSlave} />
-          : <ScenariosPanel state={state} selectScenario={selectScenario} setState={setState} />}
+        {state.managingScenarios ? <ScenarioManager state={state} setState={setState} savePlan={savePlanToScenario} defaultSlave={defaultSlave} /> : <ScenariosPanel state={state} selectScenario={selectScenario} setState={setState} />}
         <SimulatorPanel state={state} setState={setState} port={port} baud={baud} />
       </div>
 
       <div className="testsKpis">
-        <KpiRing title="Tasa de éxito" value={`${summary.rate}%`} sub={summary.executed ? `Última ejecución: ${summary.passed}/${summary.executed} aprobados` : "Sin ejecución"} tone="success" />
-        <KpiText title="Latencia promedio" value={summary.avg == null ? "-" : `${summary.avg} ms`} sub={summary.responsive ? `Última ejecución: ${summary.responsive} respuesta(s)${summary.timeouts ? `; ${summary.timeouts} timeout(s) excluidos` : ""}` : summary.running ? "Esperando respuesta" : "Sin datos todavía"} />
-        <KpiText title="Errores" value={String(summary.failed)} sub={summary.failed ? `${summary.timeouts} timeout(s), ${summary.otherFailed} otro(s)` : "Última ejecución"} danger={summary.failed > 0} />
-        <KpiRing title="Pasos completados" value={`${summary.executed}/${summary.active}`} sub={summary.running ? `${summary.running} en curso` : "Última ejecución"} tone="steps" />
+        <KpiRing title="Tasa de éxito" value={`${summary.rate}%`} sub={summary.executed ? `Ultima ejecucion: ${summary.passed}/${summary.executed} aprobados` : "Sin ejecucion"} tone="success" />
+        <KpiText title="Latencia promedio" value={summary.avg == null ? "-" : `${summary.avg} ms`} sub={summary.responsive ? `Ultima ejecucion: ${summary.responsive} respuesta(s)${summary.timeouts ? `; ${summary.timeouts} timeout(s) excluidos` : ""}` : summary.running ? "Esperando respuesta" : "Sin datos todavia"} />
+        <KpiText title="Errores" value={String(summary.failed)} sub={summary.failed ? `${summary.timeouts} timeout(s), ${summary.otherFailed} otro(s)` : "Ultima ejecucion"} danger={summary.failed > 0} />
+        <KpiRing title="Pasos completados" value={`${summary.executed}/${summary.active}`} sub={summary.running ? `${summary.running} en curso` : "Ultima ejecucion"} tone="steps" />
       </div>
 
       <section className="card testsLogCard">
-        <div className="testsLogHeader">
-          <h2>Registro de ejecucion</h2>
-          <div>
-            <button onClick={() => setState((current) => ({ ...current, executionLog: [], detailIndex: null, steps: current.steps.map(resetExecution) }))}>Limpiar registro</button>
-            <button disabled>Exportar</button>
-          </div>
-        </div>
-        {state.detailIndex == null
-          ? <ExecutionTable steps={state.steps} onDetail={(index) => setState((current) => ({ ...current, detailIndex: index }))} />
-          : <StepDetail step={state.steps[state.detailIndex]} index={state.detailIndex} onClose={() => setState((current) => ({ ...current, detailIndex: null }))} />}
+        <div className="testsLogHeader"><h2>Registro de ejecucion</h2><div><button onClick={() => setState((current) => ({ ...current, detailIndex: null, steps: current.steps.map(resetExecution) }))}>Limpiar registro</button><button disabled>Exportar</button></div></div>
+        {state.detailIndex == null ? <ExecutionTable steps={state.steps} onDetail={(index) => setState((current) => ({ ...current, detailIndex: index }))} /> : <StepDetail step={state.steps[state.detailIndex]} index={state.detailIndex} onClose={() => setState((current) => ({ ...current, detailIndex: null }))} />}
       </section>
     </div>
   );
 }
 
-function StepRow({ step, index, onPatch, onFn, onValue, onDelete }: { step: TestStep; index: number; onPatch: (patch: Partial<TestStep>) => void; onFn: (fn: Fn) => void; onValue: (value: string) => void; onDelete: () => void }) {
+function StepRow({ step, index, onPatch, onFn, onValue, onValidation, onDelete }: { step: TestStep; index: number; onPatch: (patch: Partial<TestStep>) => void; onFn: (fn: Fn) => void; onValue: (value: string) => void; onValidation: (mode: ValidationMode) => void; onDelete: () => void }) {
   const read = isRead(step.fn);
   const expectedDisabled = step.validationMode === "response" || step.validationMode === "count";
   const modeOptions: ValidationMode[] = isWrite(step.fn) ? ["response", "exact", "byAddress"] : ["count", "exact", "byAddress"];
-
   return (
     <tr>
       <td><input type="checkbox" checked={step.enabled} onChange={(event) => onPatch({ enabled: event.target.checked })} /></td>
       <td>{index + 1}</td>
-      <td><input inputMode="numeric" value={step.slave} onChange={(event) => onPatch({ slave: clampSlave(event.target.value, numeric(step.slave, 2)) })} /></td>
+      <td><input inputMode="numeric" value={step.slave} onChange={(event) => onPatch({ slave: event.target.value.replace(/\D/g, "").slice(0, 3) })} onBlur={() => onPatch({ slave: clampSlave(step.slave, 2) })} /></td>
       <td><select value={step.fn} onChange={(event) => onFn(event.target.value as Fn)}>{functionOrder.map((fn) => <option key={fn} value={fn}>{labels[fn]}</option>)}</select></td>
-      <td><input inputMode="numeric" value={step.address} onChange={(event) => onPatch({ address: event.target.value })} /></td>
-      <td><input inputMode="numeric" disabled={!read} value={read ? step.quantity : countFor(step)} onChange={(event) => onPatch({ quantity: event.target.value })} /></td>
+      <td><input inputMode="numeric" value={step.address} onChange={(event) => onPatch({ address: sanitizeNumericText(event.target.value, 8) })} /></td>
+      <td><input inputMode="numeric" disabled={!read} value={read ? step.quantity : countFor(step)} onChange={(event) => onPatch({ quantity: event.target.value.replace(/\D/g, "").slice(0, 4) })} /></td>
       <td><input disabled={read} value={read ? "-" : step.value} onChange={(event) => onValue(event.target.value)} /></td>
-      <td><select value={step.validationMode} onChange={(event) => onPatch({ validationMode: event.target.value as ValidationMode, expected: event.target.value === "exact" ? (isWrite(step.fn) ? step.value : "") : "" })}>{modeOptions.map((mode) => <option key={mode} value={mode}>{validationLabels[mode]}</option>)}</select></td>
+      <td><select value={step.validationMode} onChange={(event) => onValidation(event.target.value as ValidationMode)}>{modeOptions.map((mode) => <option key={mode} value={mode}>{validationLabels[mode]}</option>)}</select></td>
       <td><input disabled={expectedDisabled} value={expectedDisabled ? expectedAutoText(step) : step.expected} placeholder={expectedAutoText(step)} onChange={(event) => onPatch({ expected: event.target.value })} /></td>
-      <td><input inputMode="numeric" value={step.timeoutMs} onChange={(event) => onPatch({ timeoutMs: event.target.value })} /></td>
+      <td><input inputMode="numeric" value={step.timeoutMs} onChange={(event) => onPatch({ timeoutMs: event.target.value.replace(/\D/g, "").slice(0, 5) })} /></td>
       <td><ResultPill result={step.result} /></td>
       <td><button className="tiny" onClick={onDelete} title="Eliminar paso">x</button></td>
     </tr>
   );
 }
 
-function ScenariosPanel({ state, selectScenario, setState }: { state: TestsState; selectScenario: (id: string) => void; setState: React.Dispatch<React.SetStateAction<TestsState>> }) {
-  return (
-    <section className="card testsScenarioCard">
-      <h2>Escenarios</h2>
-      <div className="testsScenarioList">
-        {Object.entries(state.scenarios).map(([id, scenario]) => (
-          <button key={id} className={`testsScenarioItem ${id === state.selectedScenario ? "selected" : ""}`} onClick={() => selectScenario(id)}>
-            <span className={`scenarioIcon ${scenario.color}`}>{scenario.icon}</span>
-            <span><strong>{scenario.name}</strong><small>{scenario.desc}</small></span>
-            <i />
-          </button>
-        ))}
-      </div>
-      <button onClick={() => setState((current) => ({ ...current, managingScenarios: true }))}>Gestionar escenarios</button>
-    </section>
-  );
+function ScenariosPanel({ state, selectScenario, setState }: { state: TestsState; selectScenario: (id: string) => void; setState: Dispatch<SetStateAction<TestsState>> }) {
+  return <section className="card testsScenarioCard"><h2>Escenarios</h2><div className="testsScenarioList">{Object.entries(state.scenarios).map(([id, scenario]) => <button key={id} className={`testsScenarioItem ${id === state.selectedScenario ? "selected" : ""}`} onClick={() => selectScenario(id)}><span className={`scenarioIcon ${scenario.color}`}>{scenario.icon}</span><span><strong>{scenario.name}</strong><small>{scenario.desc}</small></span><i /></button>)}</div><button onClick={() => setState((current) => ({ ...current, managingScenarios: true }))}>Gestionar escenarios</button></section>;
 }
 
-function ScenarioManager({ state, setState, savePlan, defaultSlave }: { state: TestsState; setState: React.Dispatch<React.SetStateAction<TestsState>>; savePlan: () => void; defaultSlave: number }) {
+function ScenarioManager({ state, setState, savePlan, defaultSlave }: { state: TestsState; setState: Dispatch<SetStateAction<TestsState>>; savePlan: () => void; defaultSlave: number }) {
   const scenario = state.scenarios[state.selectedScenario] || defaultScenarios.normal;
   const isDefault = defaultScenarioIds.has(state.selectedScenario);
-
   function patchScenario(patch: Partial<Scenario>) {
-    setState((current) => ({
-      ...current,
-      scenarios: {
-        ...current.scenarios,
-        [current.selectedScenario]: normalizeScenario({ ...current.scenarios[current.selectedScenario], ...patch }, current.scenarios[current.selectedScenario])
-      }
-    }));
+    setState((current) => ({ ...current, scenarios: { ...current.scenarios, [current.selectedScenario]: normalizeScenario({ ...current.scenarios[current.selectedScenario], ...patch }, current.scenarios[current.selectedScenario]) } }));
   }
-
   return (
     <section className="card testsScenarioCard testsScenarioManager">
       <h2>Gestionar escenarios</h2>
-      <label>Escenario activo<select value={state.selectedScenario} onChange={(event) => {
-        const id = event.target.value;
-        setState((current) => ({ ...current, selectedScenario: id, steps: scenarioSteps(id, current.scenarios[id], defaultSlave), detailIndex: null, executionLog: [] }));
-      }}>{Object.entries(state.scenarios).map(([id, item]) => <option key={id} value={id}>{item.name}</option>)}</select></label>
+      <label>Escenario activo<select value={state.selectedScenario} onChange={(event) => { const id = event.target.value; setState((current) => ({ ...current, selectedScenario: id, steps: scenarioSteps(id, current.scenarios[id], defaultSlave), detailIndex: null })); }}>{Object.entries(state.scenarios).map(([id, item]) => <option key={id} value={id}>{item.name}</option>)}</select></label>
       <label>Nombre<input value={scenario.name} onChange={(event) => patchScenario({ name: event.target.value })} /></label>
       <label>Descripcion<textarea value={scenario.desc} onChange={(event) => patchScenario({ desc: event.target.value })} /></label>
-      <div className="twoCols">
-        <label>Icono<input value={scenario.icon} onChange={(event) => patchScenario({ icon: event.target.value })} /></label>
-        <label>Color<select value={scenario.color} onChange={(event) => patchScenario({ color: event.target.value as ScenarioColor })}>{Object.entries(colorLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      </div>
+      <div className="twoCols"><label>Icono<input value={scenario.icon} onChange={(event) => patchScenario({ icon: event.target.value })} /></label><label>Color<select value={scenario.color} onChange={(event) => patchScenario({ color: event.target.value as ScenarioColor })}>{Object.entries(colorLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>
       <button onClick={savePlan}>Usar plan actual para este escenario</button>
-      <div className="twoCols">
-        <button onClick={() => {
-          const id = `custom_${Date.now()}`;
-          setState((current) => ({ ...current, selectedScenario: id, scenarios: { ...current.scenarios, [id]: normalizeScenario({ ...clone(scenario), name: `${scenario.name} copia`, steps: current.steps.map(stripStep) }) } }));
-        }}>Duplicar</button>
-        {isDefault
-          ? <button onClick={() => setState((current) => {
-            const base = defaultScenarios[current.selectedScenario] ?? defaultScenarios.normal;
-            return {
-              ...current,
-              scenarios: { ...current.scenarios, [current.selectedScenario]: normalizeScenario(base, base) },
-              steps: scenarioSteps(current.selectedScenario, undefined, defaultSlave),
-              detailIndex: null,
-              executionLog: []
-            };
-          })}>Restaurar base</button>
-          : <button onClick={() => setState((current) => {
-            const scenarios = { ...current.scenarios };
-            delete scenarios[current.selectedScenario];
-            return { ...current, selectedScenario: "normal", scenarios, steps: scenarioSteps("normal", scenarios.normal, defaultSlave), detailIndex: null, executionLog: [] };
-          })}>Eliminar</button>}
-      </div>
-      <button onClick={() => {
-        const id = `custom_${Date.now()}`;
-        setState((current) => ({ ...current, selectedScenario: id, scenarios: { ...current.scenarios, [id]: normalizeScenario({ icon: "NEW", name: "Nuevo escenario", desc: "Escenario personalizado.", color: "cyan", steps: current.steps.map(stripStep) }) } }));
-      }}>+ Nuevo escenario</button>
+      <div className="twoCols"><button onClick={() => { const id = `custom_${Date.now()}`; setState((current) => ({ ...current, selectedScenario: id, scenarios: { ...current.scenarios, [id]: normalizeScenario({ ...clone(scenario), name: `${scenario.name} copia`, steps: current.steps.map(stripStep) }) } })); }}>Duplicar</button>{isDefault ? <button onClick={() => setState((current) => { const base = defaultScenarios[current.selectedScenario] ?? defaultScenarios.normal; return { ...current, scenarios: { ...current.scenarios, [current.selectedScenario]: normalizeScenario(base, base) }, steps: scenarioSteps(current.selectedScenario, undefined, defaultSlave), detailIndex: null }; })}>Restaurar base</button> : <button onClick={() => setState((current) => { const scenarios = { ...current.scenarios }; delete scenarios[current.selectedScenario]; return { ...current, selectedScenario: "normal", scenarios, steps: scenarioSteps("normal", scenarios.normal, defaultSlave), detailIndex: null }; })}>Eliminar</button>}</div>
+      <button onClick={() => { const id = `custom_${Date.now()}`; setState((current) => ({ ...current, selectedScenario: id, scenarios: { ...current.scenarios, [id]: normalizeScenario({ icon: "NEW", name: "Nuevo escenario", desc: "Escenario personalizado.", color: "cyan", steps: current.steps.map(stripStep) }) } })); }}>+ Nuevo escenario</button>
       <button className="primary" onClick={() => setState((current) => ({ ...current, managingScenarios: false }))}>Guardar y volver</button>
     </section>
   );
 }
 
-function SimulatorPanel({ state, setState, port, baud }: { state: TestsState; setState: React.Dispatch<React.SetStateAction<TestsState>>; port: string; baud: number }) {
-  return (
-    <section className="card testsSimulatorCard">
-      <h2>Simulador slave <small>(PC como slave)</small></h2>
-      <label>Estado<input disabled value={state.simulatorState} /></label>
-      <label>Direccion slave<input inputMode="numeric" defaultValue="1" /></label>
-      <label>Puerto<input disabled value={port || "Sin puerto"} /></label>
-      <label>Baud Rate<input disabled value={String(baud)} /></label>
-      <button className="purple" onClick={() => setState((current) => ({ ...current, simulatorState: current.simulatorState === "Detenido" ? "Preparado" : "Detenido" }))}>{state.simulatorState === "Detenido" ? "Preparar" : "Detener"} simulador slave</button>
-      <button disabled>Configurar</button>
-    </section>
-  );
+function SimulatorPanel({ state, setState, port, baud }: { state: TestsState; setState: Dispatch<SetStateAction<TestsState>>; port: string; baud: number }) {
+  return <section className="card testsSimulatorCard"><h2>Simulador slave <small>(PC como slave)</small></h2><label>Estado<input disabled value={state.simulatorState} /></label><label>Direccion slave<input inputMode="numeric" defaultValue="1" /></label><label>Puerto<input disabled value={port || "Sin puerto"} /></label><label>Baud Rate<input disabled value={String(baud)} /></label><button className="purple" onClick={() => setState((current) => ({ ...current, simulatorState: current.simulatorState === "Detenido" ? "Preparado" : "Detenido" }))}>{state.simulatorState === "Detenido" ? "Preparar" : "Detener"} simulador slave</button><button disabled>Configurar</button></section>;
 }
 
 function KpiRing({ title, value, sub, tone }: { title: string; value: string; sub: string; tone: "success" | "steps" }) {
   const parts = value.split("/");
   const percent = parts.length === 2 ? (Number(parts[0]) / Math.max(1, Number(parts[1]))) * 100 : Number(value.replace("%", "")) || 0;
-  return (
-    <section className="card testsKpiCard">
-      <div className={`testsRing ${tone}`} style={{ background: `conic-gradient(${tone === "success" ? "var(--green)" : "var(--cyan)"} ${percent}%, #0b3952 0)` }}>
-        <strong>{value}</strong>
-        <small>{tone === "success" ? "Exito" : "Pasos"}</small>
-      </div>
-      <div><h3>{title}</h3><p>{sub}</p></div>
-    </section>
-  );
+  return <section className="card testsKpiCard"><div className={`testsRing ${tone}`} style={{ background: `conic-gradient(${tone === "success" ? "var(--green)" : "var(--cyan)"} ${percent}%, #0b3952 0)` }}><strong>{value}</strong><small>{tone === "success" ? "Exito" : "Pasos"}</small></div><div><h3>{title}</h3><p>{sub}</p></div></section>;
 }
 
 function KpiText({ title, value, sub, danger }: { title: string; value: string; sub: string; danger?: boolean }) {
@@ -1114,77 +972,14 @@ function KpiText({ title, value, sub, danger }: { title: string; value: string; 
 }
 
 function ResultPill({ result }: { result: Result }) {
-  const cls = result === "Aprobado"
-    ? "ok"
-    : result === "Ejecutando"
-      ? "active"
-      : result === "Pendiente"
-        ? "pending"
-        : result === "Timeout" || result === "CRC Error" || result === "Excepcion"
-          ? "warn"
-          : "bad";
+  const cls = result === "Aprobado" ? "ok" : result === "Ejecutando" ? "active" : result === "Pendiente" ? "pending" : result === "Timeout" || result === "CRC Error" || result === "Excepcion" ? "warn" : "bad";
   return <span className={`testsResult ${cls}`}>{result}</span>;
 }
 
 function ExecutionTable({ steps, onDetail }: { steps: TestStep[]; onDetail: (index: number) => void }) {
-  return (
-    <div className="testsExecutionTable">
-      <table>
-        <thead><tr><th>Hora</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad/Valor</th><th>Resultado</th><th>Tiempo</th><th>Detalle</th><th>Info</th></tr></thead>
-        <tbody>
-          {steps.map((step, index) => (
-            <tr key={step.id}>
-              <td>{step.at || "-"}</td>
-              <td>{index + 1}</td>
-              <td>Slave ID {step.slave}</td>
-              <td>{labels[step.fn]}</td>
-              <td>{step.address}</td>
-              <td>{isRead(step.fn) ? countFor(step) : step.value}</td>
-              <td><ResultPill result={step.result} /></td>
-              <td>{step.elapsedMs == null ? "-" : `${step.elapsedMs} ms`}</td>
-              <td>{step.detail || "Pendiente de ejecucion."}</td>
-              <td><button className="tiny" onClick={() => onDetail(index)}>Info</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  return <div className="testsExecutionTable"><table><thead><tr><th>Hora</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad/Valor</th><th>Resultado</th><th>Tiempo</th><th>Detalle</th><th>Info</th></tr></thead><tbody>{steps.map((step, index) => <tr key={step.id}><td>{step.at || "-"}</td><td>{index + 1}</td><td>Slave ID {step.slave || "-"}</td><td>{labels[step.fn]}</td><td>{step.address}</td><td>{isRead(step.fn) ? countFor(step) : step.value}</td><td><ResultPill result={step.result} /></td><td>{step.elapsedMs == null ? "-" : `${step.elapsedMs} ms`}</td><td>{step.detail || "Pendiente de ejecucion."}</td><td><button className="tiny" onClick={() => onDetail(index)}>Info</button></td></tr>)}</tbody></table></div>;
 }
 
 function StepDetail({ step, index, onClose }: { step: TestStep; index: number; onClose: () => void }) {
-  return (
-    <div className="testsDetailPanel">
-      <button className="tiny closeDetail" onClick={onClose}>Cerrar</button>
-      <h2>Detalle del paso {index + 1}</h2>
-      <p>{labels[step.fn]} - {step.detail || "Sin detalle."}</p>
-      <div className="testsDetailFacts">
-        <span><small>Funcion</small><strong>{labels[step.fn]}</strong></span>
-        <span><small>Slave ID</small><strong>{step.slave}</strong></span>
-        <span><small>Direccion inicial</small><strong>{step.address}</strong></span>
-        <span><small>{isRead(step.fn) ? "Cantidad" : "Valor"}</small><strong>{isRead(step.fn) ? countFor(step) : step.value}</strong></span>
-        <span><small>Validacion</small><strong>{validationLabels[step.validationMode]}</strong></span>
-        <span><small>Resultado</small><strong>{step.result}</strong></span>
-      </div>
-      <div className="testsExecutionTable testsDetailTable">
-        <table>
-          <thead><tr><th>Direccion</th><th>Nombre</th><th>Esperado</th><th>Leido/Escrito</th><th>Tipo</th><th>Validacion</th></tr></thead>
-          <tbody>
-            {step.rows.length === 0
-              ? <tr><td colSpan={6}>Este paso no tiene valores detallados.</td></tr>
-              : step.rows.map((row) => (
-                <tr key={`${row.address}-${row.name}`}>
-                  <td>{row.address}</td>
-                  <td>{row.name}</td>
-                  <td>{row.expected}</td>
-                  <td>{row.type === "bool" ? <span className={`bitChip ${normalizeBool(row.actual) ? "on" : "off"}`}>{row.actual}</span> : row.actual}</td>
-                  <td>{row.type}</td>
-                  <td className={row.validation === "OK" ? "oktext" : row.validation === "No coincide" ? "badstatus" : ""}>{row.validation}</td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+  return <div className="testsDetailPanel"><button className="tiny closeDetail" onClick={onClose}>Cerrar</button><h2>Detalle del paso {index + 1}</h2><p>{labels[step.fn]} - {step.detail || "Sin detalle."}</p><div className="testsDetailFacts"><span><small>Funcion</small><strong>{labels[step.fn]}</strong></span><span><small>Slave ID</small><strong>{step.slave}</strong></span><span><small>Direccion inicial</small><strong>{step.address}</strong></span><span><small>{isRead(step.fn) ? "Cantidad" : "Valor"}</small><strong>{isRead(step.fn) ? countFor(step) : step.value}</strong></span><span><small>Validacion</small><strong>{validationLabels[step.validationMode]}</strong></span><span><small>Resultado</small><strong>{step.result}</strong></span></div><div className="testsExecutionTable testsDetailTable"><table><thead><tr><th>Direccion</th><th>Nombre</th><th>Esperado</th><th>Leido/Escrito</th><th>Tipo</th><th>Validacion</th></tr></thead><tbody>{step.rows.length === 0 ? <tr><td colSpan={6}>Este paso no tiene valores detallados.</td></tr> : step.rows.map((row) => <tr key={`${row.address}-${row.name}`}><td>{row.address}</td><td>{row.name}</td><td>{row.expected}</td><td>{row.type === "bool" ? <span className={`bitChip ${normalizeBool(row.actual) ? "on" : "off"}`}>{row.actual}</span> : row.actual}</td><td>{row.type}</td><td className={row.validation === "OK" ? "oktext" : row.validation === "No coincide" ? "badstatus" : ""}>{row.validation}</td></tr>)}</tbody></table></div></div>;
 }
