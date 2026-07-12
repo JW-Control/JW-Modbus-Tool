@@ -2,11 +2,11 @@
   "format": "jwmodbus-session",
   "version": 1,
   "session": {
-    "id": "session-1783829561520",
+    "id": "session-1783830131403",
     "name": "Nueva_sesion_Modbus",
-    "createdAt": "2026-07-12T04:11:20.082Z",
-    "updatedAt": "2026-07-12T04:12:54.620Z",
-    "status": "Guardada",
+    "createdAt": "2026-07-12T04:21:51.062Z",
+    "updatedAt": "2026-07-12T04:23:03.119Z",
+    "status": "Modificada",
     "notes": ""
   },
   "connection": {
@@ -38,8 +38,8 @@
   "activity": [
     {
       "id": 1,
-      "at": "2026-07-12T04:11:31.582Z",
-      "ms": 10,
+      "at": "2026-07-12T04:21:55.153Z",
+      "ms": 9,
       "slave": 2,
       "device": "Slave ID 2",
       "fn": "FC03",
@@ -121,7 +121,7 @@
   "testsRuntime": {
     "format": "jwmodbus-tests-runtime",
     "version": 6,
-    "savedAt": "2026-07-12T04:12:16.397Z",
+    "savedAt": "2026-07-12T04:22:59.505Z",
     "selectedScenario": "normal",
     "simulatorState": "Detenido",
     "steps": [
@@ -249,7 +249,7 @@
       "otherFailed": 0,
       "responsive": 8,
       "avgMs": 10,
-      "lastRunAt": "23:12:16"
+      "lastRunAt": "23:22:59"
     }
   },
   "registerMaps": [],
