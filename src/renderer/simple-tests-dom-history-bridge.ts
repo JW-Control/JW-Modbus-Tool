@@ -1,10 +1,10 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v2";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys";
-const patchedSessionsKey = "__jwSimpleTestsDomHistorySessionsPatched";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v2";
+const patchedSessionsKey = "__jwSimpleTestsDomHistorySessionsPatched_v2";
 const maxItems = 200;
 
 function safeJsonParse(value, fallback) {
@@ -20,10 +20,21 @@ function readHistory() {
   return Array.isArray(parsed) ? parsed : [];
 }
 
+function resetSeenKeys(items = readHistory()) {
+  const set = new Set(items.map((item) => item.key).filter(Boolean));
+  window[seenKey] = set;
+  return set;
+}
+
 function writeHistory(items) {
   const clean = Array.isArray(items) ? items.slice(0, maxItems) : [];
   window.localStorage?.setItem(storageKey, JSON.stringify(clean));
+  resetSeenKeys(clean);
   window.dispatchEvent(new CustomEvent("jw-simple-tests-history-updated", { detail: clean }));
+}
+
+function clearHistory() {
+  writeHistory([]);
 }
 
 function text(cell) {
@@ -121,9 +132,7 @@ function buildItem(row) {
 
 function hydrateSeenKeys() {
   if (window[seenKey]) return window[seenKey];
-  const set = new Set(readHistory().map((item) => item.key).filter(Boolean));
-  window[seenKey] = set;
-  return set;
+  return resetSeenKeys();
 }
 
 function captureVisibleTestsLog() {
@@ -186,6 +195,15 @@ function patchSessionsApi() {
   return true;
 }
 
+function maybeClearFromButton(event) {
+  const button = event.target?.closest?.("button");
+  if (!button) return;
+  const label = text(button).toLowerCase();
+  if (label.includes("limpiar registro") || label.includes("nueva sesión") || label === "nuevo") {
+    window.setTimeout(clearHistory, 0);
+  }
+}
+
 function install() {
   captureVisibleTestsLog();
   patchSessionsApi();
@@ -194,7 +212,11 @@ function install() {
     patchSessionsApi();
   });
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-  window.addEventListener("jw-simple-tests-history-updated", () => hydrateSeenKeys());
+  document.addEventListener("click", maybeClearFromButton, true);
+  window.setInterval(() => {
+    captureVisibleTestsLog();
+    patchSessionsApi();
+  }, 1000);
 }
 
 if (!window[installKey]) {
