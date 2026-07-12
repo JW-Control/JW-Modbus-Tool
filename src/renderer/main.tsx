@@ -9,4 +9,7 @@ window.setTimeout(() => {
   import("./simple-tests-session-history-bridge.js").catch((error) => {
     console.warn("No se pudo cargar el historial de pruebas de sesión.", error);
   });
+  import("./simple-session-tests-summary-bridge.js").catch((error) => {
+    console.warn("No se pudo cargar el resumen de historial de pruebas en sesión.", error);
+  });
 }, 0);
