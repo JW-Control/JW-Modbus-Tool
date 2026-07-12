@@ -4,6 +4,8 @@ export {};
 const installKey = "__jwSimpleSessionTestsSummaryBridgeInstalled";
 const historyStorageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
 const summarySelector = "[data-tests-history-summary-bridge]";
+let lastSignature = "";
+let renderQueued = false;
 
 function safeJsonParse(value, fallback) {
   try {
@@ -37,6 +39,10 @@ function summarize(history) {
   return { total, ok, timeout, error, avg, last };
 }
 
+function makeSignature(summary) {
+  return [summary.total, summary.ok, summary.timeout, summary.error, summary.avg ?? "", summary.last ?? ""].join("|");
+}
+
 function makeTile(summary) {
   const article = document.createElement("article");
   article.dataset.testsHistorySummaryBridge = "true";
@@ -63,18 +69,32 @@ function makeTimelineNote(summary) {
   return note;
 }
 
-function renderSummary() {
+function renderSummary(force = false) {
   const sessions = document.querySelector(".sessions.grid");
   if (!sessions) return;
 
+  const summary = summarize(readHistory());
+  const signature = makeSignature(summary);
+  const hasRendered = Boolean(document.querySelector(summarySelector));
+  if (!force && hasRendered && signature === lastSignature) return;
+  lastSignature = signature;
+
   document.querySelectorAll(summarySelector).forEach((node) => node.remove());
 
-  const summary = summarize(readHistory());
   const tiles = sessions.querySelector(".sumsession .tiles");
   if (tiles) tiles.appendChild(makeTile(summary));
 
   const timeline = sessions.querySelector(".timeline");
   if (timeline) timeline.appendChild(makeTimelineNote(summary));
+}
+
+function scheduleRender(force = false) {
+  if (renderQueued) return;
+  renderQueued = true;
+  window.requestAnimationFrame(() => {
+    renderQueued = false;
+    renderSummary(force);
+  });
 }
 
 function installStyles() {
@@ -107,16 +127,18 @@ function installStyles() {
 
 function install() {
   installStyles();
-  renderSummary();
+  scheduleRender(true);
+
+  const observer = new MutationObserver(() => scheduleRender(false));
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener("jw-simple-tests-history-updated", () => scheduleRender(true));
+  window.addEventListener("storage", (event) => {
+    if (event.key === historyStorageKey) scheduleRender(true);
+  });
 }
 
 if (!window[installKey]) {
   window[installKey] = true;
   install();
-  window.addEventListener("jw-simple-tests-history-updated", install);
-  window.addEventListener("storage", (event) => {
-    if (event.key === historyStorageKey) install();
-  });
-  const timer = window.setInterval(install, 500);
-  window.setTimeout(() => window.clearInterval(timer), 8000);
 }
