@@ -71,7 +71,7 @@ function commandSummary(name, args) {
   const command = args?.[0] || {};
   const address = command.startAddress ?? command.address ?? null;
   const values = Array.isArray(command.values) ? command.values : command.value !== undefined ? [command.value] : [];
-  const quantity = command.quantity ?? values.length || 1;
+  const quantity = command.quantity ?? (values.length || 1);
   return {
     method: name,
     functionCode: methodCode(name),
