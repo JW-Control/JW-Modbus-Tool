@@ -1,11 +1,13 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v4";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v5";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v4";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v5";
 const maxItems = 200;
 let capturePausedUntil = 0;
+let pendingRun = null;
+let pendingPoll = null;
 
 function safeJsonParse(value, fallback) {
   try {
@@ -35,6 +37,9 @@ function writeHistory(items) {
 
 function clearHistory() {
   capturePausedUntil = Date.now() + 1200;
+  pendingRun = null;
+  if (pendingPoll != null) window.clearTimeout(pendingPoll);
+  pendingPoll = null;
   writeHistory([]);
   window.setTimeout(() => writeHistory([]), 150);
   window.setTimeout(() => writeHistory([]), 700);
@@ -51,6 +56,7 @@ function statusFromText(value) {
   if (normalized.includes("crc")) return "CRC Error";
   if (normalized.includes("excepcion") || normalized.includes("excepción")) return "Excepción";
   if (normalized.includes("fallida") || normalized.includes("error")) return "Error";
+  if (normalized.includes("ejecutando")) return "Ejecutando";
   return "Pendiente";
 }
 
@@ -86,7 +92,13 @@ function parseValues(functionLabel, amountText) {
   return textValue.split(/[;,\s]+/).map((item) => item.trim()).filter(Boolean);
 }
 
-function buildItem(row) {
+function visibleRunRows() {
+  const tests = document.querySelector(".testsNative");
+  if (!tests) return [];
+  return Array.from(tests.querySelectorAll(".testsLogCard tbody tr"));
+}
+
+function buildItem(row, runId) {
   const cells = Array.from(row.querySelectorAll("td"));
   if (cells.length < 9) return null;
 
@@ -101,17 +113,19 @@ function buildItem(row) {
   const detail = text(cells[8]);
   const status = statusFromText(resultText);
 
-  if (!hour || hour === "-" || status === "Pendiente") return null;
+  if (!hour || hour === "-" || status === "Pendiente" || status === "Ejecutando") return null;
 
   const fnCode = functionCode(fnLabel);
-  const key = [hour, step, slaveText, fnCode, address, amount, status].join("|");
+  const key = [runId, step, slaveText, fnCode, address, amount, status].join("|");
   const today = new Date().toISOString().slice(0, 10);
   const completedAt = new Date(`${today}T${hour.length === 5 ? `${hour}:00` : hour}`).toISOString();
 
   return {
     key,
     item: {
-      id: `test-dom-${Date.now()}-${Math.round(Math.random() * 100000)}`,
+      id: `test-run-${runId}-${step}-${Date.now()}-${Math.round(Math.random() * 100000)}`,
+      runId,
+      step: Number(step),
       startedAt: completedAt,
       completedAt,
       elapsedMs: parseElapsedMs(elapsedText),
@@ -138,34 +152,86 @@ function hydrateSeenKeys() {
   return resetSeenKeys();
 }
 
-function captureVisibleTestsLog() {
-  if (Date.now() < capturePausedUntil) return;
-  const tests = document.querySelector(".testsNative");
-  if (!tests) return;
-
-  const rows = Array.from(tests.querySelectorAll(".testsLogCard tbody tr"));
-  if (!rows.length) return;
-
+function appendRunHistory(rows, runId) {
   const seen = hydrateSeenKeys();
   const current = readHistory();
   const additions = [];
 
   for (const row of rows) {
-    const parsed = buildItem(row);
+    const parsed = buildItem(row, runId);
     if (!parsed || seen.has(parsed.key)) continue;
     seen.add(parsed.key);
     additions.push({ ...parsed.item, key: parsed.key });
   }
 
-  if (additions.length) writeHistory([...additions.reverse(), ...current]);
+  if (additions.length) writeHistory([...additions, ...current]);
+  return additions.length;
 }
 
-function maybeClearFromButton(event) {
+function isRunButtonReady() {
+  const tests = document.querySelector(".testsNative");
+  const buttons = Array.from(tests?.querySelectorAll("button") ?? []);
+  const startButton = buttons.find((button) => text(button).toLowerCase().includes("iniciar prueba"));
+  return Boolean(startButton && !startButton.disabled);
+}
+
+function scheduleRunCompletionPoll() {
+  if (!pendingRun) return;
+  if (pendingPoll != null) window.clearTimeout(pendingPoll);
+
+  pendingPoll = window.setTimeout(() => {
+    pendingPoll = null;
+    if (!pendingRun || Date.now() < capturePausedUntil) return;
+
+    const rows = visibleRunRows();
+    const statuses = rows.map((row) => statusFromText(text(row.querySelectorAll("td")[6])));
+    const finalRows = rows.filter((_, index) => !["Pendiente", "Ejecutando"].includes(statuses[index]));
+    const hasExecuting = statuses.includes("Ejecutando");
+    const ready = isRunButtonReady();
+    const expired = Date.now() > pendingRun.deadline;
+
+    if ((ready && !hasExecuting && finalRows.length > 0) || expired) {
+      const captured = appendRunHistory(finalRows, pendingRun.id);
+      window.__jwSimpleTestsDomHistoryLastCapture = { runId: pendingRun.id, captured, rows: rows.length, finalRows: finalRows.length, expired };
+      pendingRun = null;
+      return;
+    }
+
+    scheduleRunCompletionPoll();
+  }, 180);
+}
+
+function startRunCapture() {
+  if (Date.now() < capturePausedUntil) return;
+  pendingRun = {
+    id: `run-${Date.now()}-${Math.round(Math.random() * 100000)}`,
+    startedAt: Date.now(),
+    deadline: Date.now() + 60000
+  };
+  scheduleRunCompletionPoll();
+}
+
+function manualCapture() {
+  const runId = `manual-${Date.now()}-${Math.round(Math.random() * 100000)}`;
+  const rows = visibleRunRows();
+  const finalRows = rows.filter((row) => {
+    const cells = row.querySelectorAll("td");
+    const status = statusFromText(text(cells[6]));
+    return !["Pendiente", "Ejecutando"].includes(status);
+  });
+  return appendRunHistory(finalRows, runId);
+}
+
+function maybeHandleButton(event) {
   const button = event.target?.closest?.("button");
   if (!button) return;
   const label = text(button).toLowerCase();
   if (label.includes("limpiar registro") || label.includes("nueva sesión") || label === "nuevo") {
     clearHistory();
+    return;
+  }
+  if (label.includes("iniciar prueba")) {
+    window.setTimeout(startRunCapture, 80);
   }
 }
 
@@ -175,7 +241,9 @@ function buildDebugApi() {
     get: readHistory,
     count: () => readHistory().length,
     clear: () => clearHistory(),
-    capture: () => captureVisibleTestsLog(),
+    capture: () => manualCapture(),
+    pending: () => pendingRun,
+    lastCapture: () => window.__jwSimpleTestsDomHistoryLastCapture ?? null,
     pausedMs: () => Math.max(0, capturePausedUntil - Date.now())
   };
 }
@@ -183,14 +251,9 @@ function buildDebugApi() {
 function install() {
   window.__jwSimpleTestsDomHistoryDebug = buildDebugApi();
   window.__jwSimpleTestsHistoryDebug = window.__jwSimpleTestsHistoryDebug || buildDebugApi();
-  captureVisibleTestsLog();
-
-  const observer = new MutationObserver(() => captureVisibleTestsLog());
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-  document.addEventListener("click", maybeClearFromButton, true);
+  document.addEventListener("click", maybeHandleButton, true);
   window.setInterval(() => {
     window.__jwSimpleTestsDomHistoryDebug = buildDebugApi();
-    captureVisibleTestsLog();
   }, 1000);
 }
 
