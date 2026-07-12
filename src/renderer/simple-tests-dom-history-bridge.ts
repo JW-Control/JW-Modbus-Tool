@@ -4,6 +4,7 @@ export {};
 const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
 const seenKey = "__jwSimpleTestsDomHistorySeenKeys";
+const patchedSessionsKey = "__jwSimpleTestsDomHistorySessionsPatched";
 const maxItems = 200;
 
 function safeJsonParse(value, fallback) {
@@ -146,9 +147,52 @@ function captureVisibleTestsLog() {
   if (additions.length) writeHistory([...additions.reverse(), ...current]);
 }
 
+function patchSessionsApi() {
+  const sessions = window.jwModbus?.sessions;
+  if (!sessions || sessions[patchedSessionsKey]) return Boolean(sessions?.[patchedSessionsKey]);
+
+  if (typeof sessions.saveFile === "function") {
+    const originalSave = sessions.saveFile.bind(sessions);
+    sessions.saveFile = async (payload) => {
+      captureVisibleTestsLog();
+      const history = readHistory();
+      const nextPayload = payload && typeof payload === "object"
+        ? {
+            ...payload,
+            data: payload.data && typeof payload.data === "object"
+              ? {
+                  ...payload.data,
+                  testsExecutionHistory: history,
+                  testsExecutionHistoryUpdatedAt: new Date().toISOString()
+                }
+              : payload.data
+          }
+        : payload;
+      return originalSave(nextPayload);
+    };
+  }
+
+  if (typeof sessions.openFile === "function") {
+    const originalOpen = sessions.openFile.bind(sessions);
+    sessions.openFile = async (...args) => {
+      const result = await originalOpen(...args);
+      const data = result?.ok ? result.value?.data : null;
+      if (Array.isArray(data?.testsExecutionHistory)) writeHistory(data.testsExecutionHistory);
+      return result;
+    };
+  }
+
+  sessions[patchedSessionsKey] = true;
+  return true;
+}
+
 function install() {
   captureVisibleTestsLog();
-  const observer = new MutationObserver(() => captureVisibleTestsLog());
+  patchSessionsApi();
+  const observer = new MutationObserver(() => {
+    captureVisibleTestsLog();
+    patchSessionsApi();
+  });
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   window.addEventListener("jw-simple-tests-history-updated", () => hydrateSeenKeys());
 }
