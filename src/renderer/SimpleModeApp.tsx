@@ -46,6 +46,12 @@ interface TestRow { enabled: boolean; step: number; slave: number; device: strin
 type TrafficAction = { timestamp?: string; unitId: number; elapsedMs?: number; registerValues?: unknown[]; values?: unknown[]; exception?: unknown };
 interface StoredActivityRow extends Omit<ActivityRow, "at"> { at: string }
 interface StoredTrafficRow extends Omit<TrafficRow, "at"> { at: string }
+type TestExecutionHistoryEntry = Record<string, unknown> & {
+  key?: string;
+  status?: string;
+  completedAt?: string;
+  startedAt?: string;
+};
 interface SessionDocument {
   format: "jwmodbus-session";
   version: 1;
@@ -60,6 +66,8 @@ interface SessionDocument {
   traffic: StoredTrafficRow[];
   tests: TestRow[];
   testsRuntime?: TestsRuntimeState | null;
+  testsExecutionHistory?: TestExecutionHistoryEntry[];
+  testsExecutionHistoryUpdatedAt?: string | null;
   registerMaps: unknown[];
   templates: unknown[];
 }
@@ -67,6 +75,7 @@ interface RecentSession { id: string; name: string; savedAt: string; filePath: s
 
 const RECENT_SESSION_STORAGE_KEY = "jw-modbus-tool.simple.recent-sessions.v1";
 const LAST_SERIAL_PORT_STORAGE_KEY = "jw-modbus-tool.simple.last-serial-port.v1";
+const TESTS_EXECUTION_HISTORY_STORAGE_KEY = "jw-modbus-tool.simple.tests-execution-history.v1";
 
 const nav: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "devices", label: "Dispositivos", icon: Network },
@@ -130,6 +139,7 @@ export function SimpleModeApp() {
   const [stats, setStats] = useState<Stats>({ requests: 0, responses: 0, errors: 0, timeouts: 0 });
   const [tests, setTests] = useState<TestRow[]>(createCleanTests());
   const [testsRuntime, setTestsRuntime] = useState<TestsRuntimeState | null>(null);
+  const [testsExecutionHistory, setTestsExecutionHistory] = useState<TestExecutionHistoryEntry[]>(() => loadStoredTestsExecutionHistory());
   const [testsResetKey, setTestsResetKey] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionCreatedAt, setSessionCreatedAt] = useState(() => new Date().toISOString());
@@ -143,16 +153,25 @@ export function SimpleModeApp() {
     () => (activeId === null ? null : devices.find((device) => device.id === activeId) ?? null),
     [activeId, devices]
   );
-  const currentSignature = useMemo(() => signatureFromState({ sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, notes }), [sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, notes]);
+  const currentSignature = useMemo(() => signatureFromState({ sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes }), [sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes]);
   const sessionState = useMemo<SessionState>(() => {
-    const isClean = devices.length === 0 && activity.length === 0 && stats.requests === 0 && notes.trim().length === 0;
+    const isClean = devices.length === 0 && activity.length === 0 && stats.requests === 0 && testsExecutionHistory.length === 0 && notes.trim().length === 0;
     if (isClean) return "Limpia";
     if (!sessionFilePath) return "Activa sin guardar";
     return lastSavedSignature === currentSignature ? "Guardada" : "Modificada";
-  }, [activity.length, currentSignature, devices.length, lastSavedSignature, notes, sessionFilePath, stats.requests]);
+  }, [activity.length, currentSignature, devices.length, lastSavedSignature, notes, sessionFilePath, stats.requests, testsExecutionHistory.length]);
 
   useEffect(() => { void initBackend(); }, []);
   useEffect(() => { setRecentSessions(loadStoredRecentSessions()); }, []);
+  useEffect(() => {
+    const syncHistory = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      setTestsExecutionHistory(normalizeTestsExecutionHistory(detail));
+    };
+
+    window.addEventListener("jw-simple-tests-history-updated", syncHistory);
+    return () => window.removeEventListener("jw-simple-tests-history-updated", syncHistory);
+  }, []);
   useEffect(() => { storeLastSerialPort(port); }, [port]);
   useEffect(() => { if (!selectedRegister && regs.length > 0) setSelectedRegister(regs[0]); }, [regs, selectedRegister]);
   useEffect(() => {
@@ -269,6 +288,7 @@ export function SimpleModeApp() {
     setStats({ requests: 0, responses: 0, errors: 0, timeouts: 0 });
     setTests(createCleanTests());
     setTestsRuntime(null);
+    setTestsExecutionHistory(replaceStoredTestsExecutionHistory([]));
     setTestsResetKey((value) => value + 1);
     setMessage("Nueva sesión limpia creada. Conecta, escanea y lee para generar datos reales.");
   }
@@ -307,6 +327,7 @@ export function SimpleModeApp() {
 
   function createSessionDocument(id: string, status: SessionState): SessionDocument {
     const now = new Date().toISOString();
+    const history = loadStoredTestsExecutionHistory();
     return {
       format: "jwmodbus-session",
       version: 1,
@@ -321,6 +342,8 @@ export function SimpleModeApp() {
       traffic: traffic.map((item) => ({ ...item, at: item.at.toISOString() })),
       tests,
       testsRuntime,
+      testsExecutionHistory: history,
+      testsExecutionHistoryUpdatedAt: history.length ? now : null,
       registerMaps: [],
       templates: []
     };
@@ -348,6 +371,8 @@ export function SimpleModeApp() {
     setTraffic((document.traffic ?? []).map((item) => ({ ...item, at: new Date(item.at) })));
     setTests(document.tests ?? createCleanTests());
     setTestsRuntime(normalizeTestsRuntimeState(document.testsRuntime, document.activeSlaveId ?? 2));
+    const restoredHistory = replaceStoredTestsExecutionHistory(document.testsExecutionHistory ?? []);
+    setTestsExecutionHistory(restoredHistory);
     setTestsResetKey((value) => value + 1);
     setLastSavedSignature(signatureFromDocument(document));
     setMessage(`Sesión abierta: ${document.session.name}.`);
@@ -658,10 +683,146 @@ function pct(value: number, total: number) { return total > 0 ? Math.round((valu
 function createCleanTests(): TestRow[] { return [[1, 2, "Slave ID 2", "fc3", 40000, 6, "6 regs", 1000], [2, 2, "Slave ID 2", "fc4", 30000, 4, "4 regs", 1000], [3, 2, "Slave ID 2", "fc1", 0, 8, "8 coils", 1000], [4, 2, "Slave ID 2", "fc2", 0, 8, "8 inputs", 1000]].map((item) => ({ enabled: true, step: item[0] as number, slave: item[1] as number, device: item[2] as string, fn: item[3] as Fn, label: fnMap[item[3] as Fn].label, address: item[4] as number, amount: item[5] as number, expected: item[6] as string, timeout: item[7] as number, result: "Pendiente" })); }
 function sessionTestSummary(testsRuntime: TestsRuntimeState | null | undefined, tests: TestRow[]): TestsRunSummary { if (testsRuntime?.lastRun) return testsRuntime.lastRun; const total = testsRuntime?.steps.length ?? tests.length; const finalTests = tests.filter((item) => item.result !== "Pendiente"); const passed = finalTests.filter((item) => item.result === "Aprobado").length; const failed = finalTests.filter((item) => item.result !== "Aprobado").length; const timeouts = finalTests.filter((item) => item.result === "Timeout").length; return { total, executed: finalTests.length, passed, failed, timeouts, otherFailed: Math.max(0, failed - timeouts), responsive: Math.max(0, finalTests.length - timeouts), avgMs: null, lastRunAt: null }; }
 function storedRegisterReads(activity: StoredActivityRow[]) { return activity.reduce((total, item) => total + item.rows.length, 0); }
-function signatureFromState(input: { sessionName: string; port: string; baud: number; dataBits: number; parity: string; stopBits: number; timeout: number; devices: Device[]; activeId: number | null; stats: Stats; quick: RegisterRow[]; regs: RegisterRow[]; activity: ActivityRow[]; traffic: TrafficRow[]; tests: TestRow[]; testsRuntime: TestsRuntimeState | null; notes: string }) { return JSON.stringify({ name: input.sessionName.trim() || "Nueva_sesion_Modbus", connection: { port: input.port, baud: input.baud, dataBits: input.dataBits, parity: input.parity, stopBits: input.stopBits, timeout: input.timeout }, devices: input.devices, activeId: input.activeId, stats: input.stats, quick: input.quick, regs: input.regs, activity: input.activity.map((item) => ({ ...item, at: item.at.toISOString() })), traffic: input.traffic.map((item) => ({ ...item, at: item.at.toISOString() })), tests: input.tests, testsRuntime: input.testsRuntime, notes: input.notes }); }
-function signatureFromDocument(document: SessionDocument) { return JSON.stringify({ name: document.session.name, connection: { port: document.connection.port, baud: document.connection.baudRate, dataBits: document.connection.dataBits, parity: document.connection.parity, stopBits: document.connection.stopBits, timeout: document.connection.timeoutMs }, devices: document.devices, activeId: document.activeSlaveId, stats: document.stats, quick: document.quickReads, regs: document.registerSnapshot, activity: document.activity, traffic: document.traffic, tests: document.tests, testsRuntime: document.testsRuntime ?? null, notes: document.session.notes }); }
-function normalizeSessionDocument(data: unknown): SessionDocument | null { if (!data || typeof data !== "object") return null; const doc = data as Partial<SessionDocument>; if (doc.format !== "jwmodbus-session" || doc.version !== 1 || !doc.session || !doc.connection) return null; return { format: "jwmodbus-session", version: 1, session: { id: doc.session.id ?? `session-${Date.now()}`, name: doc.session.name ?? "Nueva_sesion_Modbus", createdAt: doc.session.createdAt ?? new Date().toISOString(), updatedAt: doc.session.updatedAt ?? new Date().toISOString(), status: doc.session.status ?? "Guardada", notes: doc.session.notes ?? "" }, connection: { protocol: "RTU", port: doc.connection.port ?? "", baudRate: doc.connection.baudRate ?? 115200, dataBits: doc.connection.dataBits ?? 8, parity: doc.connection.parity ?? "none", stopBits: doc.connection.stopBits ?? 1, timeoutMs: doc.connection.timeoutMs ?? 1000 }, devices: doc.devices ?? [], activeSlaveId: doc.activeSlaveId ?? null, stats: doc.stats ?? { requests: 0, responses: 0, errors: 0, timeouts: 0 }, quickReads: doc.quickReads ?? [], registerSnapshot: doc.registerSnapshot ?? [], activity: doc.activity ?? [], traffic: doc.traffic ?? [], tests: doc.tests ?? createCleanTests(), testsRuntime: normalizeTestsRuntimeState(doc.testsRuntime, doc.activeSlaveId ?? 2), registerMaps: doc.registerMaps ?? [], templates: doc.templates ?? [] }; }
+function signatureFromState(input: {
+  sessionName: string;
+  port: string;
+  baud: number;
+  dataBits: number;
+  parity: string;
+  stopBits: number;
+  timeout: number;
+  devices: Device[];
+  activeId: number | null;
+  stats: Stats;
+  quick: RegisterRow[];
+  regs: RegisterRow[];
+  activity: ActivityRow[];
+  traffic: TrafficRow[];
+  tests: TestRow[];
+  testsRuntime: TestsRuntimeState | null;
+  testsExecutionHistory: TestExecutionHistoryEntry[];
+  notes: string;
+}) {
+  return JSON.stringify({
+    name: input.sessionName.trim() || "Nueva_sesion_Modbus",
+    connection: {
+      port: input.port,
+      baud: input.baud,
+      dataBits: input.dataBits,
+      parity: input.parity,
+      stopBits: input.stopBits,
+      timeout: input.timeout
+    },
+    devices: input.devices,
+    activeId: input.activeId,
+    stats: input.stats,
+    quick: input.quick,
+    regs: input.regs,
+    activity: input.activity.map((item) => ({ ...item, at: item.at.toISOString() })),
+    traffic: input.traffic.map((item) => ({ ...item, at: item.at.toISOString() })),
+    tests: input.tests,
+    testsRuntime: input.testsRuntime,
+    testsExecutionHistory: input.testsExecutionHistory,
+    notes: input.notes
+  });
+}
+function signatureFromDocument(document: SessionDocument) {
+  return JSON.stringify({
+    name: document.session.name,
+    connection: {
+      port: document.connection.port,
+      baud: document.connection.baudRate,
+      dataBits: document.connection.dataBits,
+      parity: document.connection.parity,
+      stopBits: document.connection.stopBits,
+      timeout: document.connection.timeoutMs
+    },
+    devices: document.devices,
+    activeId: document.activeSlaveId,
+    stats: document.stats,
+    quick: document.quickReads,
+    regs: document.registerSnapshot,
+    activity: document.activity,
+    traffic: document.traffic,
+    tests: document.tests,
+    testsRuntime: document.testsRuntime ?? null,
+    testsExecutionHistory: document.testsExecutionHistory ?? [],
+    notes: document.session.notes
+  });
+}
+function normalizeSessionDocument(data: unknown): SessionDocument | null {
+  if (!data || typeof data !== "object") return null;
+
+  const doc = data as Partial<SessionDocument>;
+  if (doc.format !== "jwmodbus-session" || doc.version !== 1 || !doc.session || !doc.connection) return null;
+
+  const history = normalizeTestsExecutionHistory(doc.testsExecutionHistory);
+
+  return {
+    format: "jwmodbus-session",
+    version: 1,
+    session: {
+      id: doc.session.id ?? `session-${Date.now()}`,
+      name: doc.session.name ?? "Nueva_sesion_Modbus",
+      createdAt: doc.session.createdAt ?? new Date().toISOString(),
+      updatedAt: doc.session.updatedAt ?? new Date().toISOString(),
+      status: doc.session.status ?? "Guardada",
+      notes: doc.session.notes ?? ""
+    },
+    connection: {
+      protocol: "RTU",
+      port: doc.connection.port ?? "",
+      baudRate: doc.connection.baudRate ?? 115200,
+      dataBits: doc.connection.dataBits ?? 8,
+      parity: doc.connection.parity ?? "none",
+      stopBits: doc.connection.stopBits ?? 1,
+      timeoutMs: doc.connection.timeoutMs ?? 1000
+    },
+    devices: doc.devices ?? [],
+    activeSlaveId: doc.activeSlaveId ?? null,
+    stats: doc.stats ?? { requests: 0, responses: 0, errors: 0, timeouts: 0 },
+    quickReads: doc.quickReads ?? [],
+    registerSnapshot: doc.registerSnapshot ?? [],
+    activity: doc.activity ?? [],
+    traffic: doc.traffic ?? [],
+    tests: doc.tests ?? createCleanTests(),
+    testsRuntime: normalizeTestsRuntimeState(doc.testsRuntime, doc.activeSlaveId ?? 2),
+    testsExecutionHistory: history,
+    testsExecutionHistoryUpdatedAt: doc.testsExecutionHistoryUpdatedAt ?? null,
+    registerMaps: doc.registerMaps ?? [],
+    templates: doc.templates ?? []
+  };
+}
 function createRecentSession(document: SessionDocument, filePath: string, status: SessionState): RecentSession { const testSummary = sessionTestSummary(document.testsRuntime ?? null, document.tests); return { id: document.session.id, name: document.session.name, savedAt: document.session.updatedAt, filePath, devices: document.devices.length, registers: storedRegisterReads(document.activity), tests: `${testSummary.passed}/${testSummary.total}`, errors: document.stats.errors + testSummary.failed, status }; }
+function normalizeTestsExecutionHistory(data: unknown): TestExecutionHistoryEntry[] {
+  if (!Array.isArray(data)) return [];
+  return data
+    .filter((item): item is TestExecutionHistoryEntry => Boolean(item) && typeof item === "object")
+    .slice(0, 200);
+}
+
+function loadStoredTestsExecutionHistory(): TestExecutionHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(TESTS_EXECUTION_HISTORY_STORAGE_KEY);
+    return normalizeTestsExecutionHistory(raw ? JSON.parse(raw) : []);
+  } catch {
+    return [];
+  }
+}
+
+function replaceStoredTestsExecutionHistory(data: unknown): TestExecutionHistoryEntry[] {
+  const history = normalizeTestsExecutionHistory(data);
+
+  try {
+    localStorage.setItem(TESTS_EXECUTION_HISTORY_STORAGE_KEY, JSON.stringify(history));
+  } catch {
+    // localStorage puede no estar disponible en pruebas o previsualizaciones.
+  }
+
+  window.dispatchEvent(new CustomEvent("jw-simple-tests-history-updated", { detail: history }));
+  return history;
+}
+
 function loadStoredRecentSessions(): RecentSession[] { try { const raw = localStorage.getItem(RECENT_SESSION_STORAGE_KEY); if (!raw) return []; const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : []; } catch { return []; } }
 function storeRecentSessions(sessions: RecentSession[]) { localStorage.setItem(RECENT_SESSION_STORAGE_KEY, JSON.stringify(sessions)); }
 function loadStoredSerialPort() { try { return localStorage.getItem(LAST_SERIAL_PORT_STORAGE_KEY) || ""; } catch { return ""; } }
