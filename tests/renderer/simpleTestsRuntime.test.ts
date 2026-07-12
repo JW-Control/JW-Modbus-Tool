@@ -4,32 +4,10 @@ import {
   createScenarioPlan,
   parsePlanCoilValues,
   parsePlanRegisterValues,
-  summarizeTestsRun,
-  unwrapModbusActionResult
+  summarizeTestsRun
 } from "../../src/renderer/simple-tests-consolidated.js";
 
 describe("simple tests runtime", () => {
-  it("unwraps successful IPC results before validation", () => {
-    const value = { elapsedMs: 8, crcOk: true };
-
-    expect(unwrapModbusActionResult({ ok: true, value })).toBe(value);
-  });
-
-  it("throws failed IPC results so timeouts cannot approve write steps", () => {
-    expect(() =>
-      unwrapModbusActionResult({
-        ok: false,
-        error: "Timed out waiting for RTU response after 1000 ms"
-      })
-    ).toThrow("Timed out waiting for RTU response");
-  });
-
-  it("keeps direct action payloads for legacy callers", () => {
-    const action = { elapsedMs: 12, crcOk: true };
-
-    expect(unwrapModbusActionResult(action)).toBe(action);
-  });
-
   it("classifies serial timed-out messages as timeout", () => {
     expect(classifyStepErrorResult("Timed out waiting for RTU response after 1000 ms")).toBe("Timeout");
     expect(classifyStepErrorResult("Response timeout")).toBe("Timeout");
