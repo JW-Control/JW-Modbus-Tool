@@ -1,11 +1,12 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v2";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v3";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v2";
-const patchedSessionsKey = "__jwSimpleTestsDomHistorySessionsPatched_v2";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v3";
+const patchedSessionsKey = "__jwSimpleTestsDomHistorySessionsPatched_v3";
 const maxItems = 200;
+let capturePausedUntil = 0;
 
 function safeJsonParse(value, fallback) {
   try {
@@ -34,7 +35,10 @@ function writeHistory(items) {
 }
 
 function clearHistory() {
+  capturePausedUntil = Date.now() + 1200;
   writeHistory([]);
+  window.setTimeout(() => writeHistory([]), 150);
+  window.setTimeout(() => writeHistory([]), 700);
 }
 
 function text(cell) {
@@ -136,6 +140,7 @@ function hydrateSeenKeys() {
 }
 
 function captureVisibleTestsLog() {
+  if (Date.now() < capturePausedUntil) return;
   const tests = document.querySelector(".testsNative");
   if (!tests) return;
 
@@ -200,7 +205,7 @@ function maybeClearFromButton(event) {
   if (!button) return;
   const label = text(button).toLowerCase();
   if (label.includes("limpiar registro") || label.includes("nueva sesión") || label === "nuevo") {
-    window.setTimeout(clearHistory, 0);
+    clearHistory();
   }
 }
 
