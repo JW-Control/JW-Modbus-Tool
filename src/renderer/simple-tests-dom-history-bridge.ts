@@ -1,9 +1,9 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v6";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v7";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v6";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v7";
 const maxItems = 200;
 let capturePausedUntil = 0;
 let pendingRun = null;
@@ -198,7 +198,20 @@ function finishPendingRun(reason = "poll") {
   const hasExecuting = statuses.includes("Ejecutando");
   const ready = isRunButtonReady();
   const expired = Date.now() > run.deadline;
-  const canFinish = reason === "before-next-run" || expired || (ready && !hasExecuting && finalRows.length > 0);
+  const completeRunVisible = rows.length > 0 && finalRows.length === rows.length;
+  const canFinish = expired || (ready && !hasExecuting && completeRunVisible) || (reason === "manual-flush" && finalRows.length > 0);
+
+  window.__jwSimpleTestsDomHistoryLastCaptureAttempt = {
+    runId: run.id,
+    reason,
+    canFinish,
+    ready,
+    hasExecuting,
+    rows: rows.length,
+    finalRows: finalRows.length,
+    statuses,
+    expired
+  };
 
   if (!canFinish) return false;
 
@@ -228,11 +241,10 @@ function scheduleRunCompletionPoll() {
 
 function startRunCapture() {
   if (Date.now() < capturePausedUntil) return;
-
-  // Rapid, valid clicks can start the next run before the previous 180 ms poll
-  // had a chance to persist it. Capture the completed previous run first so no
-  // full execution is dropped.
-  finishPendingRun("before-next-run");
+  if (pendingRun && !finishPendingRun("before-next-run")) {
+    scheduleRunCompletionPoll();
+    return;
+  }
 
   pendingRun = {
     id: `run-${Date.now()}-${Math.round(Math.random() * 100000)}`,
@@ -256,6 +268,12 @@ function maybeHandleButton(event) {
     return;
   }
   if (label.includes("iniciar prueba")) {
+    if (pendingRun && !finishPendingRun("before-next-run")) {
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+      scheduleRunCompletionPoll();
+      return;
+    }
     window.setTimeout(startRunCapture, 80);
   }
 }
@@ -270,6 +288,7 @@ function buildDebugApi() {
     pending: () => pendingRun,
     flushPending: () => finishPendingRun("manual-flush"),
     lastCapture: () => window.__jwSimpleTestsDomHistoryLastCapture ?? null,
+    lastAttempt: () => window.__jwSimpleTestsDomHistoryLastCaptureAttempt ?? null,
     pausedMs: () => Math.max(0, capturePausedUntil - Date.now())
   };
 }
