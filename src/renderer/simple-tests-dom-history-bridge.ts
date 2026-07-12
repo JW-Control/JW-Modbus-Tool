@@ -1,9 +1,10 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v8";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v9";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v8";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v9";
+const lockStyleId = "jw-simple-tests-history-lock-style";
 const maxItems = 200;
 let capturePausedUntil = 0;
 let pendingRun = null;
@@ -41,6 +42,21 @@ function clearPendingPoll() {
   pendingPoll = null;
 }
 
+function ensureLockStyle() {
+  if (document.getElementById(lockStyleId)) return;
+  const style = document.createElement("style");
+  style.id = lockStyleId;
+  style.textContent = `
+    .testsNative button[data-tests-history-lock="1"] {
+      pointer-events: none !important;
+      opacity: 0.58 !important;
+      filter: saturate(0.75) brightness(0.9) !important;
+      cursor: wait !important;
+    }
+  `;
+  document.head?.appendChild(style);
+}
+
 function findStartButton() {
   const tests = document.querySelector(".testsNative");
   const buttons = Array.from(tests?.querySelectorAll("button") ?? []);
@@ -48,15 +64,16 @@ function findStartButton() {
 }
 
 function setStartButtonLocked(locked) {
+  ensureLockStyle();
   const button = findStartButton();
   if (!button) return;
   if (locked) {
-    button.disabled = true;
     button.dataset.testsHistoryLock = "1";
+    button.disabled = true;
     button.title = "Registrando historial de pruebas...";
   } else if (button.dataset.testsHistoryLock === "1") {
-    button.disabled = false;
     delete button.dataset.testsHistoryLock;
+    button.disabled = false;
     button.removeAttribute("title");
   }
 }
@@ -314,8 +331,8 @@ function maybeHandleButton(event) {
       return;
     }
     startLockedUntilCapture = true;
+    setStartButtonLocked(true);
     window.setTimeout(startRunCapture, 80);
-    window.setTimeout(() => setStartButtonLocked(true), 0);
   }
 }
 
@@ -336,9 +353,14 @@ function buildDebugApi() {
 }
 
 function install() {
+  ensureLockStyle();
   window.__jwSimpleTestsDomHistoryDebug = buildDebugApi();
   window.__jwSimpleTestsHistoryDebug = window.__jwSimpleTestsHistoryDebug || buildDebugApi();
   document.addEventListener("click", maybeHandleButton, true);
+  const observer = new MutationObserver(() => {
+    if (startLockedUntilCapture || pendingRun) setStartButtonLocked(true);
+  });
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "data-tests-history-lock"] });
   window.setInterval(() => {
     window.__jwSimpleTestsDomHistoryDebug = buildDebugApi();
     if (startLockedUntilCapture || pendingRun) setStartButtonLocked(true);
