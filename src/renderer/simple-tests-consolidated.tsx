@@ -761,6 +761,66 @@ function executionCsv(steps: TestStep[]) {
   return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
+
+function historyStatusFromResult(result: Result) {
+  if (result === "Aprobado") return "OK";
+  if (result === "Timeout") return "Timeout";
+  if (result === "CRC Error") return "CRC Error";
+  if (result === "Excepcion") return "Excepción";
+  return "Error";
+}
+
+function dispatchTestsRunCompleted(steps: TestStep[], stopped: boolean) {
+  const executed = steps.filter((step) => step.enabled && isFinalResult(step.result));
+  if (!executed.length) return;
+
+  const runId = "run-" + Date.now() + "-" + Math.round(Math.random() * 100000);
+  const completedAt = new Date().toISOString();
+
+  const entries = executed.map((step, index) => {
+    const functionCode = labels[step.fn].match(/FC\d{2}/)?.[0] ?? step.fn.toUpperCase();
+    const status = historyStatusFromResult(step.result);
+    const quantity = countFor(step);
+    const values = step.rows.length
+      ? step.rows.map((row) => row.actual).filter((value) => value && value !== "-")
+      : splitValues(isRead(step.fn) ? step.values : step.value);
+
+    return {
+      id: "test-run-" + runId + "-" + (index + 1),
+      key: [runId, index + 1, step.slave, functionCode, step.address, step.result].join("|"),
+      runId,
+      step: index + 1,
+      startedAt: completedAt,
+      completedAt,
+      elapsedMs: step.elapsedMs,
+      source: "Pruebas",
+      role: "PC Master",
+      method: functionCode,
+      functionCode,
+      functionLabel: labels[step.fn],
+      unitId: Number(step.slave),
+      address: Number(step.address),
+      quantity,
+      values,
+      timeoutMs: numeric(step.timeoutMs, 1000),
+      status,
+      summary: step.detail || step.result,
+      response: null,
+      error: status === "OK" ? null : (step.detail || step.result)
+    };
+  });
+
+  window.dispatchEvent(new CustomEvent("jw-simple-tests-run-completed", {
+    detail: {
+      runId,
+      completedAt,
+      stopped,
+      total: entries.length,
+      entries
+    }
+  }));
+}
+
 function downloadTextFile(filename: string, content: string, mimeType: string) {
   const blob = new Blob(["\ufeff", content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -925,11 +985,10 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
     }
 
     const stopped = stateRef.current.stopRequested;
-    setState((current) => {
-      const next = { ...current, running: false, stopRequested: false };
-      publishNow(next);
-      return next;
-    });
+    const finalState = { ...stateRef.current, running: false, stopRequested: false, steps: working };
+    setState(finalState);
+    publishNow(finalState);
+    dispatchTestsRunCompleted(finalState.steps, stopped);
     onMessage(stopped ? "Plan detenido. La solicitud en curso pudo terminar antes de pausar la secuencia." : "Plan ejecutado. Cada paso aprobado requiere comunicacion OK y validacion OK.");
   }
 
