@@ -1,13 +1,14 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v7";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v8";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v7";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v8";
 const maxItems = 200;
 let capturePausedUntil = 0;
 let pendingRun = null;
 let pendingPoll = null;
+let startLockedUntilCapture = false;
 
 function safeJsonParse(value, fallback) {
   try {
@@ -40,10 +41,32 @@ function clearPendingPoll() {
   pendingPoll = null;
 }
 
+function findStartButton() {
+  const tests = document.querySelector(".testsNative");
+  const buttons = Array.from(tests?.querySelectorAll("button") ?? []);
+  return buttons.find((button) => text(button).toLowerCase().includes("iniciar prueba")) ?? null;
+}
+
+function setStartButtonLocked(locked) {
+  const button = findStartButton();
+  if (!button) return;
+  if (locked) {
+    button.disabled = true;
+    button.dataset.testsHistoryLock = "1";
+    button.title = "Registrando historial de pruebas...";
+  } else if (button.dataset.testsHistoryLock === "1") {
+    button.disabled = false;
+    delete button.dataset.testsHistoryLock;
+    button.removeAttribute("title");
+  }
+}
+
 function clearHistory() {
-  capturePausedUntil = Date.now() + 1200;
+  capturePausedUntil = Date.now() + 250;
   pendingRun = null;
+  startLockedUntilCapture = false;
   clearPendingPoll();
+  setStartButtonLocked(false);
   writeHistory([]);
   window.setTimeout(() => writeHistory([]), 150);
   window.setTimeout(() => writeHistory([]), 700);
@@ -182,9 +205,7 @@ function appendRunHistory(rows, runId) {
 }
 
 function isRunButtonReady() {
-  const tests = document.querySelector(".testsNative");
-  const buttons = Array.from(tests?.querySelectorAll("button") ?? []);
-  const startButton = buttons.find((button) => text(button).toLowerCase().includes("iniciar prueba"));
+  const startButton = findStartButton();
   return Boolean(startButton && !startButton.disabled);
 }
 
@@ -196,10 +217,11 @@ function finishPendingRun(reason = "poll") {
   const statuses = rows.map(rowStatus);
   const finalRows = finalRowsFrom(rows);
   const hasExecuting = statuses.includes("Ejecutando");
-  const ready = isRunButtonReady();
+  const ready = isRunButtonReady() || startLockedUntilCapture;
   const expired = Date.now() > run.deadline;
   const completeRunVisible = rows.length > 0 && finalRows.length === rows.length;
-  const canFinish = expired || (ready && !hasExecuting && completeRunVisible) || (reason === "manual-flush" && finalRows.length > 0);
+  const stoppedWithFinalRows = Boolean(run.stopRequested && ready && !hasExecuting && finalRows.length > 0);
+  const canFinish = expired || (ready && !hasExecuting && completeRunVisible) || stoppedWithFinalRows || (reason === "manual-flush" && finalRows.length > 0);
 
   window.__jwSimpleTestsDomHistoryLastCaptureAttempt = {
     runId: run.id,
@@ -210,7 +232,9 @@ function finishPendingRun(reason = "poll") {
     rows: rows.length,
     finalRows: finalRows.length,
     statuses,
-    expired
+    expired,
+    stopRequested: Boolean(run.stopRequested),
+    startLockedUntilCapture
   };
 
   if (!canFinish) return false;
@@ -222,26 +246,33 @@ function finishPendingRun(reason = "poll") {
     rows: rows.length,
     finalRows: finalRows.length,
     expired,
-    reason
+    reason,
+    stopRequested: Boolean(run.stopRequested)
   };
   pendingRun = null;
+  startLockedUntilCapture = false;
   clearPendingPoll();
+  setStartButtonLocked(false);
   return true;
 }
 
 function scheduleRunCompletionPoll() {
   if (!pendingRun) return;
   clearPendingPoll();
+  setStartButtonLocked(true);
 
   pendingPoll = window.setTimeout(() => {
     pendingPoll = null;
     if (!finishPendingRun("poll")) scheduleRunCompletionPoll();
-  }, 180);
+  }, 120);
 }
 
 function startRunCapture() {
-  if (Date.now() < capturePausedUntil) return;
-  if (pendingRun && !finishPendingRun("before-next-run")) {
+  capturePausedUntil = 0;
+  if (!startLockedUntilCapture) startLockedUntilCapture = true;
+  setStartButtonLocked(true);
+
+  if (pendingRun) {
     scheduleRunCompletionPoll();
     return;
   }
@@ -249,7 +280,8 @@ function startRunCapture() {
   pendingRun = {
     id: `run-${Date.now()}-${Math.round(Math.random() * 100000)}`,
     startedAt: Date.now(),
-    deadline: Date.now() + 60000
+    deadline: Date.now() + 60000,
+    stopRequested: false
   };
   scheduleRunCompletionPoll();
 }
@@ -267,14 +299,23 @@ function maybeHandleButton(event) {
     clearHistory();
     return;
   }
+  if (label.includes("detener") && pendingRun) {
+    pendingRun.stopRequested = true;
+    setStartButtonLocked(true);
+    scheduleRunCompletionPoll();
+    return;
+  }
   if (label.includes("iniciar prueba")) {
-    if (pendingRun && !finishPendingRun("before-next-run")) {
+    if (startLockedUntilCapture || pendingRun) {
       event.preventDefault?.();
       event.stopImmediatePropagation?.();
+      setStartButtonLocked(true);
       scheduleRunCompletionPoll();
       return;
     }
+    startLockedUntilCapture = true;
     window.setTimeout(startRunCapture, 80);
+    window.setTimeout(() => setStartButtonLocked(true), 0);
   }
 }
 
@@ -289,7 +330,8 @@ function buildDebugApi() {
     flushPending: () => finishPendingRun("manual-flush"),
     lastCapture: () => window.__jwSimpleTestsDomHistoryLastCapture ?? null,
     lastAttempt: () => window.__jwSimpleTestsDomHistoryLastCaptureAttempt ?? null,
-    pausedMs: () => Math.max(0, capturePausedUntil - Date.now())
+    pausedMs: () => Math.max(0, capturePausedUntil - Date.now()),
+    locked: () => startLockedUntilCapture
   };
 }
 
@@ -299,7 +341,8 @@ function install() {
   document.addEventListener("click", maybeHandleButton, true);
   window.setInterval(() => {
     window.__jwSimpleTestsDomHistoryDebug = buildDebugApi();
-  }, 1000);
+    if (startLockedUntilCapture || pendingRun) setStartButtonLocked(true);
+  }, 80);
 }
 
 if (!window[installKey]) {
