@@ -1,11 +1,12 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleSessionTestsSummaryBridgeInstalled";
+const installKey = "__jwSimpleSessionTestsSummaryBridgeInstalled_v2";
 const historyStorageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
 const summarySelector = "[data-tests-history-summary-bridge]";
 let lastSignature = "";
 let renderQueued = false;
+let clearPausedUntil = 0;
 
 function safeJsonParse(value, fallback) {
   try {
@@ -18,6 +19,21 @@ function safeJsonParse(value, fallback) {
 function readHistory() {
   const parsed = safeJsonParse(window.localStorage?.getItem(historyStorageKey), []);
   return Array.isArray(parsed) ? parsed : [];
+}
+
+function writeHistory(items) {
+  const clean = Array.isArray(items) ? items : [];
+  window.localStorage?.setItem(historyStorageKey, JSON.stringify(clean));
+  window.dispatchEvent(new CustomEvent("jw-simple-tests-history-updated", { detail: clean }));
+}
+
+function clearHistory(reason = "manual") {
+  clearPausedUntil = Date.now() + 1500;
+  writeHistory([]);
+  lastSignature = "";
+  scheduleRender(true);
+  window.__jwSimpleTestsHistoryDebug = buildDebugApi();
+  console.debug?.(`[JW Tests History] historial limpiado (${reason}).`);
 }
 
 function fmtTime(value) {
@@ -97,6 +113,33 @@ function scheduleRender(force = false) {
   });
 }
 
+function buildDebugApi() {
+  return {
+    storageKey: historyStorageKey,
+    get: readHistory,
+    count: () => readHistory().length,
+    summary: () => summarize(readHistory()),
+    clear: () => clearHistory("debug-api"),
+    lastSignature: () => lastSignature,
+    pausedMs: () => Math.max(0, clearPausedUntil - Date.now())
+  };
+}
+
+function buttonText(target) {
+  const button = target?.closest?.("button");
+  return button ? String(button.textContent || "").replace(/\s+/g, " ").trim().toLowerCase() : "";
+}
+
+function maybeClearFromButton(event) {
+  const label = buttonText(event.target);
+  if (!label) return;
+  if (label.includes("nueva sesión") || label === "nuevo" || label.includes("limpiar registro")) {
+    clearHistory(`button:${label}`);
+    window.setTimeout(() => clearHistory(`button:${label}:late`), 250);
+    window.setTimeout(() => scheduleRender(true), 800);
+  }
+}
+
 function installStyles() {
   if (document.querySelector("style[data-tests-history-summary-bridge]")) return;
   const style = document.createElement("style");
@@ -127,12 +170,17 @@ function installStyles() {
 
 function install() {
   installStyles();
+  window.__jwSimpleTestsHistoryDebug = buildDebugApi();
   scheduleRender(true);
 
   const observer = new MutationObserver(() => scheduleRender(false));
   observer.observe(document.body, { childList: true, subtree: true });
 
-  window.addEventListener("jw-simple-tests-history-updated", () => scheduleRender(true));
+  document.addEventListener("click", maybeClearFromButton, true);
+  window.addEventListener("jw-simple-tests-history-updated", () => {
+    window.__jwSimpleTestsHistoryDebug = buildDebugApi();
+    scheduleRender(true);
+  });
   window.addEventListener("storage", (event) => {
     if (event.key === historyStorageKey) scheduleRender(true);
   });
