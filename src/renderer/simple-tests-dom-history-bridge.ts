@@ -1,15 +1,13 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v10";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v11";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v10";
-const lockStyleId = "jw-simple-tests-history-lock-style";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v11";
 const maxItems = 200;
 let capturePausedUntil = 0;
 let pendingRun = null;
 let pendingPoll = null;
-let startLockedUntilCapture = false;
 
 function safeJsonParse(value, fallback) {
   try {
@@ -42,57 +40,10 @@ function clearPendingPoll() {
   pendingPoll = null;
 }
 
-function ensureLockStyle() {
-  if (document.getElementById(lockStyleId)) return;
-  const style = document.createElement("style");
-  style.id = lockStyleId;
-  style.textContent = `
-    .testsNative button[data-tests-history-lock="1"] {
-      pointer-events: none !important;
-      opacity: 0.58 !important;
-      filter: saturate(0.75) brightness(0.9) !important;
-      cursor: wait !important;
-    }
-  `;
-  document.head?.appendChild(style);
-}
-
-function findStartButton() {
-  const tests = document.querySelector(".testsNative");
-  const buttons = Array.from(tests?.querySelectorAll("button") ?? []);
-  return buttons.find((button) => text(button).toLowerCase().includes("iniciar prueba")) ?? null;
-}
-
-function markStartButtonLockVisual(locked) {
-  ensureLockStyle();
-  const button = findStartButton();
-  if (!button) return;
-  if (locked) {
-    button.dataset.testsHistoryLock = "1";
-    button.title = "Registrando historial de pruebas...";
-  } else if (button.dataset.testsHistoryLock === "1") {
-    delete button.dataset.testsHistoryLock;
-    button.removeAttribute("title");
-  }
-}
-
-function setStartButtonLocked(locked) {
-  const button = findStartButton();
-  if (!button) return;
-  markStartButtonLockVisual(locked);
-  if (locked) {
-    button.disabled = true;
-  } else if (button.dataset.testsHistoryLock !== "1") {
-    button.disabled = false;
-  }
-}
-
 function clearHistory() {
   capturePausedUntil = Date.now() + 250;
   pendingRun = null;
-  startLockedUntilCapture = false;
   clearPendingPoll();
-  setStartButtonLocked(false);
   writeHistory([]);
   window.setTimeout(() => writeHistory([]), 150);
   window.setTimeout(() => writeHistory([]), 700);
@@ -230,11 +181,6 @@ function appendRunHistory(rows, runId) {
   return additions.length;
 }
 
-function isRunButtonReady() {
-  const startButton = findStartButton();
-  return Boolean(startButton && !startButton.disabled);
-}
-
 function finishPendingRun(reason = "poll") {
   if (!pendingRun || Date.now() < capturePausedUntil) return false;
 
@@ -243,24 +189,22 @@ function finishPendingRun(reason = "poll") {
   const statuses = rows.map(rowStatus);
   const finalRows = finalRowsFrom(rows);
   const hasExecuting = statuses.includes("Ejecutando");
-  const ready = isRunButtonReady() || startLockedUntilCapture;
   const expired = Date.now() > run.deadline;
   const completeRunVisible = rows.length > 0 && finalRows.length === rows.length;
-  const stoppedWithFinalRows = Boolean(run.stopRequested && ready && !hasExecuting && finalRows.length > 0);
-  const canFinish = expired || (ready && !hasExecuting && completeRunVisible) || stoppedWithFinalRows || (reason === "manual-flush" && finalRows.length > 0);
+  const stoppedWithFinalRows = Boolean(run.stopRequested && !hasExecuting && finalRows.length > 0);
+  const manualFlush = reason === "manual-flush" && finalRows.length > 0;
+  const canFinish = expired || completeRunVisible || stoppedWithFinalRows || manualFlush;
 
   window.__jwSimpleTestsDomHistoryLastCaptureAttempt = {
     runId: run.id,
     reason,
     canFinish,
-    ready,
     hasExecuting,
     rows: rows.length,
     finalRows: finalRows.length,
     statuses,
     expired,
-    stopRequested: Boolean(run.stopRequested),
-    startLockedUntilCapture
+    stopRequested: Boolean(run.stopRequested)
   };
 
   if (!canFinish) return false;
@@ -276,16 +220,13 @@ function finishPendingRun(reason = "poll") {
     stopRequested: Boolean(run.stopRequested)
   };
   pendingRun = null;
-  startLockedUntilCapture = false;
   clearPendingPoll();
-  setStartButtonLocked(false);
   return true;
 }
 
 function scheduleRunCompletionPoll() {
   if (!pendingRun) return;
   clearPendingPoll();
-  setStartButtonLocked(true);
 
   pendingPoll = window.setTimeout(() => {
     pendingPoll = null;
@@ -294,11 +235,10 @@ function scheduleRunCompletionPoll() {
 }
 
 function startRunCapture() {
-  capturePausedUntil = 0;
-  if (!startLockedUntilCapture) startLockedUntilCapture = true;
-  setStartButtonLocked(true);
+  if (Date.now() < capturePausedUntil) return;
 
   if (pendingRun) {
+    finishPendingRun("before-next-run");
     scheduleRunCompletionPoll();
     return;
   }
@@ -327,22 +267,13 @@ function maybeHandleButton(event) {
   }
   if (label.includes("detener") && pendingRun) {
     pendingRun.stopRequested = true;
-    window.setTimeout(() => setStartButtonLocked(true), 0);
     scheduleRunCompletionPoll();
     return;
   }
   if (label.includes("iniciar prueba")) {
-    if (startLockedUntilCapture || pendingRun) {
-      event.preventDefault?.();
-      event.stopImmediatePropagation?.();
-      setStartButtonLocked(true);
-      scheduleRunCompletionPoll();
-      return;
-    }
-    startLockedUntilCapture = true;
-    markStartButtonLockVisual(true);
-    window.setTimeout(startRunCapture, 80);
-    window.setTimeout(() => setStartButtonLocked(true), 0);
+    // Do not mutate or disable the React button from the DOM bridge. The native
+    // TestsView owns execution state; this bridge only observes the completed log.
+    window.setTimeout(startRunCapture, 0);
   }
 }
 
@@ -358,23 +289,17 @@ function buildDebugApi() {
     lastCapture: () => window.__jwSimpleTestsDomHistoryLastCapture ?? null,
     lastAttempt: () => window.__jwSimpleTestsDomHistoryLastCaptureAttempt ?? null,
     pausedMs: () => Math.max(0, capturePausedUntil - Date.now()),
-    locked: () => startLockedUntilCapture
+    locked: () => false
   };
 }
 
 function install() {
-  ensureLockStyle();
   window.__jwSimpleTestsDomHistoryDebug = buildDebugApi();
   window.__jwSimpleTestsHistoryDebug = window.__jwSimpleTestsHistoryDebug || buildDebugApi();
   document.addEventListener("click", maybeHandleButton, true);
-  const observer = new MutationObserver(() => {
-    if (startLockedUntilCapture || pendingRun) setStartButtonLocked(true);
-  });
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "data-tests-history-lock"] });
   window.setInterval(() => {
     window.__jwSimpleTestsDomHistoryDebug = buildDebugApi();
-    if (startLockedUntilCapture || pendingRun) setStartButtonLocked(true);
-  }, 80);
+  }, 1000);
 }
 
 if (!window[installKey]) {
