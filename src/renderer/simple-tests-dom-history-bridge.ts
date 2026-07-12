@@ -1,10 +1,9 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v3";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v4";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v3";
-const patchedSessionsKey = "__jwSimpleTestsDomHistorySessionsPatched_v3";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v4";
 const maxItems = 200;
 let capturePausedUntil = 0;
 
@@ -161,45 +160,6 @@ function captureVisibleTestsLog() {
   if (additions.length) writeHistory([...additions.reverse(), ...current]);
 }
 
-function patchSessionsApi() {
-  const sessions = window.jwModbus?.sessions;
-  if (!sessions || sessions[patchedSessionsKey]) return Boolean(sessions?.[patchedSessionsKey]);
-
-  if (typeof sessions.saveFile === "function") {
-    const originalSave = sessions.saveFile.bind(sessions);
-    sessions.saveFile = async (payload) => {
-      captureVisibleTestsLog();
-      const history = readHistory();
-      const nextPayload = payload && typeof payload === "object"
-        ? {
-            ...payload,
-            data: payload.data && typeof payload.data === "object"
-              ? {
-                  ...payload.data,
-                  testsExecutionHistory: history,
-                  testsExecutionHistoryUpdatedAt: new Date().toISOString()
-                }
-              : payload.data
-          }
-        : payload;
-      return originalSave(nextPayload);
-    };
-  }
-
-  if (typeof sessions.openFile === "function") {
-    const originalOpen = sessions.openFile.bind(sessions);
-    sessions.openFile = async (...args) => {
-      const result = await originalOpen(...args);
-      const data = result?.ok ? result.value?.data : null;
-      if (Array.isArray(data?.testsExecutionHistory)) writeHistory(data.testsExecutionHistory);
-      return result;
-    };
-  }
-
-  sessions[patchedSessionsKey] = true;
-  return true;
-}
-
 function maybeClearFromButton(event) {
   const button = event.target?.closest?.("button");
   if (!button) return;
@@ -209,18 +169,28 @@ function maybeClearFromButton(event) {
   }
 }
 
+function buildDebugApi() {
+  return {
+    storageKey,
+    get: readHistory,
+    count: () => readHistory().length,
+    clear: () => clearHistory(),
+    capture: () => captureVisibleTestsLog(),
+    pausedMs: () => Math.max(0, capturePausedUntil - Date.now())
+  };
+}
+
 function install() {
+  window.__jwSimpleTestsDomHistoryDebug = buildDebugApi();
+  window.__jwSimpleTestsHistoryDebug = window.__jwSimpleTestsHistoryDebug || buildDebugApi();
   captureVisibleTestsLog();
-  patchSessionsApi();
-  const observer = new MutationObserver(() => {
-    captureVisibleTestsLog();
-    patchSessionsApi();
-  });
+
+  const observer = new MutationObserver(() => captureVisibleTestsLog());
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   document.addEventListener("click", maybeClearFromButton, true);
   window.setInterval(() => {
+    window.__jwSimpleTestsDomHistoryDebug = buildDebugApi();
     captureVisibleTestsLog();
-    patchSessionsApi();
   }, 1000);
 }
 
