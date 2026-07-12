@@ -1,9 +1,9 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v5";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v6";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v5";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v6";
 const maxItems = 200;
 let capturePausedUntil = 0;
 let pendingRun = null;
@@ -35,11 +35,15 @@ function writeHistory(items) {
   window.dispatchEvent(new CustomEvent("jw-simple-tests-history-updated", { detail: clean }));
 }
 
+function clearPendingPoll() {
+  if (pendingPoll != null) window.clearTimeout(pendingPoll);
+  pendingPoll = null;
+}
+
 function clearHistory() {
   capturePausedUntil = Date.now() + 1200;
   pendingRun = null;
-  if (pendingPoll != null) window.clearTimeout(pendingPoll);
-  pendingPoll = null;
+  clearPendingPoll();
   writeHistory([]);
   window.setTimeout(() => writeHistory([]), 150);
   window.setTimeout(() => writeHistory([]), 700);
@@ -96,6 +100,15 @@ function visibleRunRows() {
   const tests = document.querySelector(".testsNative");
   if (!tests) return [];
   return Array.from(tests.querySelectorAll(".testsLogCard tbody tr"));
+}
+
+function rowStatus(row) {
+  const cells = row.querySelectorAll("td");
+  return statusFromText(text(cells[6]));
+}
+
+function finalRowsFrom(rows) {
+  return rows.filter((row) => !["Pendiente", "Ejecutando"].includes(rowStatus(row)));
 }
 
 function buildItem(row, runId) {
@@ -175,34 +188,52 @@ function isRunButtonReady() {
   return Boolean(startButton && !startButton.disabled);
 }
 
+function finishPendingRun(reason = "poll") {
+  if (!pendingRun || Date.now() < capturePausedUntil) return false;
+
+  const run = pendingRun;
+  const rows = visibleRunRows();
+  const statuses = rows.map(rowStatus);
+  const finalRows = finalRowsFrom(rows);
+  const hasExecuting = statuses.includes("Ejecutando");
+  const ready = isRunButtonReady();
+  const expired = Date.now() > run.deadline;
+  const canFinish = reason === "before-next-run" || expired || (ready && !hasExecuting && finalRows.length > 0);
+
+  if (!canFinish) return false;
+
+  const captured = appendRunHistory(finalRows, run.id);
+  window.__jwSimpleTestsDomHistoryLastCapture = {
+    runId: run.id,
+    captured,
+    rows: rows.length,
+    finalRows: finalRows.length,
+    expired,
+    reason
+  };
+  pendingRun = null;
+  clearPendingPoll();
+  return true;
+}
+
 function scheduleRunCompletionPoll() {
   if (!pendingRun) return;
-  if (pendingPoll != null) window.clearTimeout(pendingPoll);
+  clearPendingPoll();
 
   pendingPoll = window.setTimeout(() => {
     pendingPoll = null;
-    if (!pendingRun || Date.now() < capturePausedUntil) return;
-
-    const rows = visibleRunRows();
-    const statuses = rows.map((row) => statusFromText(text(row.querySelectorAll("td")[6])));
-    const finalRows = rows.filter((_, index) => !["Pendiente", "Ejecutando"].includes(statuses[index]));
-    const hasExecuting = statuses.includes("Ejecutando");
-    const ready = isRunButtonReady();
-    const expired = Date.now() > pendingRun.deadline;
-
-    if ((ready && !hasExecuting && finalRows.length > 0) || expired) {
-      const captured = appendRunHistory(finalRows, pendingRun.id);
-      window.__jwSimpleTestsDomHistoryLastCapture = { runId: pendingRun.id, captured, rows: rows.length, finalRows: finalRows.length, expired };
-      pendingRun = null;
-      return;
-    }
-
-    scheduleRunCompletionPoll();
+    if (!finishPendingRun("poll")) scheduleRunCompletionPoll();
   }, 180);
 }
 
 function startRunCapture() {
   if (Date.now() < capturePausedUntil) return;
+
+  // Rapid, valid clicks can start the next run before the previous 180 ms poll
+  // had a chance to persist it. Capture the completed previous run first so no
+  // full execution is dropped.
+  finishPendingRun("before-next-run");
+
   pendingRun = {
     id: `run-${Date.now()}-${Math.round(Math.random() * 100000)}`,
     startedAt: Date.now(),
@@ -213,13 +244,7 @@ function startRunCapture() {
 
 function manualCapture() {
   const runId = `manual-${Date.now()}-${Math.round(Math.random() * 100000)}`;
-  const rows = visibleRunRows();
-  const finalRows = rows.filter((row) => {
-    const cells = row.querySelectorAll("td");
-    const status = statusFromText(text(cells[6]));
-    return !["Pendiente", "Ejecutando"].includes(status);
-  });
-  return appendRunHistory(finalRows, runId);
+  return appendRunHistory(finalRowsFrom(visibleRunRows()), runId);
 }
 
 function maybeHandleButton(event) {
@@ -243,6 +268,7 @@ function buildDebugApi() {
     clear: () => clearHistory(),
     capture: () => manualCapture(),
     pending: () => pendingRun,
+    flushPending: () => finishPendingRun("manual-flush"),
     lastCapture: () => window.__jwSimpleTestsDomHistoryLastCapture ?? null,
     pausedMs: () => Math.max(0, capturePausedUntil - Date.now())
   };
