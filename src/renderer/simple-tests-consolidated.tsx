@@ -793,7 +793,8 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   function publishNow(snapshot: TestsState) {
     if (publishTimerRef.current != null) window.clearTimeout(publishTimerRef.current);
     publishTimerRef.current = null;
-    onRuntimeStateChangeRef.current(exportRuntimeState(snapshot));
+    const runtime = exportRuntimeState(snapshot);
+    window.setTimeout(() => onRuntimeStateChangeRef.current(runtime), 0);
   }
 
   useEffect(() => {
