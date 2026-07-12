@@ -1,9 +1,9 @@
 // @ts-nocheck
 export {};
 
-const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v9";
+const installKey = "__jwSimpleTestsDomHistoryBridgeInstalled_v10";
 const storageKey = "jw-modbus-tool.simple.tests-execution-history.v1";
-const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v9";
+const seenKey = "__jwSimpleTestsDomHistorySeenKeys_v10";
 const lockStyleId = "jw-simple-tests-history-lock-style";
 const maxItems = 200;
 let capturePausedUntil = 0;
@@ -63,18 +63,27 @@ function findStartButton() {
   return buttons.find((button) => text(button).toLowerCase().includes("iniciar prueba")) ?? null;
 }
 
-function setStartButtonLocked(locked) {
+function markStartButtonLockVisual(locked) {
   ensureLockStyle();
   const button = findStartButton();
   if (!button) return;
   if (locked) {
     button.dataset.testsHistoryLock = "1";
-    button.disabled = true;
     button.title = "Registrando historial de pruebas...";
   } else if (button.dataset.testsHistoryLock === "1") {
     delete button.dataset.testsHistoryLock;
-    button.disabled = false;
     button.removeAttribute("title");
+  }
+}
+
+function setStartButtonLocked(locked) {
+  const button = findStartButton();
+  if (!button) return;
+  markStartButtonLockVisual(locked);
+  if (locked) {
+    button.disabled = true;
+  } else if (button.dataset.testsHistoryLock !== "1") {
+    button.disabled = false;
   }
 }
 
@@ -318,7 +327,7 @@ function maybeHandleButton(event) {
   }
   if (label.includes("detener") && pendingRun) {
     pendingRun.stopRequested = true;
-    setStartButtonLocked(true);
+    window.setTimeout(() => setStartButtonLocked(true), 0);
     scheduleRunCompletionPoll();
     return;
   }
@@ -331,8 +340,9 @@ function maybeHandleButton(event) {
       return;
     }
     startLockedUntilCapture = true;
-    setStartButtonLocked(true);
+    markStartButtonLockVisual(true);
     window.setTimeout(startRunCapture, 80);
+    window.setTimeout(() => setStartButtonLocked(true), 0);
   }
 }
 
