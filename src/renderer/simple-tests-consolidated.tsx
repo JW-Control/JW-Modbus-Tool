@@ -80,6 +80,15 @@ interface Scenario {
   steps?: StoredStep[];
 }
 
+interface CumulativeStats {
+  executed: number;
+  passed: number;
+  failed: number;
+  timeouts: number;
+  responsive: number;
+  elapsedMsTotal: number;
+}
+
 interface TestsState {
   selectedScenario: string;
   simulatorState: SimulatorState;
@@ -91,6 +100,7 @@ interface TestsState {
   managingScenarios: boolean;
   detailIndex: number | null;
   history: TestStep[];
+  cumulativeStats?: CumulativeStats;
 }
 
 export interface TestsRuntimeState {
@@ -885,17 +895,27 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
 
   const summary = useMemo(() => {
     const active = state.steps.filter((step) => step.enabled);
-    const executed = active.filter((step) => isFinalResult(step.result));
-    const responsive = executed.filter((step) => isResponsiveResult(step.result) && step.elapsedMs != null);
-    const passed = executed.filter((step) => step.result === "Aprobado").length;
-    const failed = executed.filter((step) => step.result !== "Aprobado").length;
-    const timeouts = executed.filter((step) => step.result === "Timeout").length;
-    const otherFailed = Math.max(0, failed - timeouts);
     const running = active.filter((step) => step.result === "Ejecutando").length;
-    const avg = responsive.length ? Math.round(responsive.reduce((sum, step) => sum + (step.elapsedMs ?? 0), 0) / responsive.length) : null;
-    const rate = executed.length ? Math.round((passed / executed.length) * 100) : 0;
-    return { active: active.length, executed: executed.length, responsive: responsive.length, passed, failed, timeouts, otherFailed, running, avg, rate };
-  }, [state.steps]);
+
+    let cumulative = state.cumulativeStats;
+    if (!cumulative) {
+      const hist = state.history || [];
+      const executed = hist.length;
+      const passed = hist.filter(h => h.result === "Aprobado").length;
+      const timeouts = hist.filter(h => h.result === "Timeout").length;
+      const failed = executed - passed;
+      const responsive = hist.filter(h => h.elapsedMs != null).length;
+      const elapsedMsTotal = hist.reduce((sum, h) => sum + (h.elapsedMs || 0), 0);
+      cumulative = { executed, passed, failed, timeouts, responsive, elapsedMsTotal };
+    }
+
+    const { executed, passed, failed, timeouts, responsive, elapsedMsTotal } = cumulative;
+    const otherFailed = Math.max(0, failed - timeouts);
+    const avg = responsive ? Math.round(elapsedMsTotal / responsive) : null;
+    const rate = executed ? Math.round((passed / executed) * 100) : 0;
+    
+    return { active: active.length, executed, responsive, passed, failed, timeouts, otherFailed, running, avg, rate };
+  }, [state.steps, state.cumulativeStats, state.history]);
 
   function patchStep(index: number, patch: Partial<TestStep>) {
     setState((current) => ({
@@ -952,7 +972,14 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
 
   async function runPlan(loop = false) {
     if (stateRef.current.running) return;
-    setState((current) => ({ ...current, running: true, stopRequested: false, looping: loop, detailIndex: null }));
+    setState((current) => ({ 
+      ...current, 
+      running: true, 
+      stopRequested: false, 
+      looping: loop, 
+      detailIndex: null,
+      cumulativeStats: { executed: 0, passed: 0, failed: 0, timeouts: 0, responsive: 0, elapsedMsTotal: 0 }
+    }));
 
     do {
       let working = stateRef.current.steps.map(resetExecution);
@@ -980,7 +1007,25 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
           const historyId = crypto.randomUUID();
           const executedWithId = { ...executed, historyId };
           working = working.map((item, itemIndex) => itemIndex === index ? executedWithId : item);
-          setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? executedWithId : item), history: [...(current.history || []), executedWithId].slice(-100) }));
+          setState((current) => {
+            const c = current.cumulativeStats || { executed: 0, passed: 0, failed: 0, timeouts: 0, responsive: 0, elapsedMsTotal: 0 };
+            const isPass = executed.result === "Aprobado";
+            const isTimeout = executed.result === "Timeout";
+            const hasElapsed = executed.elapsedMs != null;
+            return {
+              ...current, 
+              steps: current.steps.map((item, itemIndex) => itemIndex === index ? executedWithId : item), 
+              history: [...(current.history || []), executedWithId].slice(-100),
+              cumulativeStats: {
+                executed: c.executed + 1,
+                passed: c.passed + (isPass ? 1 : 0),
+                failed: c.failed + (isPass ? 0 : 1),
+                timeouts: c.timeouts + (isTimeout ? 1 : 0),
+                responsive: c.responsive + (hasElapsed ? 1 : 0),
+                elapsedMsTotal: c.elapsedMsTotal + (executed.elapsedMs || 0)
+              }
+            };
+          });
         } catch (error) {
           const message = String(error instanceof Error ? error.message : error || "Error de comunicacion.");
           const result = classifyStepErrorResult(message);
@@ -996,7 +1041,24 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
             historyId
           };
           working = working.map((item, itemIndex) => itemIndex === index ? failed : item);
-          setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item), history: [...(current.history || []), failed].slice(-100) }));
+          setState((current) => {
+            const c = current.cumulativeStats || { executed: 0, passed: 0, failed: 0, timeouts: 0, responsive: 0, elapsedMsTotal: 0 };
+            const isTimeout = result === "Timeout";
+            const hasElapsed = failed.elapsedMs != null;
+            return {
+              ...current, 
+              steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item), 
+              history: [...(current.history || []), failed].slice(-100),
+              cumulativeStats: {
+                executed: c.executed + 1,
+                passed: c.passed,
+                failed: c.failed + 1,
+                timeouts: c.timeouts + (isTimeout ? 1 : 0),
+                responsive: c.responsive + (hasElapsed ? 1 : 0),
+                elapsedMsTotal: c.elapsedMsTotal + (failed.elapsedMs || 0)
+              }
+            };
+          });
         }
         
         await new Promise(r => setTimeout(r, 60));
@@ -1060,7 +1122,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
         <KpiRingCard title="Tasa de exito" value={`${summary.rate}%`} sub={summary.executed ? `Ultima ejecucion: ${summary.passed}/${summary.executed} aprobados` : "Sin ejecucion"} tone="success" percent={summary.rate || 0} />
         <KpiCard title="Latencia promedio" value={summary.avg == null ? "-" : `${summary.avg} ms`} sub={summary.responsive ? `Ultima ejecucion: ${summary.responsive} respuesta(s)${summary.timeouts ? `; ${summary.timeouts} timeout(s) excluidos` : ""}` : summary.running ? "Esperando respuesta" : "Sin datos todavia"} tone="neutral" icon={Activity} />
         <KpiCard title="Errores" value={String(summary.failed)} sub={summary.failed ? `${summary.timeouts} timeout(s), ${summary.otherFailed} otro(s)` : "Ultima ejecucion"} tone={summary.failed > 0 ? "danger" : "neutral"} icon={AlertTriangle} />
-        <KpiRingCard title="Pasos completados" value={`${summary.executed}/${summary.active}`} sub={summary.running ? `${summary.running} en curso` : "Ultima ejecucion"} tone="steps" percent={summary.active > 0 ? (summary.executed / summary.active) * 100 : 0} />
+        <KpiRingCard title="Pasos completados" value={state.looping ? `${summary.executed}` : `${summary.executed}/${summary.active}`} sub={summary.running ? (state.looping ? `Bucle continuo en curso` : `${summary.running} en curso`) : "Ultima ejecucion"} tone="steps" percent={state.looping ? (summary.active > 0 ? ((summary.executed % summary.active) / summary.active) * 100 : 0) : (summary.active > 0 ? (summary.executed / summary.active) * 100 : 0)} />
       </div>
 
       <section className="card testsLogCard">
