@@ -34,6 +34,7 @@ interface TestStep {
   rows: StepDetailRow[];
   values: string;
   at: string;
+  historyId?: string;
 }
 
 interface ExecutableStepCommand {
@@ -86,6 +87,7 @@ interface TestsState {
   scenarios: Record<string, Scenario>;
   running: boolean;
   stopRequested: boolean;
+  looping?: boolean;
   managingScenarios: boolean;
   detailIndex: number | null;
   history: TestStep[];
@@ -948,59 +950,67 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
     onMessage("Registro de ejecucion exportado a CSV.");
   }
 
-  async function runPlan() {
+  async function runPlan(loop = false) {
     if (stateRef.current.running) return;
-    let working = stateRef.current.steps.map(resetExecution);
-    setState((current) => ({ ...current, running: true, stopRequested: false, detailIndex: null, steps: working }));
+    setState((current) => ({ ...current, running: true, stopRequested: false, looping: loop, detailIndex: null }));
 
-    for (let index = 0; index < working.length; index += 1) {
-      if (stateRef.current.stopRequested) break;
-      const step = working[index];
-      if (!step?.enabled) continue;
+    do {
+      let working = stateRef.current.steps.map(resetExecution);
+      setState((current) => ({ ...current, steps: working }));
 
-      const runningStep: TestStep = {
-        ...step,
-        result: "Ejecutando",
-        elapsedMs: null,
-        detail: "Ejecutando solicitud Modbus...",
-        rows: [],
-        values: "",
-        at: new Date().toLocaleTimeString("es-PE", { hour12: false })
-      };
-      working = working.map((item, itemIndex) => itemIndex === index ? runningStep : item);
-      setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? runningStep : item) }));
+      for (let index = 0; index < working.length; index += 1) {
+        if (stateRef.current.stopRequested) break;
+        const step = working[index];
+        if (!step?.enabled) continue;
 
-      try {
-        const executed = await executeStep(step);
-        working = working.map((item, itemIndex) => itemIndex === index ? executed : item);
-        setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? executed : item), history: [...(current.history || []), executed].slice(-100) }));
-      } catch (error) {
-        const message = String(error instanceof Error ? error.message : error || "Error de comunicacion.");
-        const result = classifyStepErrorResult(message);
-        const failed: TestStep = {
+        const runningStep: TestStep = {
           ...step,
-          result,
-          elapsedMs: result === "Timeout" ? numeric(step.timeoutMs, 1000) : null,
-          detail: message,
+          result: "Ejecutando",
+          elapsedMs: null,
+          detail: "Ejecutando solicitud Modbus...",
           rows: [],
           values: "",
           at: new Date().toLocaleTimeString("es-PE", { hour12: false })
         };
-        working = working.map((item, itemIndex) => itemIndex === index ? failed : item);
-        setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item), history: [...(current.history || []), failed].slice(-100) }));
+        working = working.map((item, itemIndex) => itemIndex === index ? runningStep : item);
+        setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? runningStep : item) }));
+
+        try {
+          const executed = await executeStep(step);
+          const historyId = crypto.randomUUID();
+          const executedWithId = { ...executed, historyId };
+          working = working.map((item, itemIndex) => itemIndex === index ? executedWithId : item);
+          setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? executedWithId : item), history: [...(current.history || []), executedWithId].slice(-100) }));
+        } catch (error) {
+          const message = String(error instanceof Error ? error.message : error || "Error de comunicacion.");
+          const result = classifyStepErrorResult(message);
+          const historyId = crypto.randomUUID();
+          const failed: TestStep = {
+            ...step,
+            result,
+            elapsedMs: result === "Timeout" ? numeric(step.timeoutMs, 1000) : null,
+            detail: message,
+            rows: [],
+            values: "",
+            at: new Date().toLocaleTimeString("es-PE", { hour12: false }),
+            historyId
+          };
+          working = working.map((item, itemIndex) => itemIndex === index ? failed : item);
+          setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item), history: [...(current.history || []), failed].slice(-100) }));
+        }
+        
+        await new Promise(r => setTimeout(r, 60));
       }
-      
-      // Añadir Turnaround Delay entre peticiones Modbus para dar tiempo a que los esclavos
-      // liberen el bus RS485 y evitar colisiones de hardware al cambiar de Slave ID.
-      await new Promise(r => setTimeout(r, 60));
-    }
+
+      if (!stateRef.current.looping) break;
+    } while (!stateRef.current.stopRequested);
 
     const stopped = stateRef.current.stopRequested;
-    const finalState = { ...stateRef.current, running: false, stopRequested: false, steps: working };
+    const finalState = { ...stateRef.current, running: false, stopRequested: false, looping: false };
     setState(finalState);
     publishNow(finalState);
     dispatchTestsRunCompleted(finalState.steps, stopped);
-    onMessage(stopped ? "Plan detenido. La solicitud en curso pudo terminar antes de pausar la secuencia." : "Plan ejecutado. Cada paso aprobado requiere comunicacion OK y validacion OK.");
+    onMessage(stopped ? "Plan detenido." : "Plan ejecutado completamente.");
   }
 
   return (
@@ -1009,8 +1019,11 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
         <div className="testsPlanHeader">
           <div><h2>Plan de pruebas al slave</h2><p>PC como Master</p></div>
           <div className="testsPlanActions">
-            <button className="primary" onClick={runPlan} disabled={state.running}>Iniciar prueba</button>
-            <button onClick={() => setState((current) => ({ ...current, stopRequested: true }))} disabled={!state.running}>Detener</button>
+            <button className="primary" onClick={() => runPlan(false)} disabled={state.running}>Iniciar prueba</button>
+            <button className={state.looping ? "primary" : ""} onClick={() => runPlan(true)} disabled={state.running}>Iniciar en bucle</button>
+            <button onClick={() => setState((current) => ({ ...current, stopRequested: true }))} disabled={!state.running}>
+              {state.stopRequested ? "Deteniendo..." : "Detener"}
+            </button>
             <button onClick={() => setState((current) => ({ ...current, steps: [...current.steps, createStep(defaultSlave, "fc3", "40000", "1", "", "count")] }))}>+ Agregar paso</button>
             <button onClick={savePlanToScenario}>Guardar plan</button>
           </div>
@@ -1167,7 +1180,7 @@ function ResultPill({ result }: { result: Result }) {
 }
 
 function ExecutionTable({ steps, onDetail }: { steps: TestStep[]; onDetail: (index: number) => void }) {
-  return <div className="testsExecutionTable"><table><thead><tr><th>Hora</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad/Valor</th><th>Resultado</th><th>Tiempo</th><th>Detalle</th><th>Info</th></tr></thead><tbody>{[...steps].map((step, originalIndex) => ({ step, originalIndex })).reverse().map(({ step, originalIndex }) => <tr key={step.id}><td>{step.at || "-"}</td><td>{originalIndex + 1}</td><td>Slave ID {step.slave || "-"}</td><td>{labels[step.fn]}</td><td>{step.address}</td><td>{isRead(step.fn) ? countFor(step) : step.value}</td><td><ResultPill result={step.result} /></td><td>{step.elapsedMs == null ? "-" : `${step.elapsedMs} ms`}</td><td>{step.detail || "Pendiente de ejecucion."}</td><td><button className="tiny" onClick={() => onDetail(originalIndex)}>Info</button></td></tr>)}</tbody></table></div>;
+  return <div className="testsExecutionTable"><table><thead><tr><th>Hora</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad/Valor</th><th>Resultado</th><th>Tiempo</th><th>Detalle</th><th>Info</th></tr></thead><tbody>{[...steps].map((step, originalIndex) => ({ step, originalIndex })).reverse().map(({ step, originalIndex }) => <tr key={step.historyId || `${step.id}-${originalIndex}`}><td>{step.at || "-"}</td><td>{originalIndex + 1}</td><td>Slave ID {step.slave || "-"}</td><td>{labels[step.fn]}</td><td>{step.address}</td><td>{isRead(step.fn) ? countFor(step) : step.value}</td><td><ResultPill result={step.result} /></td><td>{step.elapsedMs == null ? "-" : `${step.elapsedMs} ms`}</td><td>{step.detail || "Pendiente de ejecucion."}</td><td><button className="tiny" onClick={() => onDetail(originalIndex)}>Info</button></td></tr>)}</tbody></table></div>;
 }
 
 function StepDetail({ step, index, onClose }: { step: TestStep; index: number; onClose: () => void }) {
