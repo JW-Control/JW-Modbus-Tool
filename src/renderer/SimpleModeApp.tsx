@@ -632,7 +632,12 @@ function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value
         <p className="note" style={{marginTop: '15px'}}><Info size={16} />Los nombres personalizados se asignarán desde la sesión o desde el mapa del dispositivo.</p>
       </Card>
 
-      <Card title="Resumen" className="summary panel-fusion">
+      <Card title="Resumen" className="summary panel-fusion" action={
+        <div className={`pill ${props.connected ? "active-pill" : ""}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+          <div className="dot" style={{ width: 10, height: 10, background: props.connected ? '#22c55e' : '#ef4444', boxShadow: props.connected ? '0 0 10px #22c55e' : '0 0 10px #ef4444', margin: 0 }}></div>
+          <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{props.connected ? "CONECTADO" : "DESCONECTADO"}</span>
+        </div>
+      }>
         <p className="helper-text">Estado general de la comunicación.</p>
         <div className="kpis">
           <Kpi icon={<Network size={16} />} label="Solicitudes" value={String(props.stats.requests)} />
@@ -646,18 +651,12 @@ function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value
           <dt>Último escaneo</dt><dd>{props.lastScan ? <><Status status="OK" /><small>{fmt(props.lastScan)}</small></> : "—"}</dd>
           <dt>Rol</dt><dd><Monitor size={15} /> PC Master</dd>
         </dl>
-        <div className={`large-status-banner ${props.connected ? "online" : "offline"}`} style={{marginTop: '15px', padding: '12px'}}>
-          <div className="dot"></div>
-          <div>
-            <strong style={{fontSize: '15px', marginBottom: '2px'}}>{props.connected ? "Conectado" : "Desconectado"}</strong>
-            <span style={{fontSize: '13px'}}>{props.connected ? `Master listo. ${props.devices.length} dispositivos detectados.` : "Conecta para empezar."}</span>
-          </div>
-        </div>
       </Card>
 
       <div className="devicesLower">
-        <Card title="3. Lectura rápida de registros" className="quickPanel">
-          <p>Slave activo: <strong className="cyan">{props.activeDevice ? `${props.activeDevice.name} — ID ${props.activeDevice.id}` : "Sin seleccionar"}</strong></p>
+        <Card title="3. Lectura rápida de registros" className="quickPanel" action={
+          <span style={{ fontSize: '12.5px', color: '#8b929e' }}>Slave activo: <strong className="cyan">{props.activeDevice ? `${props.activeDevice.name} — ID ${props.activeDevice.id}` : "Sin seleccionar"}</strong></span>
+        }>
           <div className="quickbar">
             <SelectField label="Función" value={props.qFn} onChange={(value) => props.setQFn(value as Fn)} options={["fc3", "fc4", "fc1", "fc2"]} labels={fnLabels()} />
             <NumberField label="Dir. inicial" value={props.qAddr} onChange={props.setQAddr} />

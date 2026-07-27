@@ -6,7 +6,7 @@
 .devices.grid {
   height: 100%;
   min-height: 0;
-  grid-template-rows: max-content minmax(320px, 1fr) !important;
+  grid-template-rows: max-content minmax(380px, 1fr) !important;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
@@ -37,6 +37,7 @@
 
 .devices .connect {
   padding: 12px;
+  zoom: 0.9;
 }
 
 .devices .connect > header,
@@ -50,7 +51,7 @@
 }
 
 .devices .connect .field {
-  margin: 5px 0;
+  margin: 9px 0;
   grid-template-columns: 1fr 1.08fr auto;
   gap: 7px;
 }
@@ -69,6 +70,7 @@
 
 .devices .summary {
   padding: 12px;
+  zoom: 0.9;
 }
 
 .devices .summary .kpis {
@@ -176,15 +178,23 @@
 .quickScroll,
 .activityScroll,
 .detailTable {
-  min-height: 0;
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: #2d87aa #071d30;
 }
 
-.quickScroll,
+.activityScroll,
+.detailTable {
+  min-height: 0;
+}
+
 .activityScroll {
   flex: 1 1 auto;
+  margin-top: 10px;
+}
+
+.quickScroll {
+  flex: 0 1 auto;
   margin-top: 10px;
 }
 
@@ -192,6 +202,10 @@
 .activityScroll .table,
 .detailTable .table {
   min-width: 100%;
+}
+
+.quickScroll .table {
+  zoom: 0.85;
 }
 
 .recentPanel .activityScroll .tr {
@@ -483,11 +497,11 @@
 @media (max-height: 850px) {
   .devices,
   .devices.grid {
-    grid-template-rows: max-content minmax(320px, 1fr) !important;
+    grid-template-rows: max-content minmax(380px, 1fr) !important;
   }
 
   .devices .connect .field {
-    margin: 4px 0;
+    margin: 7px 0;
   }
 
   .devices .detected .table {
@@ -1088,7 +1102,7 @@
 }
 .segmented-control button {
   flex: 1;
-  padding: 10px;
+  padding: 6px;
   border: none;
   background: transparent;
   color: #8b929e;
@@ -1114,13 +1128,13 @@
 }
 .block-btn {
   width: 100%;
-  padding: 12px;
+  padding: 8px;
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 10px;
   border-radius: 8px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: bold;
 }
 .danger-btn {
