@@ -982,6 +982,10 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
         working = working.map((item, itemIndex) => itemIndex === index ? failed : item);
         setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item) }));
       }
+      
+      // Añadir Turnaround Delay entre peticiones Modbus para dar tiempo a que los esclavos
+      // liberen el bus RS485 y evitar colisiones de hardware al cambiar de Slave ID.
+      await new Promise(r => setTimeout(r, 60));
     }
 
     const stopped = stateRef.current.stopRequested;

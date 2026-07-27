@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Server,
   Settings,
   Square,
   Star,
@@ -30,6 +31,45 @@ import {
   type TestsRunSummary,
   type TestsRuntimeState
 } from "./simple-tests-consolidated.js";
+
+function JwplcIcon({ size = 32, className = "", strokeWidth = 1.5 }: { size?: number, className?: string, strokeWidth?: number }) {
+  return (
+    <svg 
+      width={size} 
+      height={size} 
+      viewBox="0 0 24 24" 
+      fill="none" 
+      stroke="currentColor" 
+      strokeWidth={strokeWidth} 
+      strokeLinecap="round" 
+      strokeLinejoin="round" 
+      className={className} 
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      {/* Main Body */}
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      
+      {/* Top Terminals */}
+      <path d="M6 4v-2 M10 4v-2 M14 4v-2 M18 4v-2" />
+
+      {/* Bottom Terminals */}
+      <path d="M4 20v2 M8 20v2 M12 20v2 M16 20v2 M20 20v2" />
+      
+      {/* Screen */}
+      <rect x="4" y="7" width="9" height="5" rx="1" />
+      
+      {/* D-Pad (Arrows) */}
+      <path d="M17 6v4 M15 8h4" />
+      
+      {/* Action Buttons */}
+      <rect x="14.5" y="14" width="2" height="2" rx="0.5" />
+      <rect x="18" y="14" width="2" height="2" rx="0.5" />
+      
+      {/* Logo abstract "J" */}
+      <path d="M5 14v3h3v-2" />
+    </svg>
+  );
+}
 
 type View = "devices" | "sessions" | "tests" | "registers" | "traffic";
 type Status = "OK" | "Aprobado" | "Error" | "Timeout" | "CRC Error" | "Excepción" | "Pendiente";
@@ -114,7 +154,7 @@ export function SimpleModeApp() {
   const [connected, setConnected] = useState(false);
   const [ports, setPorts] = useState<PortOption[]>([]);
   const [port, setPort] = useState(() => loadStoredSerialPort());
-  const [baud, setBaud] = useState(115200);
+  const [baud, setBaud] = useState(9600);
   const [dataBits, setDataBits] = useState(8);
   const [parity, setParity] = useState("none");
   const [stopBits, setStopBits] = useState(1);
@@ -174,8 +214,8 @@ export function SimpleModeApp() {
   }, []);
   useEffect(() => { storeLastSerialPort(port); }, [port]);
   useEffect(() => { if (!selectedRegister && regs.length > 0) setSelectedRegister(regs[0]); }, [regs, selectedRegister]);
+
   useEffect(() => {
-    setQAddr(defaultAddress(qFn));
     setQQty(qFn === "fc1" || qFn === "fc2" ? 8 : 6);
     setQuick([]);
   }, [qFn]);
@@ -410,6 +450,9 @@ export function SimpleModeApp() {
         const rows = buildRegisterRows("fc3", 40000, values);
         pushActivity({ ms: Date.now() - started, slave: id, device: device.name, fn: "FC03", fnKey: "fc3", label: "Escaneo detectó respuesta", address: 40000, range: "40000 / 1 reg", qty: 1, values: valuesPreview("fc3", 40000, values), rows, status: "OK" });
       }
+      
+      // Añadir Turnaround Delay entre escaneos para evitar colisiones RS485
+      await new Promise(r => setTimeout(r, 60));
     }
     setStats((current) => ({ ...current, requests: current.requests + scanRange.length, responses: current.responses + found.length }));
     setDevices(found.map((device, index) => ({ ...device, active: index === 0 })));
@@ -449,14 +492,17 @@ export function SimpleModeApp() {
     return { values, rows, action };
   }
 
-  async function quickRead() {
-    if (activeId === null) return setMessage("Primero escanea y selecciona un slave activo.");
-    setBusy(true);
+  async function quickRead(showBusy = true) {
+    if (activeId === null) {
+      if (showBusy) setMessage("Primero escanea y selecciona un slave activo.");
+      return;
+    }
+    if (showBusy) setBusy(true);
     const result = await readRegisters(qFn, activeId, qAddr, qQty);
-    setBusy(false);
+    if (showBusy) setBusy(false);
     if (!result) return;
     setQuick(result.rows);
-    setMessage(`${result.values.length} valor(es) leídos desde ${qAddr}.`);
+    if (showBusy) setMessage(`${result.values.length} valor(es) leídos desde ${qAddr}.`);
   }
 
   async function registerRead(showBusy = true) {
@@ -498,6 +544,9 @@ export function SimpleModeApp() {
         test.result = result ? "Aprobado" : "Error";
       }
       setTests([...next]);
+      // Añadir un pequeño retraso entre peticiones Modbus para dar tiempo a que los esclavos
+      // liberen el bus RS485 (Turnaround delay) y evitar colisiones de hardware.
+      await new Promise(r => setTimeout(r, 60));
     }
     setBusy(false);
     setMessage("Plan de pruebas ejecutado.");
@@ -508,6 +557,9 @@ export function SimpleModeApp() {
     setDevices((current) => current.map((device) => ({ ...device, active: device.id === id })));
     setQuick([]);
     setMessage(`Slave activo: ${displayNameFor(id)}.`);
+  }
+  function renameDevice(id: number, name: string) {
+    setDevices((current) => current.map((device) => device.id === id ? { ...device, name, named: true } : device));
   }
   function pushActivity(row: Omit<ActivityRow, "id" | "at">) { setActivity((current) => [{ id: rowId++, at: new Date(), ...row }, ...current].slice(0, 30)); }
   function pushTrafficAction(action: TrafficAction, fn: Fn, device: string, address: number, quantity: number, status: Status) {
@@ -522,17 +574,117 @@ export function SimpleModeApp() {
   }
   function displayNameFor(id: number) { return devices.find((device) => device.id === id)?.name ?? `Slave ID ${id}`; }
 
-  return <main className="shell"><header className="toolbar"><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions"><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons"><span>{busy ? "Procesando…" : "Ayuda"}</span><button>—</button><button>□</button><button>×</button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia: Profesional<br /><small>Versión 1.3.0 (64-bit)</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity }} />}{view === "sessions" && <SessionsView {...{ sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} />}{view === "registers" && <RegistersView {...{ activeDevice, rFn, setRFn, rAddr, setRAddr, rQty, setRQty, rAutoRead, setRAutoRead, rInterval, setRInterval, regs, selectedRegister, setSelectedRegister, registerRead, activity }} />}{view === "traffic" && <TrafficView traffic={traffic} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{port || "Sin puerto"}</span><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
+  return <main className="shell"><header className="toolbar"><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions"><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons"><span>{busy ? "Procesando…" : "Ayuda"}</span><button>—</button><button>□</button><button>×</button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia: Profesional<br /><small>Versión 1.3.0 (64-bit)</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} />}{view === "registers" && <RegistersView {...{ activeDevice, rFn, setRFn, rAddr, setRAddr, rQty, setRQty, rAutoRead, setRAutoRead, rInterval, setRInterval, regs, selectedRegister, setSelectedRegister, registerRead, activity }} />}{view === "traffic" && <TrafficView traffic={traffic} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{port || "Sin puerto"}</span><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
 }
 
-function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void; baud: number; setBaud: (value: number) => void; dataBits: number; setDataBits: (value: number) => void; parity: string; setParity: (value: string) => void; stopBits: number; setStopBits: (value: number) => void; timeout: number; setTimeoutMs: (value: number) => void; connected: boolean; devices: Device[]; activeId: number | null; activeDevice: Device | null; selectDevice: (id: number) => void; scanDevices: () => void; lastScan: Date | null; stats: Stats; qFn: Fn; setQFn: (value: Fn) => void; qAddr: number; setQAddr: (value: number) => void; qQty: number; setQQty: (value: number) => void; quick: RegisterRow[]; quickRead: () => void; activity: ActivityRow[] }) {
+function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void; baud: number; setBaud: (value: number) => void; dataBits: number; setDataBits: (value: number) => void; parity: string; setParity: (value: string) => void; stopBits: number; setStopBits: (value: number) => void; timeout: number; setTimeoutMs: (value: number) => void; connected: boolean; devices: Device[]; activeId: number | null; activeDevice: Device | null; selectDevice: (id: number) => void; scanDevices: () => void; lastScan: Date | null; stats: Stats; qFn: Fn; setQFn: (value: Fn) => void; qAddr: number; setQAddr: (value: number) => void; qQty: number; setQQty: (value: number) => void; quick: RegisterRow[]; quickRead: () => void; activity: ActivityRow[]; connect: () => void; disconnect: () => void; clearActivity: () => void }) {
   const [activityDetail, setActivityDetail] = useState<ActivityRow | null>(null);
-  return <div className="devices grid"><Card title="1. Conectar" className="connect"><div className="radio"><label><input type="radio" checked readOnly />RTU</label><label><input type="radio" readOnly />TCP</label></div><PortSelectRow ports={props.ports} port={props.port} setPort={props.setPort} refreshPorts={props.refreshPorts} /><SelectField label="Baud Rate" value={String(props.baud)} onChange={(value) => props.setBaud(Number(value))} options={["9600", "19200", "38400", "57600", "115200"]} /><SelectField label="Bits de datos" value={String(props.dataBits)} onChange={(value) => props.setDataBits(Number(value))} options={["8", "7"]} /><SelectField label="Paridad" value={props.parity} onChange={props.setParity} options={["none", "even", "odd"]} /><SelectField label="Bits de parada" value={String(props.stopBits)} onChange={(value) => props.setStopBits(Number(value))} options={["1", "2"]} /><NumberField label="Timeout (ms)" value={props.timeout} onChange={props.setTimeoutMs} /><p className={`connection ${props.connected ? "is-connected" : "is-disconnected"}`}><Dot />Estado de conexión <strong>{props.connected ? "Conectado" : "Desconectado"}</strong></p></Card><Card title="2. Dispositivos detectados" action={<button className="ghost" onClick={props.scanDevices}><RefreshCw size={15} />Recargar</button>} className="detected">{props.devices.length === 0 ? <Empty text="Sesión limpia: todavía no hay dispositivos detectados. Usa Recargar/Escanear." /> : <Table columns={["Dispositivo", "ID"]} rows={props.devices.map((device) => [<button style={rowButtonStyle} onClick={() => props.selectDevice(device.id)}><Dot />{device.name} — ID {device.id}{device.id === props.activeId && <b className="pill">SLAVE ACTIVO</b>}{!device.named && <b className="pill">NOMBRE PEND.</b>}</button>, device.id])} />}<p className="note"><Info size={16} />Los nombres personalizados se asignarán desde la sesión o desde el mapa del dispositivo.</p></Card><Card title="Resumen" className="summary"><p>Estado general de la comunicación.</p><div className="kpis"><Kpi icon="↗" label="Solicitudes" value={String(props.stats.requests)} /><Kpi icon="✓" label="Respuestas" value={String(props.stats.responses)} tone="ok" /><Kpi icon="!" label="Errores" value={String(props.stats.errors)} tone="warn" /><Kpi icon="◷" label="Timeouts" value={String(props.stats.timeouts)} tone="purple" /></div><dl><dt>Dispositivos encontrados</dt><dd>{props.devices.length}</dd><dt>Rango de escaneo</dt><dd>1 – 10</dd><dt>Último escaneo</dt><dd>{props.lastScan ? <><Status status="OK" /><small>{fmt(props.lastScan)}</small></> : "—"}</dd><dt>Rol</dt><dd><Monitor size={15} /> PC Master</dd></dl></Card><div className="devicesLower"><Card title="3. Lectura rápida de registros" className="quickPanel"><p>Slave activo: <strong className="cyan">{props.activeDevice ? `${props.activeDevice.name} — ID ${props.activeDevice.id}` : "Sin seleccionar"}</strong></p><div className="quickbar"><SelectField label="Función" value={props.qFn} onChange={(value) => props.setQFn(value as Fn)} options={["fc3", "fc4", "fc1", "fc2"]} labels={fnLabels()} /><NumberField label="Dirección inicial" value={props.qAddr} onChange={props.setQAddr} /><NumberField label="Cantidad" value={props.qQty} onChange={props.setQQty} /><button className="primary" onClick={props.quickRead} disabled={!props.activeDevice}><Database size={15} />Leer</button></div><p className="note"><Info size={16} />{addressHelp(props.qFn)}</p><div className="quickScroll">{props.quick.length === 0 ? <Empty text="Aún no hay lecturas. La tabla se llenará al presionar Leer." /> : <Table columns={["Dirección", "Nombre", "Valor", "Estado"]} rows={props.quick.map((row) => [row.address, withUnit(row), valueCell(row), <Status status={row.status} />])} />}</div><p className="note"><Info size={16} />Se leerá el slave activo real; no hay datos precargados.</p></Card><Card title="Actividad reciente" className="recentPanel">{activityDetail ? <ActivityDetail row={activityDetail} onClose={() => setActivityDetail(null)} /> : props.activity.length === 0 ? <Empty text="Sin actividad todavía. Aquí aparecerán escaneos y lecturas reales." /> : <div className="activityScroll"><Table columns={["Fecha/hora", "Duración", "Slave ID", "Función", "Dirección / cantidad", "Valor leído", "Resultado", "Info"]} rows={props.activity.map((row) => [fmt(row.at), `${row.ms} ms`, row.slave, row.fn, row.range, row.values, <Status status={row.status} />, <button className="infoButton" onClick={() => setActivityDetail(row)} title="Ver detalle de la lectura"><Info size={14} /></button>])} /></div>}</Card></div></div>;
+
+  return (
+    <div className="devices grid">
+      <Card title="1. Conectar" className="connect panel-fusion" action={<Info size={15} className="hint-icon" />}>
+        <div className="segmented-control">
+          <button className="active">RTU</button>
+          <button className="disabled">TCP</button>
+        </div>
+        <PortSelectRow ports={props.ports} port={props.port} setPort={props.setPort} refreshPorts={props.refreshPorts} />
+        <SelectField label="Baud Rate" value={String(props.baud)} onChange={(value) => props.setBaud(Number(value))} options={["9600", "19200", "38400", "57600", "115200"]} />
+        <SelectField label="Bits de datos" value={String(props.dataBits)} onChange={(value) => props.setDataBits(Number(value))} options={["8", "7"]} />
+        <SelectField label="Paridad" value={props.parity} onChange={props.setParity} options={["none", "even", "odd"]} />
+        <SelectField label="Bits de parada" value={String(props.stopBits)} onChange={(value) => props.setStopBits(Number(value))} options={["1", "2"]} />
+        <NumberField label="Timeout (ms)" value={props.timeout} onChange={props.setTimeoutMs} />
+        {props.connected ? (
+          <button className="primary block-btn danger-btn" style={{marginTop: '10px'}} onClick={props.disconnect}><Unplug size={18} /> Desconectar</button>
+        ) : (
+          <button className="primary block-btn" style={{marginTop: '10px'}} onClick={props.connect}><Plug size={18} /> Conectar</button>
+        )}
+      </Card>
+
+      <Card title="2. Dispositivos detectados" action={<button className="ghost" onClick={props.scanDevices}><RefreshCw size={15} />Recargar</button>} className="detected panel-fusion">
+        {props.devices.length === 0 ? <Empty text="Sesión limpia: todavía no hay dispositivos detectados. Usa Recargar/Escanear." /> : 
+        <div className="fusion-device-list">
+          {props.devices.map((device) => {
+            const isJWPLC = device.name.toLowerCase().includes("jwplc");
+            return (
+              <button key={device.id} className={`fusion-device-row ${device.id === props.activeId ? 'active' : ''}`} onClick={() => props.selectDevice(device.id)}>
+                <div className="fusion-device-left">
+                  {isJWPLC ? (
+                    <JwplcIcon size={32} className="fusion-device-icon" />
+                  ) : (
+                    <Server size={32} className="fusion-device-icon" strokeWidth={1.5} />
+                  )}
+                  <div className="fusion-device-info">
+                    <div className="fusion-device-title">
+                      <strong>{device.name}</strong>
+                      {device.id === props.activeId && <b className="pill active-pill">SLAVE ACTIVO</b>}
+                      {!device.named && <b className="pill pend-pill">NOMBRE PEND.</b>}
+                    </div>
+                    <span className="fusion-device-subtitle">ID: {device.id} • RTU</span>
+                  </div>
+                </div>
+              <div className="fusion-device-right">
+                <span className="dot online"></span> En línea
+              </div>
+            </button>
+          );
+        })}
+        </div>}
+        <p className="note" style={{marginTop: '15px'}}><Info size={16} />Los nombres personalizados se asignarán desde la sesión o desde el mapa del dispositivo.</p>
+      </Card>
+
+      <Card title="Resumen" className="summary panel-fusion">
+        <p className="helper-text">Estado general de la comunicación.</p>
+        <div className="kpis">
+          <Kpi icon={<Network size={16} />} label="Solicitudes" value={String(props.stats.requests)} />
+          <Kpi icon={<CheckCircle2 size={16} />} label="Respuestas" value={String(props.stats.responses)} tone="ok" />
+          <Kpi icon={<AlertTriangle size={16} />} label="Errores" value={String(props.stats.errors)} tone="warn" />
+          <Kpi icon={<Clock3 size={16} />} label="Timeouts" value={String(props.stats.timeouts)} tone="purple" />
+        </div>
+        <dl>
+          <dt>Dispositivos encontrados</dt><dd>{props.devices.length}</dd>
+          <dt>Rango de escaneo</dt><dd>1 – 10</dd>
+          <dt>Último escaneo</dt><dd>{props.lastScan ? <><Status status="OK" /><small>{fmt(props.lastScan)}</small></> : "—"}</dd>
+          <dt>Rol</dt><dd><Monitor size={15} /> PC Master</dd>
+        </dl>
+        <div className={`large-status-banner ${props.connected ? "online" : "offline"}`} style={{marginTop: '15px', padding: '12px'}}>
+          <div className="dot"></div>
+          <div>
+            <strong style={{fontSize: '15px', marginBottom: '2px'}}>{props.connected ? "Conectado" : "Desconectado"}</strong>
+            <span style={{fontSize: '13px'}}>{props.connected ? `Master listo. ${props.devices.length} dispositivos detectados.` : "Conecta para empezar."}</span>
+          </div>
+        </div>
+      </Card>
+
+      <div className="devicesLower">
+        <Card title="3. Lectura rápida de registros" className="quickPanel">
+          <p>Slave activo: <strong className="cyan">{props.activeDevice ? `${props.activeDevice.name} — ID ${props.activeDevice.id}` : "Sin seleccionar"}</strong></p>
+          <div className="quickbar">
+            <SelectField label="Función" value={props.qFn} onChange={(value) => props.setQFn(value as Fn)} options={["fc3", "fc4", "fc1", "fc2"]} labels={fnLabels()} />
+            <NumberField label="Dir. inicial" value={props.qAddr} onChange={props.setQAddr} />
+            <NumberField label="Cantidad" value={props.qQty} onChange={props.setQQty} />
+            <button className="primary" onClick={() => props.quickRead()} disabled={!props.activeDevice}><Database size={15} />Leer</button>
+          </div>
+          <p className="note"><Info size={16} />{addressHelp(props.qFn)}</p>
+          <div className="quickScroll">
+            {props.quick.length === 0 ? <Empty text="Aún no hay lecturas. La tabla se llenará al presionar Leer." /> : <Table columns={["Dirección", "Nombre", "Valor", "Estado"]} rows={props.quick.map((row) => [row.address, withUnit(row), valueCell(row), <Status status={row.status} />])} />}
+          </div>
+          <p className="note"><Info size={16} />Se leerá el slave activo real; no hay datos precargados.</p>
+        </Card>
+
+        <Card title="Actividad reciente" className="recentPanel">
+          {activityDetail ? <ActivityDetail row={activityDetail} onClose={() => setActivityDetail(null)} /> : props.activity.length === 0 ? <Empty text="Sin actividad todavía. Aquí aparecerán escaneos y lecturas reales." /> : 
+          <div className="activityScroll">
+            <Table columns={["Fecha/hora", "Duración", "Slave ID", "Función", "Dirección / cantidad", "Valor leído", "Resultado", "Info"]} rows={props.activity.map((row) => [fmt(row.at), `${row.ms} ms`, row.slave, row.fn, row.range, row.values, <Status status={row.status} />, <button className="infoButton" onClick={() => setActivityDetail(row)} title="Ver detalle de la lectura"><Info size={14} /></button>])} />
+          </div>}
+        </Card>
+      </div>
+    </div>
+  );
 }
 
 function ActivityDetail({ row, onClose }: { row: ActivityRow; onClose: () => void }) { return <div className="activityDetail"><div className="activityDetailHeader"><div><strong>Detalle de lectura</strong><small>{fmt(row.at)} · {row.device}</small></div><button className="infoButton" onClick={onClose} title="Cerrar detalle"><X size={15} /></button></div><div className="detailFacts"><Fact label="Función" value={row.label} /><Fact label="Slave ID" value={String(row.slave)} /><Fact label="Dirección inicial" value={String(row.address)} /><Fact label="Cantidad" value={String(row.qty)} /><Fact label="Duración" value={`${row.ms} ms`} /><Fact label="Resultado" value={row.status} /></div><div className="detailTable"><Table columns={["Dirección", "Nombre", "Valor", "Tipo", "Acceso", "Estado"]} rows={row.rows.map((item) => [item.address, withUnit(item), valueCell(item), item.type, item.access, <Status status={item.status} />])} /></div></div>; }
 
-function SessionsView(props: { sessionName: string; setSessionName: (value: string) => void; recentSessions: RecentSession[]; onNew: () => void; onSave: () => void; onSaveAs: () => void; onOpen: (filePath?: string) => void; activity: ActivityRow[]; devices: Device[]; stats: Stats; traffic: TrafficRow[]; tests: TestRow[]; testsRuntime: TestsRuntimeState | null; connected: boolean; port: string; baud: number; dataBits: number; parity: string; stopBits: number; activeId: number | null; sessionId: string | null; sessionFilePath: string | null; sessionState: SessionState; notes: string; setNotes: (value: string) => void }) {
+function SessionsView(props: { sessionName: string; setSessionName: (value: string) => void; recentSessions: RecentSession[]; onNew: () => void; onSave: () => void; onSaveAs: () => void; onOpen: (filePath?: string) => void; activity: ActivityRow[]; devices: Device[]; stats: Stats; traffic: TrafficRow[]; tests: TestRow[]; testsRuntime: TestsRuntimeState | null; connected: boolean; port: string; baud: number; dataBits: number; parity: string; stopBits: number; activeId: number | null; sessionId: string | null; sessionFilePath: string | null; sessionState: SessionState; notes: string; setNotes: (value: string) => void; renameDevice: (id: number, name: string) => void; }) {
   const registerReads = props.activity.reduce((total, item) => total + item.rows.length, 0);
   const testSummary = sessionTestSummary(props.testsRuntime, props.tests);
   const failed = testSummary.failed;
@@ -540,7 +692,81 @@ function SessionsView(props: { sessionName: string; setSessionName: (value: stri
   const currentName = props.sessionName.trim() || "Nueva_sesion_Modbus";
   const connectionText = props.connected && props.port ? `${props.port} · ${props.baud} · ${props.dataBits}${props.parity === "none" ? "N" : props.parity[0].toUpperCase()}${props.stopBits}` : "Sin puerto activo";
   const recent = props.recentSessions.filter((session) => session.filePath !== props.sessionFilePath);
-  return <div className="sessions grid"><div className="top"><button className="primary" onClick={props.onNew}>+ Nueva sesión</button><button onClick={() => props.onOpen()}><FolderOpen size={16} />Abrir sesión</button><button onClick={props.onSave}><Save size={16} />Guardar</button><button onClick={props.onSaveAs}><Save size={16} />Guardar como</button></div><Card title="Sesión actual" className="current" action={<span className="oktext">● {props.sessionState}</span>}><h1><input className="sessionNameInput" value={props.sessionName} onChange={(event) => props.setSessionName(event.target.value)} aria-label="Nombre de sesión" /> <Pencil size={15} /></h1><div className="facts"><Fact label="Rol" value="PC Master" /><Fact label="Protocolo" value="RTU" /><Fact label="Slave activo" value={props.activeId ? `${displayDeviceName(props.devices, props.activeId)} — ID ${props.activeId}` : "Sin seleccionar"} /><Fact label="Conexión" value={connectionText} /><Fact label="Última actividad" value={props.activity[0] ? time(props.activity[0].at) : "—"} /></div><button className="primary wide"><Play size={16} />Continuar sesión</button></Card><Card title="¿Qué guarda una sesión?" className="what"><p>Una sesión guarda tu diagnóstico para retomar el trabajo sin perder contexto.</p><ul><li>Conexiones y dispositivos detectados</li><li>Registros leídos y valores configurados</li><li>Planes y escenarios de pruebas</li><li>Tráfico Modbus capturado</li><li>Notas y observaciones del diagnóstico</li></ul><label className="notesBox"><span>Notas de diagnóstico</span><textarea value={props.notes} onChange={(event) => props.setNotes(event.target.value)} placeholder="Ej.: FC03 operativo, pendiente validar escritura." /></label></Card><Card title="Sesiones recientes" className="sessionlist"><div className="sessionRows"><SessionRow name={currentName} date={props.sessionFilePath ? shortPath(props.sessionFilePath) : "Actual"} devices={props.devices.length} registers={registerReads} tests={testsProgress} errors={props.stats.errors + failed} status={props.sessionState} action="En curso" /><>{recent.length === 0 ? <Empty text="Aún no hay sesiones guardadas. Presiona Guardar sesión para conservar la actual." /> : recent.map((session) => <SessionRow key={session.filePath} name={session.name} date={fmt(new Date(session.savedAt))} devices={session.devices} registers={session.registers} tests={session.tests} errors={session.errors} status={session.status} action="Abrir" onClick={() => props.onOpen(session.filePath)} />)}</></div></Card><Card title="Resumen de la sesión actual" className="sumsession"><div className="tiles"><Tile icon={Network} label="Dispositivos" value={String(props.devices.length)} note="Detectados" /><Tile icon={FileText} label="Registros leídos" value={String(registerReads)} note="En total" /><Tile icon={FlaskConical} label="Pruebas" value={testsProgress} note={failed ? `${failed} con error` : "Plan guardable"} /><Tile icon={Activity} label="Tráfico capturado" value={`${props.traffic.length}`} note="Tramas" /><Tile icon={FileText} label="Notas" value={props.notes.trim() ? "1" : "0"} note="Guardadas" /><Tile icon={AlertTriangle} label="Errores" value={String(props.stats.errors + failed)} note="Detectados" /></div></Card><Card title="Actividad reciente" className="timeline">{props.activity.length === 0 ? <Empty text="Sin actividad todavía." /> : <div className="sessionActivityScroll"><Table columns={["#", "Fecha/hora", "Función", "Descripción", "Resultado"]} rows={props.activity.slice(0, 30).map((item, index) => [index + 1, fmt(item.at), item.fn, item.label, <Status status={item.status} />])} /></div>}</Card></div>;
+  
+  const [renameId, setRenameId] = useState<number | "">(props.devices.length > 0 ? props.devices[0].id : "");
+  const [renameText, setRenameText] = useState("");
+  useEffect(() => { if (props.devices.length > 0 && renameId === "") setRenameId(props.devices[0].id); }, [props.devices]);
+
+  return <div className="sessions grid">
+    <div className="top">
+      <button className="primary" onClick={props.onNew}>+ Nueva sesión</button>
+      <button onClick={() => props.onOpen()}><FolderOpen size={16} />Abrir sesión</button>
+      <button onClick={props.onSave}><Save size={16} />Guardar</button>
+      <button onClick={props.onSaveAs}><Save size={16} />Guardar como</button>
+    </div>
+    
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px", gridRow: "2 / 4" }}>
+      <Card title="Sesión actual" className="current" action={<span className="oktext">● {props.sessionState}</span>}><h1><input className="sessionNameInput" value={props.sessionName} onChange={(event) => props.setSessionName(event.target.value)} aria-label="Nombre de sesión" /> <Pencil size={15} /></h1><div className="facts"><Fact label="Rol" value="PC Master" /><Fact label="Protocolo" value="RTU" /><Fact label="Slave activo" value={props.activeId ? `${displayDeviceName(props.devices, props.activeId)} — ID ${props.activeId}` : "Sin seleccionar"} /><Fact label="Conexión" value={connectionText} /><Fact label="Última actividad" value={props.activity[0] ? time(props.activity[0].at) : "—"} /></div><button className="primary wide"><Play size={16} />Continuar sesión</button></Card>
+      <Card title="Sesiones recientes" className="sessionlist"><div className="sessionRows"><SessionRow name={currentName} date={props.sessionFilePath ? shortPath(props.sessionFilePath) : "Actual"} devices={props.devices.length} registers={registerReads} tests={testsProgress} errors={props.stats.errors + failed} status={props.sessionState} action="En curso" /><>{recent.length === 0 ? <Empty text="Aún no hay sesiones guardadas. Presiona Guardar sesión para conservar la actual." /> : recent.map((session) => <SessionRow key={session.filePath} name={session.name} date={fmt(new Date(session.savedAt))} devices={session.devices} registers={session.registers} tests={session.tests} errors={session.errors} status={session.status} action="Abrir" onClick={() => props.onOpen(session.filePath)} />)}</></div></Card>
+    </div>
+    
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px", gridRow: "2 / 4" }}>
+      <Card title="Dispositivos de la sesión" className="what">
+      <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+        <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>
+          Selecciona un dispositivo detectado para asignarle un nombre personalizado.
+        </p>
+        
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", background: "#121519", padding: "12px", borderRadius: "8px", border: "1px solid #1e293b" }}>
+          <Monitor size={16} color="#0ea5e9" style={{ flexShrink: 0 }} />
+          
+          <select 
+            style={{ flex: 1, background: "#0f172a", border: "1px solid #2a303a", color: "white", padding: "8px", borderRadius: "4px", fontSize: "13px", outline: "none" }}
+            value={renameId}
+            onChange={(e) => {
+              const id = Number(e.target.value);
+              setRenameId(id);
+              const device = props.devices.find(d => d.id === id);
+              setRenameText(device ? device.name : "");
+            }}
+          >
+            <option value="" disabled>Seleccionar slave...</option>
+            {props.devices.map(d => <option key={d.id} value={d.id}>ID {d.id} - {d.name || "Sin nombre"}</option>)}
+          </select>
+          
+          <input 
+            placeholder="Ej: PLC_Principal..." 
+            style={{ flex: 1, background: "#0f172a", border: "1px solid #2a303a", color: "white", padding: "8px", borderRadius: "4px", fontSize: "13px", outline: "none" }}
+            value={renameText}
+            onChange={(e) => setRenameText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && renameId !== "" && renameText.trim()) {
+                props.renameDevice(Number(renameId), renameText.trim());
+                setRenameText("");
+              }
+            }}
+          />
+          
+          <button 
+            className="primary" 
+            style={{ padding: "8px 15px", height: "auto", minHeight: "36px", display: "flex", alignItems: "center", gap: "5px" }}
+            onClick={() => {
+              if(renameId !== "" && renameText.trim()){
+                props.renameDevice(Number(renameId), renameText.trim());
+                setRenameText("");
+              }
+            }}
+          >
+            <Save size={14} />
+            Guardar
+          </button>
+        </div>
+      </div>
+    </Card>
+    <Card title="Resumen de la sesión actual" className="sumsession"><div className="tiles"><Tile icon={Network} label="Dispositivos" value={String(props.devices.length)} note="Detectados" /><Tile icon={FileText} label="Registros leídos" value={String(registerReads)} note="En total" /><Tile icon={FlaskConical} label="Pruebas" value={testsProgress} note={failed ? `${failed} con error` : "Plan guardable"} /><Tile icon={Activity} label="Tráfico capturado" value={`${props.traffic.length}`} note="Tramas" /><Tile icon={FileText} label="Notas" value={props.notes.trim() ? "1" : "0"} note="Guardadas" /><Tile icon={AlertTriangle} label="Errores" value={String(props.stats.errors + failed)} note="Detectados" /></div></Card>
+    <Card title="Actividad reciente" className="timeline">{props.activity.length === 0 ? <Empty text="Sin actividad todavía." /> : <div className="sessionActivityScroll"><Table columns={["#", "Fecha/hora", "Función", "Descripción", "Resultado"]} rows={props.activity.slice(0, 30).map((item, index) => [index + 1, fmt(item.at), item.fn, item.label, <Status status={item.status} />])} /></div>}</Card>
+    </div>
+  </div>;
 }
 
 function SessionRow({ name, date, devices, registers, tests, errors, status, action, onClick }: { name: string; date: string; devices: number; registers: number; tests: string; errors: number; status: string; action: string; onClick?: () => void }) { return <article className="sessionrow"><div><strong>{name}</strong><small>{date}</small></div><span>Dispositivos<b>{devices}</b></span><span>Registros<b>{registers}</b></span><span>Pruebas<b>{tests}</b></span><span>Errores<b>{errors}</b></span><button onClick={onClick} disabled={!onClick}>{action}</button><em>{status}</em></article>; }
@@ -637,7 +863,7 @@ function RegistersView(props: {
 }
 function TrafficView({ traffic }: { traffic: TrafficRow[] }) { const ok = traffic.filter((item) => item.status === "OK").length; const timeout = traffic.filter((item) => item.status === "Timeout").length; const crc = traffic.filter((item) => item.status === "CRC Error").length; const exception = traffic.filter((item) => item.status === "Excepción").length; const selected = traffic[0]; return <div className="traffic grid"><Card title="Tráfico Modbus" className="trafficmain"><p>Visualice el historial de mensajes Modbus en tiempo real.</p><div className="filters"><Field label="Protocolo" value="RTU" select /><Field label="Dispositivo" value="Todos" select /><Field label="Slave ID" value="Todos" select /><Field label="Resultado" value="Todos" select /><button className="ghost">Limpiar filtros</button></div>{traffic.length === 0 ? <Empty text="Sin tráfico capturado todavía." /> : <Table columns={["", "Hora", "Origen → Destino", "ID esclavo", "Tipo", "Función", "Resultado", "Resumen"]} rows={traffic.slice(0, 10).map((item) => [<span className={item.dir === "up" ? "up" : "down"}>{item.dir === "up" ? "↑" : "↓"}</span>, fmt(item.at), item.route, item.slave, item.type, item.fn, <Status status={item.status} />, item.summary])} />}<p className="pagination">Mostrando 1 a {Math.min(10, traffic.length)} de {traffic.length} tramas</p></Card><Card title="Detalles del mensaje seleccionado" className="tdetails"><dl><dt>Dirección</dt><dd>{selected?.slave ?? "—"}</dd><dt>Función</dt><dd>{selected?.fn ?? "—"}</dd><dt>Tipo</dt><dd>{selected?.type ?? "—"}</dd><dt>Origen → Destino</dt><dd>{selected?.route ?? "—"}</dd><dt>Resumen</dt><dd>{selected?.summary ?? "—"}</dd><dt>Tiempo</dt><dd>{selected?.ms ? `${selected.ms} ms` : "—"}</dd></dl></Card><Card title="¿Qué pasó?" className="happened"><h3><CheckCircle2 />{selected?.status === "OK" ? "La operación fue exitosa." : "Esperando tráfico."}</h3><p>{selected ? `${selected.route} ejecutó ${selected.fn}: ${selected.summary}.` : "Cuando se ejecute una lectura, aquí aparecerá la explicación."}</p><p className="tip"><Star size={16} />Consejo: Usa los filtros para enfocarte en lo que necesitas.</p></Card><Card title="Actividad de la sesión" className="tactivity"><Metric label="Mensajes OK" value={String(ok)} percent={`${pct(ok, traffic.length)}%`} ok /><Metric label="Timeouts" value={String(timeout)} percent={`${pct(timeout, traffic.length)}%`} warn /><Metric label="Errores CRC" value={String(crc)} percent={`${pct(crc, traffic.length)}%`} danger /><Metric label="Excepciones" value={String(exception)} percent={`${pct(exception, traffic.length)}%`} purple /><dl><dt>Tiempo total</dt><dd>—</dd><dt>Trama más rápida</dt><dd>—</dd><dt>Trama más lenta</dt><dd>—</dd></dl></Card></div>; }
 
-function Card({ title, children, action, className = "" }: { title: string; children: ReactNode; action?: ReactNode; className?: string }) { return <section className={`card ${className}`}><header><h2>{title}</h2>{action}</header>{children}</section>; }
+function Card({ title, children, action, className = "", style }: { title: string; children: ReactNode; action?: ReactNode; className?: string; style?: React.CSSProperties }) { return <section className={`card ${className}`} style={style}><header><h2>{title}</h2>{action}</header>{children}</section>; }
 function Empty({ text }: { text: string }) { return <p className="note"><Info size={16} />{text}</p>; }
 function Table({ columns, rows }: { columns: ReactNode[]; rows: ReactNode[][] }) { return <div className="table"><div className="tr head" style={{ gridTemplateColumns: `repeat(${columns.length},minmax(0,1fr))` }}>{columns.map((column, index) => <span key={index}>{column}</span>)}</div>{rows.map((row, rowIndex) => <div className="tr" key={rowIndex} style={{ gridTemplateColumns: `repeat(${columns.length},minmax(0,1fr))` }}>{row.map((cell, cellIndex) => <span key={cellIndex}>{cell}</span>)}</div>)}</div>; }
 function Field({ label, value, suffix, select }: { label: string; value: string; suffix?: string; select?: boolean }) { return <label className="field"><span>{label}</span>{select ? <select defaultValue={value}><option>{value}</option></select> : <input defaultValue={value} />}{suffix ? <small>{suffix}</small> : null}</label>; }
@@ -646,7 +872,7 @@ function SelectField({ label, value, onChange, options, labels, empty = "Sin opc
 function PortSelectRow({ ports, port, setPort, refreshPorts }: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void }) { const options = ports.length > 0 ? ports.map((item) => item.path) : [""]; return <div className="field" style={{ gridTemplateColumns: "1fr 38px 1.15fr", alignItems: "center" }}><span>Puerto</span><button className="ghost" onClick={refreshPorts} title="Recargar puertos" style={{ minWidth: 38, height: 34, padding: 0 }}><RefreshCw size={15} /></button><select value={port} onChange={(event) => setPort(event.target.value)}>{options.map((option) => <option key={option || "empty"} value={option}>{option || "Sin puertos"}</option>)}</select></div>; }
 function Tool({ icon: Icon, label, tone, onClick }: { icon: LucideIcon; label: string; tone?: "ok" | "danger"; onClick?: () => void }) { return <button className={tone ?? ""} onClick={onClick}><Icon size={18} />{label}</button>; }
 function Dot() { return <span className="dot" />; }
-function Kpi({ icon, label, value, tone }: { icon: string; label: string; value: string; tone?: string }) { return <article className={`kpi ${tone ?? ""}`}><b>{icon}</b><span>{label}</span><strong>{value}</strong></article>; }
+function Kpi({ icon, label, value, tone }: { icon: ReactNode; label: string; value: string; tone?: string }) { return <article className={`kpi ${tone ?? ""}`}><b>{icon}</b><span>{label}</span><strong>{value}</strong></article>; }
 function Status({ status }: { status: Status }) { const ok = status === "OK" || status === "Aprobado"; return <strong className={ok ? "okstatus" : status === "Excepción" ? "purpletext" : status === "Pendiente" ? "muted" : "badstatus"}>{ok ? <CheckCircle2 size={14} /> : status === "Pendiente" ? null : <AlertTriangle size={14} />} {status}</strong>; }
 function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
 function Tile({ icon: Icon, label, value, note }: { icon: LucideIcon; label: string; value: string; note: string }) { return <article><Icon size={20} /><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }
