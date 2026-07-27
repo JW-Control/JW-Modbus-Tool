@@ -1,0 +1,257 @@
+{
+  "format": "jwmodbus-session",
+  "version": 1,
+  "session": {
+    "id": "session-1783830131403",
+    "name": "Nueva_sesion_Modbus",
+    "createdAt": "2026-07-12T04:21:51.062Z",
+    "updatedAt": "2026-07-12T04:23:03.119Z",
+    "status": "Modificada",
+    "notes": ""
+  },
+  "connection": {
+    "protocol": "RTU",
+    "port": "COM14",
+    "baudRate": 115200,
+    "dataBits": 8,
+    "parity": "none",
+    "stopBits": 1,
+    "timeoutMs": 1000
+  },
+  "devices": [
+    {
+      "id": 2,
+      "name": "Slave ID 2",
+      "named": false,
+      "active": true
+    }
+  ],
+  "activeSlaveId": 2,
+  "stats": {
+    "requests": 10,
+    "responses": 1,
+    "errors": 0,
+    "timeouts": 0
+  },
+  "quickReads": [],
+  "registerSnapshot": [],
+  "activity": [
+    {
+      "id": 1,
+      "at": "2026-07-12T04:21:55.153Z",
+      "ms": 9,
+      "slave": 2,
+      "device": "Slave ID 2",
+      "fn": "FC03",
+      "fnKey": "fc3",
+      "label": "Escaneo detectó respuesta",
+      "address": 40000,
+      "range": "40000 / 1 reg",
+      "qty": 1,
+      "values": "40000=1234",
+      "rows": [
+        {
+          "raw": 0,
+          "address": "40000",
+          "name": "Velocidad_Ref",
+          "value": "1234",
+          "type": "uint16",
+          "access": "R/W",
+          "status": "OK"
+        }
+      ],
+      "status": "OK"
+    }
+  ],
+  "traffic": [],
+  "tests": [
+    {
+      "enabled": true,
+      "step": 1,
+      "slave": 2,
+      "device": "Slave ID 2",
+      "fn": "fc3",
+      "label": "FC03 Read Holding Registers",
+      "address": 40000,
+      "amount": 6,
+      "expected": "6 regs",
+      "timeout": 1000,
+      "result": "Pendiente"
+    },
+    {
+      "enabled": true,
+      "step": 2,
+      "slave": 2,
+      "device": "Slave ID 2",
+      "fn": "fc4",
+      "label": "FC04 Read Input Registers",
+      "address": 30000,
+      "amount": 4,
+      "expected": "4 regs",
+      "timeout": 1000,
+      "result": "Pendiente"
+    },
+    {
+      "enabled": true,
+      "step": 3,
+      "slave": 2,
+      "device": "Slave ID 2",
+      "fn": "fc1",
+      "label": "FC01 Read Coils",
+      "address": 0,
+      "amount": 8,
+      "expected": "8 coils",
+      "timeout": 1000,
+      "result": "Pendiente"
+    },
+    {
+      "enabled": true,
+      "step": 4,
+      "slave": 2,
+      "device": "Slave ID 2",
+      "fn": "fc2",
+      "label": "FC02 Read Discrete Inputs",
+      "address": 0,
+      "amount": 8,
+      "expected": "8 inputs",
+      "timeout": 1000,
+      "result": "Pendiente"
+    }
+  ],
+  "testsRuntime": {
+    "format": "jwmodbus-tests-runtime",
+    "version": 6,
+    "savedAt": "2026-07-12T04:22:59.505Z",
+    "selectedScenario": "normal",
+    "simulatorState": "Detenido",
+    "steps": [
+      {
+        "enabled": true,
+        "slave": "2",
+        "fn": "fc6",
+        "address": "40000",
+        "quantity": "1",
+        "value": "1234",
+        "validationMode": "response",
+        "expected": "",
+        "timeoutMs": "1000"
+      },
+      {
+        "enabled": true,
+        "slave": "2",
+        "fn": "fc3",
+        "address": "40000",
+        "quantity": "1",
+        "value": "",
+        "validationMode": "exact",
+        "expected": "1234",
+        "timeoutMs": "1000"
+      },
+      {
+        "enabled": true,
+        "slave": "2",
+        "fn": "fc5",
+        "address": "0",
+        "quantity": "1",
+        "value": "ON",
+        "validationMode": "response",
+        "expected": "",
+        "timeoutMs": "1000"
+      },
+      {
+        "enabled": true,
+        "slave": "2",
+        "fn": "fc15",
+        "address": "0",
+        "quantity": "4",
+        "value": "1,0,1,0",
+        "validationMode": "response",
+        "expected": "",
+        "timeoutMs": "1000"
+      },
+      {
+        "enabled": true,
+        "slave": "2",
+        "fn": "fc16",
+        "address": "40020",
+        "quantity": "3",
+        "value": "10,20,30",
+        "validationMode": "response",
+        "expected": "",
+        "timeoutMs": "1000"
+      },
+      {
+        "enabled": true,
+        "slave": "2",
+        "fn": "fc4",
+        "address": "30000",
+        "quantity": "8",
+        "value": "",
+        "validationMode": "count",
+        "expected": "",
+        "timeoutMs": "1000"
+      },
+      {
+        "enabled": true,
+        "slave": "2",
+        "fn": "fc1",
+        "address": "0",
+        "quantity": "8",
+        "value": "",
+        "validationMode": "count",
+        "expected": "",
+        "timeoutMs": "1000"
+      },
+      {
+        "enabled": true,
+        "slave": "2",
+        "fn": "fc2",
+        "address": "0",
+        "quantity": "8",
+        "value": "",
+        "validationMode": "count",
+        "expected": "",
+        "timeoutMs": "1000"
+      }
+    ],
+    "scenarios": {
+      "normal": {
+        "icon": "OK",
+        "name": "Operacion normal",
+        "desc": "Verifica lectura y escritura correcta.",
+        "color": "shield"
+      },
+      "timeout": {
+        "icon": "TO",
+        "name": "Timeout detectado",
+        "desc": "Simula dispositivos no disponibles.",
+        "color": "clock"
+      },
+      "crc": {
+        "icon": "CRC",
+        "name": "Error CRC detectado",
+        "desc": "Introduce errores de CRC en la trama.",
+        "color": "warn"
+      },
+      "exception": {
+        "icon": "EX",
+        "name": "Excepcion Modbus",
+        "desc": "Fuerza codigos de excepcion (01, 02, 03).",
+        "color": "bad"
+      }
+    },
+    "lastRun": {
+      "total": 8,
+      "executed": 8,
+      "passed": 8,
+      "failed": 0,
+      "timeouts": 0,
+      "otherFailed": 0,
+      "responsive": 8,
+      "avgMs": 10,
+      "lastRunAt": "23:22:59"
+    }
+  },
+  "registerMaps": [],
+  "templates": []
+}
