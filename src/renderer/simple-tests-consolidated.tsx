@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { CheckCircle2, Activity, AlertTriangle, ListOrdered } from "lucide-react";
 
-export type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc5" | "fc6" | "fc15" | "fc16";
+export type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc5" | "fc6" | "fc15" | "fc16" | "delay";
 export type Result = "Pendiente" | "Ejecutando" | "Aprobado" | "Timeout" | "CRC Error" | "Excepcion" | "Validacion fallida" | "Error";
 export type ValidationMode = "response" | "count" | "exact" | "byAddress";
 type ScenarioColor = "shield" | "clock" | "warn" | "bad" | "cyan";
@@ -135,10 +136,11 @@ const labels: Record<Fn, string> = {
   fc5: "FC05 Write Single Coil",
   fc6: "FC06 Write Single Register",
   fc15: "FC15 Write Multiple Coils",
-  fc16: "FC16 Write Multiple Registers"
+  fc16: "FC16 Write Multiple Registers",
+  delay: "Retardo (ms)"
 };
 
-const functionOrder: Fn[] = ["fc1", "fc2", "fc3", "fc4", "fc5", "fc6", "fc15", "fc16"];
+const functionOrder: Fn[] = ["fc1", "fc2", "fc3", "fc4", "fc5", "fc6", "fc15", "fc16", "delay"];
 const readFns = new Set<Fn>(["fc1", "fc2", "fc3", "fc4"]);
 const bitFns = new Set<Fn>(["fc1", "fc2", "fc5", "fc15"]);
 const defaultScenarioIds = new Set(["normal", "timeout", "crc", "exception"]);
@@ -703,6 +705,13 @@ export function classifyStepErrorResult(message: string): Result {
 }
 
 async function executeStep(step: TestStep) {
+  if (step.fn === "delay") {
+    const ms = parseInt(step.value) || 1000;
+    await new Promise(resolve => setTimeout(resolve, ms));
+    const at = new Date().toLocaleTimeString("es-PE", { hour12: false });
+    return { ...step, result: "Aprobado" as Result, detail: `Retardo completado en ${ms} ms.`, at, elapsedMs: ms, rows: [] };
+  }
+
   const modbus = window.jwModbus?.modbus;
   if (!modbus) throw new Error("Backend Modbus no disponible.");
 
@@ -1008,8 +1017,22 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
         </div>
         <div className="testsPlanTable">
           <table>
+            <colgroup>
+              <col style={{ width: '40px' }} />
+              <col style={{ width: '45px' }} />
+              <col style={{ width: '60px' }} />
+              <col style={{ width: '160px' }} />
+              <col style={{ width: '90px' }} />
+              <col style={{ width: '85px' }} />
+              <col style={{ width: '90px' }} />
+              <col style={{ width: '145px' }} />
+              <col style={{ width: 'auto' }} />
+              <col style={{ width: '80px' }} />
+              <col style={{ width: '110px' }} />
+              <col style={{ width: '35px' }} />
+            </colgroup>
             <thead><tr><th>Activo</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad</th><th>Valor</th><th>Validacion</th><th>Esperado</th><th>Timeout</th><th>Resultado</th><th /></tr></thead>
-            <tbody>{state.steps.map((step, index) => <StepRow key={step.id} step={step} index={index} onPatch={(patch) => patchStep(index, patch)} onFn={(fn) => changeFn(index, fn)} onValue={(value) => changeValue(index, value)} onValidation={(mode) => changeValidation(index, mode)} onDelete={() => setState((current) => ({ ...current, steps: current.steps.filter((_, itemIndex) => itemIndex !== index), detailIndex: null }))} />)}</tbody>
+            <tbody>{state.steps.map((step, index) => <StepRow key={step.id} step={step} index={index} onPatch={(patch) => patchStep(index, patch)} onFn={(fn) => changeFn(index, fn)} onValue={(value) => changeValue(index, value)} onValidation={(mode) => changeValidation(index, mode)} onDelete={() => setState((current) => ({ ...current, steps: current.steps.filter((_, itemIndex) => itemIndex !== index), detailIndex: null }))} onReorder={(from, to) => { if (from === to) return; setState((current) => { const steps = [...current.steps]; const [moved] = steps.splice(from, 1); steps.splice(to, 0, moved); return { ...current, steps, detailIndex: null }; }); }} />)}</tbody>
           </table>
         </div>
         <p className="testsInfo">Cantidad se usa en lecturas. Valor se usa en escrituras. Validacion define si basta respuesta/cantidad o si se comparan valores exactos.</p>
@@ -1021,10 +1044,10 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
       </div>
 
       <div className="testsKpis">
-        <KpiRing title="Tasa de exito" value={`${summary.rate}%`} sub={summary.executed ? `Ultima ejecucion: ${summary.passed}/${summary.executed} aprobados` : "Sin ejecucion"} tone="success" />
-        <KpiText title="Latencia promedio" value={summary.avg == null ? "-" : `${summary.avg} ms`} sub={summary.responsive ? `Ultima ejecucion: ${summary.responsive} respuesta(s)${summary.timeouts ? `; ${summary.timeouts} timeout(s) excluidos` : ""}` : summary.running ? "Esperando respuesta" : "Sin datos todavia"} />
-        <KpiText title="Errores" value={String(summary.failed)} sub={summary.failed ? `${summary.timeouts} timeout(s), ${summary.otherFailed} otro(s)` : "Ultima ejecucion"} danger={summary.failed > 0} />
-        <KpiRing title="Pasos completados" value={`${summary.executed}/${summary.active}`} sub={summary.running ? `${summary.running} en curso` : "Ultima ejecucion"} tone="steps" />
+        <KpiRingCard title="Tasa de exito" value={`${summary.rate}%`} sub={summary.executed ? `Ultima ejecucion: ${summary.passed}/${summary.executed} aprobados` : "Sin ejecucion"} tone="success" percent={summary.rate || 0} />
+        <KpiCard title="Latencia promedio" value={summary.avg == null ? "-" : `${summary.avg} ms`} sub={summary.responsive ? `Ultima ejecucion: ${summary.responsive} respuesta(s)${summary.timeouts ? `; ${summary.timeouts} timeout(s) excluidos` : ""}` : summary.running ? "Esperando respuesta" : "Sin datos todavia"} tone="neutral" icon={Activity} />
+        <KpiCard title="Errores" value={String(summary.failed)} sub={summary.failed ? `${summary.timeouts} timeout(s), ${summary.otherFailed} otro(s)` : "Ultima ejecucion"} tone={summary.failed > 0 ? "danger" : "neutral"} icon={AlertTriangle} />
+        <KpiRingCard title="Pasos completados" value={`${summary.executed}/${summary.active}`} sub={summary.running ? `${summary.running} en curso` : "Ultima ejecucion"} tone="steps" percent={summary.active > 0 ? (summary.executed / summary.active) * 100 : 0} />
       </div>
 
       <section className="card testsLogCard">
@@ -1041,22 +1064,22 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   );
 }
 
-function StepRow({ step, index, onPatch, onFn, onValue, onValidation, onDelete }: { step: TestStep; index: number; onPatch: (patch: Partial<TestStep>) => void; onFn: (fn: Fn) => void; onValue: (value: string) => void; onValidation: (mode: ValidationMode) => void; onDelete: () => void }) {
+function StepRow({ step, index, onPatch, onFn, onValue, onValidation, onDelete, onReorder }: { step: TestStep; index: number; onPatch: (patch: Partial<TestStep>) => void; onFn: (fn: Fn) => void; onValue: (value: string) => void; onValidation: (mode: ValidationMode) => void; onDelete: () => void; onReorder: (from: number, to: number) => void }) {
   const read = isRead(step.fn);
   const expectedDisabled = step.validationMode === "response" || step.validationMode === "count";
   const modeOptions: ValidationMode[] = isWrite(step.fn) ? ["response", "exact", "byAddress"] : ["count", "exact", "byAddress"];
   return (
-    <tr>
+    <tr draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", index.toString()); e.dataTransfer.effectAllowed = "move"; }} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => { e.preventDefault(); const from = Number(e.dataTransfer.getData("text/plain")); onReorder(from, index); }}>
       <td><input type="checkbox" checked={step.enabled} onChange={(event) => onPatch({ enabled: event.target.checked })} /></td>
-      <td>{index + 1}</td>
-      <td><input inputMode="numeric" value={step.slave} onChange={(event) => onPatch({ slave: event.target.value.replace(/\D/g, "").slice(0, 3) })} onBlur={() => onPatch({ slave: clampSlave(step.slave, 2) })} /></td>
+      <td style={{ cursor: 'grab' }} title="Arrastra para reordenar">☰ {index + 1}</td>
+      <td><input inputMode="numeric" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.slave} onChange={(event) => onPatch({ slave: event.target.value.replace(/\D/g, "").slice(0, 3) })} onBlur={() => onPatch({ slave: clampSlave(step.slave, 2) })} /></td>
       <td><select value={step.fn} onChange={(event) => onFn(event.target.value as Fn)}>{functionOrder.map((fn) => <option key={fn} value={fn}>{labels[fn]}</option>)}</select></td>
-      <td><input inputMode="numeric" value={step.address} onChange={(event) => onPatch({ address: sanitizeNumericText(event.target.value, 8) })} /></td>
-      <td><input inputMode="numeric" disabled={!read} value={read ? step.quantity : countFor(step)} onChange={(event) => onPatch({ quantity: event.target.value.replace(/\D/g, "").slice(0, 4) })} /></td>
-      <td><input disabled={read} value={read ? "-" : step.value} onChange={(event) => onValue(event.target.value)} /></td>
-      <td><select value={step.validationMode} onChange={(event) => onValidation(event.target.value as ValidationMode)}>{modeOptions.map((mode) => <option key={mode} value={mode}>{validationLabels[mode]}</option>)}</select></td>
-      <td><input disabled={expectedDisabled} value={expectedDisabled ? expectedAutoText(step) : step.expected} placeholder={expectedAutoText(step)} onChange={(event) => onPatch({ expected: event.target.value })} /></td>
-      <td><input inputMode="numeric" value={step.timeoutMs} onChange={(event) => onPatch({ timeoutMs: event.target.value.replace(/\D/g, "").slice(0, 5) })} /></td>
+      <td><input inputMode="numeric" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.address} onChange={(event) => onPatch({ address: sanitizeNumericText(event.target.value, 8) })} /></td>
+      <td><input inputMode="numeric" disabled={!read || step.fn === "delay"} value={step.fn === "delay" ? "-" : (read ? step.quantity : countFor(step))} onChange={(event) => onPatch({ quantity: event.target.value.replace(/\D/g, "").slice(0, 4) })} /></td>
+      <td><input disabled={read && step.fn !== "delay"} value={read && step.fn !== "delay" ? "-" : step.value} onChange={(event) => onValue(event.target.value)} /></td>
+      <td><select disabled={step.fn === "delay"} value={step.validationMode} onChange={(event) => onValidation(event.target.value as ValidationMode)}>{modeOptions.map((mode) => <option key={mode} value={mode}>{validationLabels[mode]}</option>)}</select></td>
+      <td><input disabled={expectedDisabled || step.fn === "delay"} value={step.fn === "delay" ? "-" : (expectedDisabled ? expectedAutoText(step) : step.expected)} placeholder={expectedAutoText(step)} onChange={(event) => onPatch({ expected: event.target.value })} /></td>
+      <td><input inputMode="numeric" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.timeoutMs} onChange={(event) => onPatch({ timeoutMs: event.target.value.replace(/\D/g, "").slice(0, 5) })} /></td>
       <td><ResultPill result={step.result} /></td>
       <td><button className="tiny" onClick={onDelete} title="Eliminar paso">x</button></td>
     </tr>
@@ -1092,14 +1115,50 @@ function SimulatorPanel({ state, setState, port, baud }: { state: TestsState; se
   return <section className="card testsSimulatorCard"><h2>Simulador slave <small>(PC como slave)</small></h2><label>Estado<input disabled value={state.simulatorState} /></label><label>Direccion slave<input inputMode="numeric" defaultValue="1" /></label><label>Puerto<input disabled value={port || "Sin puerto"} /></label><label>Baud Rate<input disabled value={String(baud)} /></label><button className="purple" onClick={() => setState((current) => ({ ...current, simulatorState: current.simulatorState === "Detenido" ? "Preparado" : "Detenido" }))}>{state.simulatorState === "Detenido" ? "Preparar" : "Detener"} simulador slave</button><button disabled>Configurar</button></section>;
 }
 
-function KpiRing({ title, value, sub, tone }: { title: string; value: string; sub: string; tone: "success" | "steps" }) {
-  const parts = value.split("/");
-  const percent = parts.length === 2 ? (Number(parts[0]) / Math.max(1, Number(parts[1]))) * 100 : Number(value.replace("%", "")) || 0;
-  return <section className="card testsKpiCard"><div className={`testsRing ${tone}`} style={{ background: `conic-gradient(${tone === "success" ? "var(--green)" : "var(--cyan)"} ${percent}%, #0b3952 0)` }}><strong>{value}</strong><small>{tone === "success" ? "Exito" : "Pasos"}</small></div><div><h3>{title}</h3><p>{sub}</p></div></section>;
+function KpiRingCard({ title, value, sub, tone, percent }: { title: string; value: string; sub: string; tone: "success" | "steps"; percent: number }) {
+  const colors = { success: "#2ecc71", steps: "#00bcd4" };
+  const size = 64;
+  const strokeWidth = 5;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const offset = circumference - (percent / 100) * circumference;
+
+  return (
+    <section className="card testsKpiCard testsKpiModern">
+      <div style={{ width: size, height: size, position: 'relative', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <svg width={size} height={size} style={{ transform: 'rotate(-90deg)', position: 'absolute', top: 0, left: 0 }}>
+          <circle stroke="rgba(255,255,255,0.08)" fill="transparent" strokeWidth={strokeWidth} r={radius} cx={size / 2} cy={size / 2} />
+          <circle stroke={colors[tone]} fill="transparent" strokeWidth={strokeWidth} strokeLinecap="round" strokeDasharray={`${circumference} ${circumference}`} style={{ strokeDashoffset: offset, transition: 'stroke-dashoffset 0.5s ease' }} r={radius} cx={size / 2} cy={size / 2} />
+        </svg>
+        <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#fff', zIndex: 1, lineHeight: 1 }}>{value}</span>
+      </div>
+      <div>
+        <h3>{title}</h3>
+        <p>{sub}</p>
+      </div>
+    </section>
+  );
 }
 
-function KpiText({ title, value, sub, danger }: { title: string; value: string; sub: string; danger?: boolean }) {
-  return <section className="card testsKpiCard testsKpiText"><div><h3>{title}</h3><strong className={danger ? "danger" : ""}>{value}</strong><p>{sub}</p></div></section>;
+function KpiCard({ title, value, sub, tone, icon: Icon }: { title: string; value: string; sub: string; tone: "success" | "steps" | "danger" | "neutral"; icon: any }) {
+  const colors = {
+    success: "#2ecc71",
+    steps: "#00bcd4",
+    danger: "#e74c3c",
+    neutral: "#95a5a6"
+  };
+  return (
+    <section className="card testsKpiCard testsKpiModern">
+      <div className={`testsKpiIconBox ${tone}`}>
+        <Icon size={26} color={colors[tone]} strokeWidth={2.5} />
+      </div>
+      <div>
+        <h3>{title}</h3>
+        <strong className={tone === "danger" ? "danger" : ""}>{value}</strong>
+        <p>{sub}</p>
+      </div>
+    </section>
+  );
 }
 
 function ResultPill({ result }: { result: Result }) {
@@ -1108,7 +1167,7 @@ function ResultPill({ result }: { result: Result }) {
 }
 
 function ExecutionTable({ steps, onDetail }: { steps: TestStep[]; onDetail: (index: number) => void }) {
-  return <div className="testsExecutionTable"><table><thead><tr><th>Hora</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad/Valor</th><th>Resultado</th><th>Tiempo</th><th>Detalle</th><th>Info</th></tr></thead><tbody>{steps.map((step, index) => <tr key={step.id}><td>{step.at || "-"}</td><td>{index + 1}</td><td>Slave ID {step.slave || "-"}</td><td>{labels[step.fn]}</td><td>{step.address}</td><td>{isRead(step.fn) ? countFor(step) : step.value}</td><td><ResultPill result={step.result} /></td><td>{step.elapsedMs == null ? "-" : `${step.elapsedMs} ms`}</td><td>{step.detail || "Pendiente de ejecucion."}</td><td><button className="tiny" onClick={() => onDetail(index)}>Info</button></td></tr>)}</tbody></table></div>;
+  return <div className="testsExecutionTable"><table><thead><tr><th>Hora</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad/Valor</th><th>Resultado</th><th>Tiempo</th><th>Detalle</th><th>Info</th></tr></thead><tbody>{[...steps].map((step, originalIndex) => ({ step, originalIndex })).reverse().map(({ step, originalIndex }) => <tr key={step.id}><td>{step.at || "-"}</td><td>{originalIndex + 1}</td><td>Slave ID {step.slave || "-"}</td><td>{labels[step.fn]}</td><td>{step.address}</td><td>{isRead(step.fn) ? countFor(step) : step.value}</td><td><ResultPill result={step.result} /></td><td>{step.elapsedMs == null ? "-" : `${step.elapsedMs} ms`}</td><td>{step.detail || "Pendiente de ejecucion."}</td><td><button className="tiny" onClick={() => onDetail(originalIndex)}>Info</button></td></tr>)}</tbody></table></div>;
 }
 
 function StepDetail({ step, index, onClose }: { step: TestStep; index: number; onClose: () => void }) {
