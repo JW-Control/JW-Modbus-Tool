@@ -6,7 +6,11 @@
 .devices.grid {
   height: 100%;
   min-height: 0;
-  grid-template-rows: max-content minmax(0, 1fr) !important;
+  grid-template-rows: max-content minmax(320px, 1fr) !important;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #2d87aa #071d30;
 }
 
 .devices > .card,
@@ -123,9 +127,10 @@
 }
 
 .quickbar {
-  grid-template-columns: minmax(260px, 1.35fr) minmax(140px, .55fr) minmax(120px, .45fr) 120px;
-  gap: 16px;
-  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
   margin: 14px 0 12px;
   flex: 0 0 auto;
 }
@@ -136,7 +141,8 @@
   align-items: stretch;
   gap: 7px;
   margin: 0;
-  grid-template-columns: none;
+  flex: 1 1 0%;
+  min-width: 90px;
 }
 
 .quickbar .field span {
@@ -151,9 +157,15 @@
   min-height: 40px;
 }
 
+.quickbar .field:first-child {
+  flex: 2 1 0%;
+  min-width: 160px;
+}
+
 .quickbar .primary {
-  align-self: end;
+  align-self: flex-end;
   margin: 0;
+  flex: 0 0 auto;
 }
 
 .quickPanel .note {
@@ -251,7 +263,7 @@
   height: 100%;
   min-height: 0;
   grid-template-columns: minmax(0, 1.38fr) minmax(360px, .9fr) !important;
-  grid-template-rows: auto auto auto minmax(0, 1fr) !important;
+  grid-template-rows: auto minmax(0, 1fr) !important;
   align-content: stretch;
   overflow: hidden;
 }
@@ -262,6 +274,7 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+  align-items: start;
 }
 
 .sessions .top button {
@@ -470,7 +483,7 @@
 @media (max-height: 850px) {
   .devices,
   .devices.grid {
-    grid-template-rows: max-content minmax(0, 1fr) !important;
+    grid-template-rows: max-content minmax(320px, 1fr) !important;
   }
 
   .devices .connect .field {
@@ -492,7 +505,7 @@
 
   .sessions,
   .sessions.grid {
-    grid-template-rows: auto auto auto minmax(0, 1fr) !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
   }
 
   .sessions .current h1 {
@@ -578,7 +591,6 @@
 .testsPlanTable table,
 .testsExecutionTable table {
   width: 100%;
-  min-width: 1320px;
   border-collapse: collapse;
 }
 
@@ -803,7 +815,7 @@
   white-space: normal;
 }
 
-.testsKpiText {
+.testsKpiCard.testsKpiText {
   grid-template-columns: minmax(0, 1fr);
   align-content: center;
 }
@@ -871,7 +883,7 @@
 }
 
 .testsExecutionTable table {
-  min-width: 1180px;
+  /* Removed min-width to avoid scrollbars */
 }
 
 .testsResult {
@@ -1320,3 +1332,20 @@
 }
 .active-pill { background: rgba(34, 197, 94, 0.2); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.3); }
 .pend-pill { background: rgba(249, 115, 22, 0.2); color: #f97316; border: 1px solid rgba(249, 115, 22, 0.3); }
+
+/* Auto-escalado responsive para pantallas pequeñas (Laptops de 1366x768, 1280x720, etc.) */
+@media (max-width: 1400px), (max-height: 850px) {
+  html { zoom: 0.90; }
+}
+
+@media (max-width: 1280px), (max-height: 768px) {
+  html { zoom: 0.82; }
+}
+
+@media (max-width: 1150px), (max-height: 680px) {
+  html { zoom: 0.75; }
+}
+
+@media (max-width: 1024px), (max-height: 600px) {
+  html { zoom: 0.65; }
+}

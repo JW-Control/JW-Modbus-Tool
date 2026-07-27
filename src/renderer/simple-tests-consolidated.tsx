@@ -87,6 +87,7 @@ interface TestsState {
   stopRequested: boolean;
   managingScenarios: boolean;
   detailIndex: number | null;
+  history: TestStep[];
 }
 
 export interface TestsRuntimeState {
@@ -531,7 +532,8 @@ function createInitialState(runtimeState: TestsRuntimeState | null, defaultSlave
     running: false,
     stopRequested: false,
     managingScenarios: false,
-    detailIndex: null
+    detailIndex: null,
+    history: []
   };
 }
 
@@ -931,13 +933,9 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   }
 
   function exportLog() {
-    const executed = state.steps.filter((step) => isFinalResult(step.result));
-    if (executed.length === 0) {
-      onMessage("Aun no hay una ejecucion para exportar.");
-      return;
-    }
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-    downloadTextFile(`jw-modbus-pruebas-${stamp}.csv`, executionCsv(state.steps), "text/csv;charset=utf-8");
+    if (!(state.history || []).some((step) => isFinalResult(step.result))) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    downloadTextFile(`jw-modbus-pruebas-${stamp}.csv`, executionCsv(state.history || []), "text/csv;charset=utf-8");
     onMessage("Registro de ejecucion exportado a CSV.");
   }
 
@@ -966,7 +964,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
       try {
         const executed = await executeStep(step);
         working = working.map((item, itemIndex) => itemIndex === index ? executed : item);
-        setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? executed : item) }));
+        setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? executed : item), history: [...(current.history || []), executed].slice(-100) }));
       } catch (error) {
         const message = String(error instanceof Error ? error.message : error || "Error de comunicacion.");
         const result = classifyStepErrorResult(message);
@@ -980,7 +978,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
           at: new Date().toLocaleTimeString("es-PE", { hour12: false })
         };
         working = working.map((item, itemIndex) => itemIndex === index ? failed : item);
-        setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item) }));
+        setState((current) => ({ ...current, steps: current.steps.map((item, itemIndex) => itemIndex === index ? failed : item), history: [...(current.history || []), failed].slice(-100) }));
       }
       
       // Añadir Turnaround Delay entre peticiones Modbus para dar tiempo a que los esclavos
@@ -1033,11 +1031,11 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
         <div className="testsLogHeader">
           <h2>Registro de ejecucion</h2>
           <div>
-            <button onClick={() => setState((current) => ({ ...current, detailIndex: null, steps: current.steps.map(resetExecution) }))}>Limpiar registro</button>
-            <button onClick={exportLog} disabled={!state.steps.some((step) => isFinalResult(step.result))}>Exportar CSV</button>
+            <button onClick={() => setState((current) => ({ ...current, detailIndex: null, history: [] }))}>Limpiar registro</button>
+            <button onClick={exportLog} disabled={!(state.history || []).some((step) => isFinalResult(step.result))}>Exportar CSV</button>
           </div>
         </div>
-        {state.detailIndex == null ? <ExecutionTable steps={state.steps} onDetail={(index) => setState((current) => ({ ...current, detailIndex: index }))} /> : <StepDetail step={state.steps[state.detailIndex]} index={state.detailIndex} onClose={() => setState((current) => ({ ...current, detailIndex: null }))} />}
+        {state.detailIndex == null ? <ExecutionTable steps={state.history || []} onDetail={(index) => setState((current) => ({ ...current, detailIndex: index }))} /> : <StepDetail step={(state.history || [])[state.detailIndex]} index={state.detailIndex} onClose={() => setState((current) => ({ ...current, detailIndex: null }))} />}
       </section>
     </div>
   );

@@ -705,12 +705,12 @@ function SessionsView(props: { sessionName: string; setSessionName: (value: stri
       <button onClick={props.onSaveAs}><Save size={16} />Guardar como</button>
     </div>
     
-    <div style={{ display: "flex", flexDirection: "column", gap: "14px", gridRow: "2 / 4" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px", gridRow: "2 / 3" }}>
       <Card title="Sesión actual" className="current" action={<span className="oktext">● {props.sessionState}</span>}><h1><input className="sessionNameInput" value={props.sessionName} onChange={(event) => props.setSessionName(event.target.value)} aria-label="Nombre de sesión" /> <Pencil size={15} /></h1><div className="facts"><Fact label="Rol" value="PC Master" /><Fact label="Protocolo" value="RTU" /><Fact label="Slave activo" value={props.activeId ? `${displayDeviceName(props.devices, props.activeId)} — ID ${props.activeId}` : "Sin seleccionar"} /><Fact label="Conexión" value={connectionText} /><Fact label="Última actividad" value={props.activity[0] ? time(props.activity[0].at) : "—"} /></div><button className="primary wide"><Play size={16} />Continuar sesión</button></Card>
       <Card title="Sesiones recientes" className="sessionlist"><div className="sessionRows"><SessionRow name={currentName} date={props.sessionFilePath ? shortPath(props.sessionFilePath) : "Actual"} devices={props.devices.length} registers={registerReads} tests={testsProgress} errors={props.stats.errors + failed} status={props.sessionState} action="En curso" /><>{recent.length === 0 ? <Empty text="Aún no hay sesiones guardadas. Presiona Guardar sesión para conservar la actual." /> : recent.map((session) => <SessionRow key={session.filePath} name={session.name} date={fmt(new Date(session.savedAt))} devices={session.devices} registers={session.registers} tests={session.tests} errors={session.errors} status={session.status} action="Abrir" onClick={() => props.onOpen(session.filePath)} />)}</></div></Card>
     </div>
     
-    <div style={{ display: "flex", flexDirection: "column", gap: "14px", gridRow: "2 / 4" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px", gridRow: "1 / 3" }}>
       <Card title="Dispositivos de la sesión" className="what">
       <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
         <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>
