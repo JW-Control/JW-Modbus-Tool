@@ -40,7 +40,7 @@ void setup() {
   Serial.println("Iniciando PLC como Esclavo Modbus...");
 
   // 3. Iniciar el Modbus RTU (Slave ID 1, 9600 Baudios, 8N1)
-  if (!JWPLC_ModbusRTU.begin(2, 9600, SERIAL_8N1)) {
+  if (!JWPLC_ModbusRTU.begin(1, 9600, SERIAL_8N1)) {
     Serial.println("Error al iniciar Modbus RTU.");
     return;
   }
