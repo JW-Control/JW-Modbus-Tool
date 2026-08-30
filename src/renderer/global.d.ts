@@ -40,6 +40,11 @@ declare global {
         electron?: string;
         node?: string;
       };
+      window?: {
+        minimize: () => void;
+        maximize: () => void;
+        close: () => void;
+      };
       serial: {
         listPorts: () => Promise<SerialOperationResult<SerialPortDescriptor[]>>;
         getConnectionState: () => Promise<SerialOperationResult<SerialConnectionState>>;

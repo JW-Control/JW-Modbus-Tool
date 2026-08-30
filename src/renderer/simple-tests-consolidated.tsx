@@ -122,6 +122,8 @@ interface TestsViewProps {
   resetKey: number;
   onRuntimeStateChange: (state: TestsRuntimeState) => void;
   onMessage: (message: string) => void;
+  onSaveSession?: () => void;
+  isSessionSaved?: boolean;
 }
 
 type LegacyStepFields = {
@@ -856,18 +858,20 @@ function downloadTextFile(filename: string, content: string, mimeType: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, onRuntimeStateChange, onMessage }: TestsViewProps) {
+export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, onRuntimeStateChange, onMessage, onSaveSession, isSessionSaved }: TestsViewProps) {
   const defaultSlave = activeSlaveId ?? 2;
   const [state, setState] = useState<TestsState>(() => createInitialState(runtimeState, defaultSlave));
   const stateRef = useRef(state);
   const publishTimerRef = useRef<number | null>(null);
   const publishReadyRef = useRef(false);
   const onRuntimeStateChangeRef = useRef(onRuntimeStateChange);
+  const onSaveSessionRef = useRef(onSaveSession);
   stateRef.current = state;
 
   useEffect(() => {
     onRuntimeStateChangeRef.current = onRuntimeStateChange;
-  }, [onRuntimeStateChange]);
+    onSaveSessionRef.current = onSaveSession;
+  }, [onRuntimeStateChange, onSaveSession]);
 
   useEffect(() => {
     setState(createInitialState(runtimeState, defaultSlave));
@@ -942,6 +946,11 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   }
 
   function savePlanToScenario() {
+    if (!isSessionSaved) {
+      onMessage("Guarda la sesión primero en la barra superior (Guardar sesión) antes de poder guardar el plan.");
+      return;
+    }
+
     setState((current) => {
       const next = {
         ...current,
@@ -956,7 +965,12 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
       publishNow(next);
       return next;
     });
-    onMessage("Plan visible guardado en el escenario actual. Usa Guardar sesion para persistirlo en archivo.");
+    
+    // Esperamos a que React actualice el estado global de la sesión antes de disparar el guardado a disco
+    window.setTimeout(() => {
+      onSaveSessionRef.current?.();
+      onMessage("Plan guardado automáticamente en el archivo de sesión.");
+    }, 100);
   }
 
   function selectScenario(id: string) {
@@ -1122,7 +1136,33 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
         <KpiRingCard title="Tasa de exito" value={`${summary.rate}%`} sub={summary.executed ? `Ultima ejecucion: ${summary.passed}/${summary.executed} aprobados` : "Sin ejecucion"} tone="success" percent={summary.rate || 0} />
         <KpiCard title="Latencia promedio" value={summary.avg == null ? "-" : `${summary.avg} ms`} sub={summary.responsive ? `Ultima ejecucion: ${summary.responsive} respuesta(s)${summary.timeouts ? `; ${summary.timeouts} timeout(s) excluidos` : ""}` : summary.running ? "Esperando respuesta" : "Sin datos todavia"} tone="neutral" icon={Activity} />
         <KpiCard title="Errores" value={String(summary.failed)} sub={summary.failed ? `${summary.timeouts} timeout(s), ${summary.otherFailed} otro(s)` : "Ultima ejecucion"} tone={summary.failed > 0 ? "danger" : "neutral"} icon={AlertTriangle} />
-        <KpiRingCard title="Pasos completados" value={state.looping ? `${summary.executed}` : `${summary.executed}/${summary.active}`} sub={summary.running ? (state.looping ? `Bucle continuo en curso` : `${summary.running} en curso`) : "Ultima ejecucion"} tone="steps" percent={state.looping ? (summary.active > 0 ? ((summary.executed % summary.active) / summary.active) * 100 : 0) : (summary.active > 0 ? (summary.executed / summary.active) * 100 : 0)} />
+        {(() => {
+          const isLoopResult = summary.executed > summary.active || state.looping;
+          const completedValue = isLoopResult ? `${summary.executed}` : `${summary.executed}/${summary.active}`;
+          const completedSub = summary.running 
+            ? (state.looping ? `Bucle continuo en curso` : `${summary.running} en curso`) 
+            : (isLoopResult && summary.active > 0 ? `Ultima ejecucion: ${Math.floor(summary.executed / summary.active)} ciclos` : "Ultima ejecucion");
+          
+          let completedPercent = 0;
+          if (summary.active > 0) {
+            if (isLoopResult) {
+              const mod = summary.executed % summary.active;
+              completedPercent = (mod === 0 && summary.executed > 0 && !summary.running) ? 100 : (mod / summary.active) * 100;
+            } else {
+              completedPercent = (summary.executed / summary.active) * 100;
+            }
+          }
+
+          return (
+            <KpiRingCard 
+              title="Pasos completados" 
+              value={completedValue} 
+              sub={completedSub} 
+              tone="steps" 
+              percent={completedPercent} 
+            />
+          );
+        })()}
       </div>
 
       <section className="card testsLogCard">
@@ -1140,21 +1180,23 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
 }
 
 function StepRow({ step, index, onPatch, onFn, onValue, onValidation, onDelete, onReorder }: { step: TestStep; index: number; onPatch: (patch: Partial<TestStep>) => void; onFn: (fn: Fn) => void; onValue: (value: string) => void; onValidation: (mode: ValidationMode) => void; onDelete: () => void; onReorder: (from: number, to: number) => void }) {
+  const [dragOver, setDragOver] = useState(false);
   const read = isRead(step.fn);
+  const isSingleWrite = step.fn === "fc5" || step.fn === "fc6";
   const expectedDisabled = step.validationMode === "response" || step.validationMode === "count";
   const modeOptions: ValidationMode[] = isWrite(step.fn) ? ["response", "exact", "byAddress"] : ["count", "exact", "byAddress"];
   return (
-    <tr draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", index.toString()); e.dataTransfer.effectAllowed = "move"; }} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => { e.preventDefault(); const from = Number(e.dataTransfer.getData("text/plain")); onReorder(from, index); }}>
+    <tr draggable className={dragOver ? "drag-over" : ""} onDragStart={(e) => { e.dataTransfer.setData("text/plain", index.toString()); e.dataTransfer.effectAllowed = "move"; }} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={(e) => { e.preventDefault(); setDragOver(false); const from = Number(e.dataTransfer.getData("text/plain")); onReorder(from, index); }}>
       <td><input type="checkbox" checked={step.enabled} onChange={(event) => onPatch({ enabled: event.target.checked })} /></td>
       <td style={{ cursor: 'grab' }} title="Arrastra para reordenar">☰ {index + 1}</td>
-      <td><input inputMode="numeric" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.slave} onChange={(event) => onPatch({ slave: event.target.value.replace(/\D/g, "").slice(0, 3) })} onBlur={() => onPatch({ slave: clampSlave(step.slave, 2) })} /></td>
+      <td><input type={step.fn === "delay" ? "text" : "number"} min="1" max="247" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.slave} onChange={(event) => onPatch({ slave: event.target.value.replace(/\D/g, "").slice(0, 3) })} onBlur={() => onPatch({ slave: clampSlave(step.slave, 2) })} /></td>
       <td><select value={step.fn} onChange={(event) => onFn(event.target.value as Fn)}>{functionOrder.map((fn) => <option key={fn} value={fn}>{labels[fn]}</option>)}</select></td>
-      <td><input inputMode="numeric" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.address} onChange={(event) => onPatch({ address: sanitizeNumericText(event.target.value, 8) })} /></td>
-      <td><input inputMode="numeric" disabled={!read || step.fn === "delay"} value={step.fn === "delay" ? "-" : (read ? step.quantity : countFor(step))} onChange={(event) => onPatch({ quantity: event.target.value.replace(/\D/g, "").slice(0, 4) })} /></td>
-      <td><input disabled={read && step.fn !== "delay"} value={read && step.fn !== "delay" ? "-" : step.value} onChange={(event) => onValue(event.target.value)} /></td>
+      <td><input type={step.fn === "delay" ? "text" : "number"} min="0" max="65535" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.address} onChange={(event) => onPatch({ address: sanitizeNumericText(event.target.value, 8) })} /></td>
+      <td><input type={!read || step.fn === "delay" ? "text" : "number"} min="1" disabled={!read || step.fn === "delay"} value={step.fn === "delay" ? "-" : (read ? step.quantity : countFor(step))} onChange={(event) => onPatch({ quantity: event.target.value.replace(/\D/g, "").slice(0, 4) })} /></td>
+      <td><input type={isSingleWrite ? "number" : "text"} min="0" max="65535" disabled={read && step.fn !== "delay"} value={read && step.fn !== "delay" ? "-" : step.value} onChange={(event) => onValue(event.target.value)} /></td>
       <td><select disabled={step.fn === "delay"} value={step.validationMode} onChange={(event) => onValidation(event.target.value as ValidationMode)}>{modeOptions.map((mode) => <option key={mode} value={mode}>{validationLabels[mode]}</option>)}</select></td>
       <td><input disabled={expectedDisabled || step.fn === "delay"} value={step.fn === "delay" ? "-" : (expectedDisabled ? expectedAutoText(step) : step.expected)} placeholder={expectedAutoText(step)} onChange={(event) => onPatch({ expected: event.target.value })} /></td>
-      <td><input inputMode="numeric" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.timeoutMs} onChange={(event) => onPatch({ timeoutMs: event.target.value.replace(/\D/g, "").slice(0, 5) })} /></td>
+      <td><input type={step.fn === "delay" ? "text" : "number"} min="1" step="100" max="60000" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.timeoutMs} onChange={(event) => onPatch({ timeoutMs: event.target.value.replace(/\D/g, "").slice(0, 5) })} /></td>
       <td><ResultPill result={step.result} /></td>
       <td><button className="tiny" onClick={onDelete} title="Eliminar paso">x</button></td>
     </tr>

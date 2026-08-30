@@ -38,6 +38,22 @@ import type {
 } from "../shared/session/types.js";
 
 export function registerIpcHandlers(): void {
+  ipcMain.handle("window:minimize", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    window?.minimize();
+  });
+  ipcMain.handle("window:maximize", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window?.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window?.maximize();
+    }
+  });
+  ipcMain.handle("window:close", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    window?.close();
+  });
   ipcMain.handle("serial:listPorts", async () => toSerialResult(() => serialManager.listPorts()));
   ipcMain.handle("serial:getConnectionState", async () =>
     toSerialResult(async () => serialManager.getConnectionState())

@@ -7,6 +7,11 @@ contextBridge.exposeInMainWorld("jwModbus", {
     electron: process.versions.electron,
     node: process.versions.node
   },
+  window: {
+    minimize: () => ipcRenderer.invoke("window:minimize"),
+    maximize: () => ipcRenderer.invoke("window:maximize"),
+    close: () => ipcRenderer.invoke("window:close")
+  },
   serial: {
     listPorts: () => ipcRenderer.invoke("serial:listPorts"),
     getConnectionState: () => ipcRenderer.invoke("serial:getConnectionState"),

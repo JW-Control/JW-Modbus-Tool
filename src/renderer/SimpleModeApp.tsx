@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
+  AlertCircle,
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   Clock3,
   Database,
@@ -9,6 +12,7 @@ import {
   FlaskConical,
   FolderOpen,
   Info,
+  Minus,
   Monitor,
   Network,
   Pencil,
@@ -19,8 +23,9 @@ import {
   Search,
   Server,
   Settings,
-  Square,
   Star,
+  XCircle,
+  Square,
   Unplug,
   X
 } from "lucide-react";
@@ -558,8 +563,22 @@ export function SimpleModeApp() {
     setQuick([]);
     setMessage(`Slave activo: ${displayNameFor(id)}.`);
   }
-  function renameDevice(id: number, name: string) {
-    setDevices((current) => current.map((device) => device.id === id ? { ...device, name, named: true } : device));
+  function renameDevice(id: number, rawName: string) {
+    setDevices((current) => {
+      let baseName = rawName.trim();
+      if (!baseName) baseName = `Slave ID ${id}`;
+
+      let finalName = baseName;
+      let counter = 1;
+      
+      // Auto-enumerar si el nombre ya existe en OTRO dispositivo (ej. PLC -> PLC 2)
+      while (current.some(d => d.id !== id && d.name.toLowerCase() === finalName.toLowerCase())) {
+        counter++;
+        finalName = `${baseName} ${counter}`;
+      }
+
+      return current.map((device) => device.id === id ? { ...device, name: finalName, named: true } : device);
+    });
   }
   function pushActivity(row: Omit<ActivityRow, "id" | "at">) { setActivity((current) => [{ id: rowId++, at: new Date(), ...row }, ...current].slice(0, 30)); }
   function pushTrafficAction(action: TrafficAction, fn: Fn, device: string, address: number, quantity: number, status: Status) {
@@ -574,7 +593,11 @@ export function SimpleModeApp() {
   }
   function displayNameFor(id: number) { return devices.find((device) => device.id === id)?.name ?? `Slave ID ${id}`; }
 
-  return <main className="shell"><header className="toolbar"><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions"><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons"><span>{busy ? "Procesando…" : "Ayuda"}</span><button>—</button><button>□</button><button>×</button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia: Profesional<br /><small>Versión 1.3.0 (64-bit)</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} />}{view === "registers" && <RegistersView {...{ activeDevice, rFn, setRFn, rAddr, setRAddr, rQty, setRQty, rAutoRead, setRAutoRead, rInterval, setRInterval, regs, selectedRegister, setSelectedRegister, registerRead, activity }} />}{view === "traffic" && <TrafficView traffic={traffic} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{port || "Sin puerto"}</span><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
+  function handleMinimize() { bridge?.window?.minimize?.(); }
+  function handleMaximize() { bridge?.window?.maximize?.(); }
+  function handleClose() { bridge?.window?.close?.(); }
+
+  return <main className="shell"><header className="toolbar" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>{busy && <span>Procesando…</span>}<button onClick={handleMinimize}><Minus size={18} strokeWidth={2} /></button><button onClick={handleMaximize}><Square size={14} strokeWidth={2.5} /></button><button className="close-btn" onClick={handleClose}><X size={18} strokeWidth={2} /></button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia: Profesional<br /><small>Versión 1.3.0 (64-bit)</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} onSaveSession={saveSession} isSessionSaved={!!sessionFilePath} />}{view === "registers" && <RegistersView {...{ activeDevice, rFn, setRFn, rAddr, setRAddr, rQty, setRQty, rAutoRead, setRAutoRead, rInterval, setRInterval, regs, selectedRegister, setSelectedRegister, registerRead, activity }} />}{view === "traffic" && <TrafficView traffic={traffic} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{port || "Sin puerto"}</span><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
 }
 
 function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void; baud: number; setBaud: (value: number) => void; dataBits: number; setDataBits: (value: number) => void; parity: string; setParity: (value: string) => void; stopBits: number; setStopBits: (value: number) => void; timeout: number; setTimeoutMs: (value: number) => void; connected: boolean; devices: Device[]; activeId: number | null; activeDevice: Device | null; selectDevice: (id: number) => void; scanDevices: () => void; lastScan: Date | null; stats: Stats; qFn: Fn; setQFn: (value: Fn) => void; qAddr: number; setQAddr: (value: number) => void; qQty: number; setQQty: (value: number) => void; quick: RegisterRow[]; quickRead: () => void; activity: ActivityRow[]; connect: () => void; disconnect: () => void; clearActivity: () => void }) {
@@ -860,12 +883,133 @@ function RegistersView(props: {
     </div>
   );
 }
-function TrafficView({ traffic }: { traffic: TrafficRow[] }) { const ok = traffic.filter((item) => item.status === "OK").length; const timeout = traffic.filter((item) => item.status === "Timeout").length; const crc = traffic.filter((item) => item.status === "CRC Error").length; const exception = traffic.filter((item) => item.status === "Excepción").length; const selected = traffic[0]; return <div className="traffic grid"><Card title="Tráfico Modbus" className="trafficmain"><p>Visualice el historial de mensajes Modbus en tiempo real.</p><div className="filters"><Field label="Protocolo" value="RTU" select /><Field label="Dispositivo" value="Todos" select /><Field label="Slave ID" value="Todos" select /><Field label="Resultado" value="Todos" select /><button className="ghost">Limpiar filtros</button></div>{traffic.length === 0 ? <Empty text="Sin tráfico capturado todavía." /> : <Table columns={["", "Hora", "Origen → Destino", "ID esclavo", "Tipo", "Función", "Resultado", "Resumen"]} rows={traffic.slice(0, 10).map((item) => [<span className={item.dir === "up" ? "up" : "down"}>{item.dir === "up" ? "↑" : "↓"}</span>, fmt(item.at), item.route, item.slave, item.type, item.fn, <Status status={item.status} />, item.summary])} />}<p className="pagination">Mostrando 1 a {Math.min(10, traffic.length)} de {traffic.length} tramas</p></Card><Card title="Detalles del mensaje seleccionado" className="tdetails"><dl><dt>Dirección</dt><dd>{selected?.slave ?? "—"}</dd><dt>Función</dt><dd>{selected?.fn ?? "—"}</dd><dt>Tipo</dt><dd>{selected?.type ?? "—"}</dd><dt>Origen → Destino</dt><dd>{selected?.route ?? "—"}</dd><dt>Resumen</dt><dd>{selected?.summary ?? "—"}</dd><dt>Tiempo</dt><dd>{selected?.ms ? `${selected.ms} ms` : "—"}</dd></dl></Card><Card title="¿Qué pasó?" className="happened"><h3><CheckCircle2 />{selected?.status === "OK" ? "La operación fue exitosa." : "Esperando tráfico."}</h3><p>{selected ? `${selected.route} ejecutó ${selected.fn}: ${selected.summary}.` : "Cuando se ejecute una lectura, aquí aparecerá la explicación."}</p><p className="tip"><Star size={16} />Consejo: Usa los filtros para enfocarte en lo que necesitas.</p></Card><Card title="Actividad de la sesión" className="tactivity"><Metric label="Mensajes OK" value={String(ok)} percent={`${pct(ok, traffic.length)}%`} ok /><Metric label="Timeouts" value={String(timeout)} percent={`${pct(timeout, traffic.length)}%`} warn /><Metric label="Errores CRC" value={String(crc)} percent={`${pct(crc, traffic.length)}%`} danger /><Metric label="Excepciones" value={String(exception)} percent={`${pct(exception, traffic.length)}%`} purple /><dl><dt>Tiempo total</dt><dd>—</dd><dt>Trama más rápida</dt><dd>—</dd><dt>Trama más lenta</dt><dd>—</dd></dl></Card></div>; }
+
+function TrafficView({ traffic }: { traffic: TrafficRow[] }) {
+  const ok = traffic.filter((item) => item.status === "OK").length;
+  const timeout = traffic.filter((item) => item.status === "Timeout").length;
+  const crc = traffic.filter((item) => item.status === "CRC Error").length;
+  const exception = traffic.filter((item) => item.status === "Excepción").length;
+  const selected = traffic[0];
+
+  const times = traffic.map(t => Number(t.ms) || 0).filter(v => v > 0);
+  const fastest = times.length ? `${Math.min(...times)} ms` : "—";
+  const slowest = times.length ? `${Math.max(...times)} ms` : "—";
+  const totalMs = times.reduce((a, b) => a + b, 0);
+  const totalStr = totalMs > 0 ? new Date(totalMs).toISOString().substring(14, 19) : "—";
+
+  return (
+    <>
+      <style>{`
+        #traffic-master {
+          grid-template-rows: 1fr auto !important;
+        }
+        #traffic-master > .card:not(.trafficmain) {
+          min-height: 0 !important;
+          height: max-content !important;
+        }
+      `}</style>
+      <div id="traffic-master" className="traffic grid" style={{ height: "calc(100vh - 120px)" }}>
+        <Card title="Tráfico Modbus" className="trafficmain" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <p>Visualice el historial de mensajes Modbus en tiempo real.</p>
+        <div className="filters" style={{ display: "flex", flexWrap: "wrap", gap: "15px", alignItems: "center", marginBottom: "15px" }}>
+          <Field label="Protocolo" value="RTU" select />
+          <Field label="Dispositivo" value="Todos" select />
+          <Field label="Slave ID" value="Todos" select />
+          <Field label="Resultado" value="Todos" select />
+          <button className="ghost" style={{ marginLeft: "auto" }}>Limpiar filtros</button>
+        </div>
+        {traffic.length === 0 ? (
+          <Empty text="Sin tráfico capturado todavía." />
+        ) : (
+          <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+            <Table
+              layout="35px 190px 170px 90px 100px 90px 120px 1fr"
+              columns={["", "Hora", "Origen → Destino", "ID esclavo", "Tipo", "Función", "Resultado", "Resumen"]}
+              rows={traffic.slice(0, 10).map((item) => [
+                <div className={`dir-icon ${item.dir === "up" ? "blue" : "green"}`}>
+                  {item.dir === "up" ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
+                </div>,
+                fmt(new Date(item.at)),
+                item.route,
+                item.slave,
+                item.type,
+                item.fn,
+                <Status status={item.status} />,
+                item.summary,
+              ])}
+            />
+          </div>
+        )}
+        <p className="pagination" style={{ marginTop: "10px", flexShrink: 0 }}>
+          Mostrando 1 a {Math.min(10, traffic.length)} de {traffic.length} tramas
+        </p>
+      </Card>
+      
+      <Card title="Detalles del mensaje seleccionado" className="tdetails" style={{ display: "flex", flexDirection: "column" }}>
+        <dl className="t-grid-compact" style={{ margin: "auto 0" }}>
+          <dt>Dirección</dt><dd>{selected?.slave ?? "—"}</dd>
+          <dt>Función</dt><dd>{selected?.fn ?? "—"}</dd>
+          
+          <dt>Tipo</dt><dd className={selected?.type === "Petición" ? "text-green" : ""}>{selected?.type ?? "—"}</dd>
+          <dt>Tiempo</dt><dd>{selected?.ms ? `${selected.ms} ms` : "—"}</dd>
+          
+          <dt>Origen</dt><dd>{selected?.route?.split("→")[0]?.trim() ?? "—"}</dd>
+          <dt>Destino</dt><dd>{selected?.route?.split("→")[1]?.trim() ?? "—"}</dd>
+          
+          <dt style={{gridColumn: "1"}}>Resumen</dt>
+          <dd style={{gridColumn: "2 / -1"}}>{selected?.summary ?? "—"}</dd>
+        </dl>
+      </Card>
+
+      <Card title="¿Qué pasó?" className="happened" style={{ display: "flex", flexDirection: "column" }}>
+        <h3>
+          <CheckCircle2 size={24} />
+          {selected?.status === "OK" ? "La operación fue exitosa." : "Esperando tráfico."}
+        </h3>
+        <p>{selected ? `El ${selected.route?.split("→")[0]?.trim() ?? "equipo"} envió una petición de lectura (${selected.fn}) al ${selected.route?.split("→")[1]?.trim() ?? "dispositivo"} (ID ${selected.slave}).` : "Cuando se ejecute una lectura, aquí aparecerá la explicación."}</p>
+        <p>El dispositivo respondió correctamente en {selected?.ms ?? "—"}. No se detectaron errores en la comunicación.</p>
+        <div className="tip" style={{ marginTop: "auto" }}>
+          <Star size={20} className="tip-icon" />
+          <p>Consejo: Los mensajes se muestran en el orden en que ocurrieron. Usa los filtros para enfocarte en lo que necesitas.</p>
+        </div>
+      </Card>
+
+      <Card title="Actividad de la sesión" className="tactivity" style={{ display: "flex", flexDirection: "column" }}>
+        <div className="metrics-list" style={{ padding: "10px", marginBottom: "10px", gap: "6px" }}>
+          <MetricRow icon={CheckCircle2} label="Mensajes OK" value={String(ok)} percent={`${pct(ok, traffic.length)}%`} ok />
+          <MetricRow icon={Clock3} label="Timeouts" value={String(timeout)} percent={`${pct(timeout, traffic.length)}%`} warn />
+          <MetricRow icon={XCircle} label="Errores CRC" value={String(crc)} percent={`${pct(crc, traffic.length)}%`} danger />
+          <MetricRow icon={AlertCircle} label="Excepciones" value={String(exception)} percent={`${pct(exception, traffic.length)}%`} purple />
+        </div>
+        <div className="time-stats" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px" }}>
+          <div style={{ gridColumn: "1 / -1" }}><Clock3 size={15}/> <span>Tiempo total</span> <strong>{totalStr}</strong></div>
+          <div><Clock3 size={15}/> <span>Trama más rápida</span> <strong>{fastest}</strong></div>
+          <div><Clock3 size={15}/> <span>Trama más lenta</span> <strong>{slowest}</strong></div>
+        </div>
+      </Card>
+    </div>
+    </>
+  );
+}
 
 function Card({ title, children, action, className = "", style }: { title: string; children: ReactNode; action?: ReactNode; className?: string; style?: React.CSSProperties }) { return <section className={`card ${className}`} style={style}><header><h2>{title}</h2>{action}</header>{children}</section>; }
 function Empty({ text }: { text: string }) { return <p className="note"><Info size={16} />{text}</p>; }
-function Table({ columns, rows }: { columns: ReactNode[]; rows: ReactNode[][] }) { return <div className="table"><div className="tr head" style={{ gridTemplateColumns: `repeat(${columns.length},minmax(0,1fr))` }}>{columns.map((column, index) => <span key={index}>{column}</span>)}</div>{rows.map((row, rowIndex) => <div className="tr" key={rowIndex} style={{ gridTemplateColumns: `repeat(${columns.length},minmax(0,1fr))` }}>{row.map((cell, cellIndex) => <span key={cellIndex}>{cell}</span>)}</div>)}</div>; }
-function Field({ label, value, suffix, select }: { label: string; value: string; suffix?: string; select?: boolean }) { return <label className="field"><span>{label}</span>{select ? <select defaultValue={value}><option>{value}</option></select> : <input defaultValue={value} />}{suffix ? <small>{suffix}</small> : null}</label>; }
+function Table({ columns, rows, layout }: { columns: ReactNode[]; rows: ReactNode[][]; layout?: string }) { return <div className="table"><div className="tr head" style={{ gridTemplateColumns: layout || `repeat(${columns.length},minmax(0,1fr))` }}>{columns.map((column, index) => <span key={index}>{column}</span>)}</div>{rows.map((row, rowIndex) => <div className="tr" key={rowIndex} style={{ gridTemplateColumns: layout || `repeat(${columns.length},minmax(0,1fr))` }}>{row.map((cell, cellIndex) => <span key={cellIndex}>{cell}</span>)}</div>)}</div>; }
+function Field({ label, value, suffix, select }: { label: string; value: string; suffix?: string; select?: boolean }) {
+  return (
+    <label className="field" style={{ gridTemplateColumns: "auto 1fr auto", gap: "10px" }}>
+      <span style={{ whiteSpace: "nowrap" }}>{label}</span>
+      {select ? (
+        <select defaultValue={value} style={{ minWidth: "100px", paddingRight: "35px", textAlign: "left" }}>
+          <option>{value}</option>
+        </select>
+      ) : (
+        <input defaultValue={value} />
+      )}
+      {suffix ? <small>{suffix}</small> : null}
+    </label>
+  );
+}
 function NumberField({ label, value, suffix, onChange }: { label: string; value: number; suffix?: string; onChange: (value: number) => void }) { return <label className="field"><span>{label}</span><input type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />{suffix ? <small>{suffix}</small> : null}</label>; }
 function SelectField({ label, value, onChange, options, labels, empty = "Sin opciones" }: { label: string; value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string>; empty?: string }) { const choices = options.length > 0 ? options : [""]; return <label className="field"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{choices.map((option) => <option key={option || empty} value={option}>{option ? labels?.[option] ?? option : empty}</option>)}</select></label>; }
 function PortSelectRow({ ports, port, setPort, refreshPorts }: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void }) { const options = ports.length > 0 ? ports.map((item) => item.path) : [""]; return <div className="field" style={{ gridTemplateColumns: "1fr 38px 1.15fr", alignItems: "center" }}><span>Puerto</span><button className="ghost" onClick={refreshPorts} title="Recargar puertos" style={{ minWidth: 38, height: 34, padding: 0 }}><RefreshCw size={15} /></button><select value={port} onChange={(event) => setPort(event.target.value)}>{options.map((option) => <option key={option || "empty"} value={option}>{option || "Sin puertos"}</option>)}</select></div>; }
@@ -877,8 +1021,7 @@ function Fact({ label, value }: { label: string; value: string }) { return <div>
 function Tile({ icon: Icon, label, value, note }: { icon: LucideIcon; label: string; value: string; note: string }) { return <article><Icon size={20} /><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }
 function SelectChip({ text }: { text: string }) { return <span className="selectchip">{text}⌄</span>; }
 function Scenario({ label, text, ok, warn, danger }: { label: string; text: string; ok?: boolean; warn?: boolean; danger?: boolean }) { return <article className={danger ? "danger" : warn ? "warn" : ok ? "ok" : ""}><CheckCircle2 size={20} /><div><strong>{label}</strong><span>{text}</span></div></article>; }
-function Big({ label, value, note, danger }: { label: string; value: string; note: string; danger?: boolean }) { return <article className={danger ? "big danger" : "big"}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }
-function Metric({ label, value, percent, ok, warn, danger, purple }: { label: string; value: string; percent: string; ok?: boolean; warn?: boolean; danger?: boolean; purple?: boolean }) { return <div className={ok ? "metric ok" : warn ? "metric warn" : danger ? "metric danger" : purple ? "metric purple" : "metric"}><span>{label}</span><strong>{value}</strong><em>{percent}</em></div>; }
+function MetricRow({ icon: Icon, label, value, percent, ok, warn, danger, purple }: { label: string; value: string; percent: string; ok?: boolean; warn?: boolean; danger?: boolean; purple?: boolean; icon?: any }) { const getTheme = () => { if(ok) return "ok"; if(warn) return "warn"; if(danger) return "danger"; if(purple) return "purple"; return "neutral"; }; return <div className={`ml-row theme-${getTheme()}`}><div className="ml-icon"><Icon size={18} /></div><span className="ml-label">{label}</span><strong className="ml-value">{value}</strong><div className="ml-bar-track"><div className="ml-bar-fill" style={{ width: percent }} /></div><span className="ml-percent">{percent}</span></div>; }
 
 const rowButtonStyle = { border: 0, background: "transparent", minHeight: 0, padding: 0, justifyContent: "flex-start", color: "inherit" } as const;
 function normalizePorts(rawPorts: Array<Record<string, unknown>>): PortOption[] { const unique = new Map<string, PortOption>(); for (const raw of rawPorts) { const path = typeof raw.path === "string" ? raw.path : ""; if (!path) continue; const hasMetadata = Boolean(raw.vendorId || raw.productId || raw.manufacturer || raw.serialNumber || raw.pnpId); const label = String(raw.displayName || raw.friendlyName || raw.path); unique.set(path, { path, label, hasMetadata }); } return [...unique.values()].sort((left, right) => portNumber(left.path) - portNumber(right.path)); }
@@ -1054,3 +1197,5 @@ function loadStoredSerialPort() { try { return localStorage.getItem(LAST_SERIAL_
 function storeLastSerialPort(value: string) { if (!value) return; try { localStorage.setItem(LAST_SERIAL_PORT_STORAGE_KEY, value); } catch { /* local storage can be unavailable in tests/previews */ } }
 function displayDeviceName(devices: Device[], id: number) { return devices.find((device) => device.id === id)?.name ?? `Slave ID ${id}`; }
 function shortPath(filePath: string) { const normalized = filePath.replace(/\\/g, "/"); const parts = normalized.split("/"); return parts.slice(-2).join("/"); }
+
+function Big({ label, value, note, danger }: { label: string; value: string; note: string; danger?: boolean }) { return <article className={danger ? "big danger" : "big"}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }

@@ -25,6 +25,8 @@ function createWindow(): void {
     minHeight: 680,
     title: "JW Modbus Tool",
     show: false,
+    frame: false,
+    titleBarStyle: "hidden",
     backgroundColor: "#071d2e",
     webPreferences: {
       contextIsolation: true,
