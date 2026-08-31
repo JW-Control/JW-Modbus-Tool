@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   Database,
   FileText,
@@ -605,7 +606,7 @@ function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value
 
   return (
     <div className="devices grid">
-      <Card title="1. Conectar" className="connect panel-fusion" action={<Info size={15} className="hint-icon" />}>
+      <Card title="Conectar" className="connect panel-fusion" action={<Info size={15} className="hint-icon" />}>
         <div className="segmented-control">
           <button className="active">RTU</button>
           <button className="disabled">TCP</button>
@@ -623,36 +624,90 @@ function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value
         )}
       </Card>
 
-      <Card title="2. Dispositivos detectados" action={<button className="ghost" onClick={props.scanDevices}><RefreshCw size={15} />Recargar</button>} className="detected panel-fusion">
-        {props.devices.length === 0 ? <Empty text="Sesión limpia: todavía no hay dispositivos detectados. Usa Recargar/Escanear." /> : 
-        <div className="fusion-device-list">
-          {props.devices.map((device) => {
-            const isJWPLC = device.name.toLowerCase().includes("jwplc");
-            return (
-              <button key={device.id} className={`fusion-device-row ${device.id === props.activeId ? 'active' : ''}`} onClick={() => props.selectDevice(device.id)}>
-                <div className="fusion-device-left">
-                  {isJWPLC ? (
-                    <JwplcIcon size={32} className="fusion-device-icon" />
-                  ) : (
-                    <Server size={32} className="fusion-device-icon" strokeWidth={1.5} />
-                  )}
-                  <div className="fusion-device-info">
-                    <div className="fusion-device-title">
-                      <strong>{device.name}</strong>
-                      {device.id === props.activeId && <b className="pill active-pill">SLAVE ACTIVO</b>}
-                      {!device.named && <b className="pill pend-pill">NOMBRE PEND.</b>}
+      <Card title={`Dispositivos detectados (${props.devices.length})`} action={<button onClick={props.scanDevices} style={{border: 'none', background: 'transparent', padding: 0, cursor: 'pointer'}}><RefreshCw size={18} color="#0ea5e9" /></button>} className="detected panel-fusion device-tree-card">
+        <style>{`
+          .devices.grid { grid-template-columns: 320px 1fr 480px !important; }
+          .device-tree-card { padding: 12px !important; }
+          .device-tree-card > header { margin-bottom: 6px !important; }
+          .device-tree-table { display: flex; flex-direction: column; border: 1px solid #2d5c7544; border-radius: 8px; margin-top: 8px; font-size: 14px; }
+          .dt-header { display: grid; grid-template-columns: 2fr 1.2fr 1fr; padding: 10px 15px; border-bottom: 1px solid #2d5c7544; color: #e2e8f0; background: #ffffff04; font-weight: bold; }
+          .dt-group-row { display: grid; grid-template-columns: 2fr 1.2fr 1fr; padding: 15px 15px; border-bottom: 1px solid #2d5c7522; align-items: center; }
+          .dt-group-title { display: flex; align-items: center; gap: 8px; color: #e2e8f0; font-size: 14.5px; }
+          .dt-children { display: flex; flex-direction: column; position: relative; }
+          .dt-children::before { content: ""; position: absolute; left: 23px; top: 0; bottom: 35px; width: 1px; background: #2d5c7566; }
+          .dt-child-row { display: grid; grid-template-columns: 2fr 1.2fr 1fr; padding: 15px 15px; border-bottom: 1px solid #2d5c7522; align-items: center; position: relative; cursor: pointer; }
+          .dt-child-row:hover { background: #ffffff05; }
+          .dt-child-row.active { background: #0ea5e911; }
+          .dt-child-row::before { content: ""; position: absolute; left: 23px; top: 50%; width: 16px; height: 1px; background: #2d5c7566; }
+          .dt-child-row:last-child { border-bottom: none; }
+          .dt-child-title { display: flex; align-items: center; gap: 12px; padding-left: 28px; }
+          .dt-icon { color: #0ea5e9; }
+          .dt-id { font-size: 16px; color: #e2e8f0; width: 15px; text-align: right; }
+          .dt-name-hex { display: flex; flex-direction: column; }
+          .dt-name-hex strong { color: #e2e8f0; font-weight: normal; font-size: 14.5px; }
+          .dt-name-hex small { color: #8b929e; font-size: 12.5px; margin-top: 2px;}
+          .dt-col-type { color: #8b929e; font-size: 14px; }
+          .dt-col-status { display: flex; align-items: center; gap: 8px; color: #e2e8f0; font-size: 14px;}
+          .dt-col-status .dot { width: 10px; height: 10px; border-radius: 50%; margin: 0; }
+          .dt-footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding: 10px 5px 5px 5px; color: #8b929e; font-size: 14px; }
+        `}</style>
+        
+        <div className="device-tree-table">
+          <div className="dt-header">
+            <div className="dt-col-device">Dispositivo / Dirección</div>
+            <div className="dt-col-type">Tipo</div>
+            <div className="dt-col-status">Estado</div>
+          </div>
+          
+          <div className="dt-group-row">
+            <div className="dt-group-title">
+              <ChevronDown size={16} />
+              <Network size={18} color="#0ea5e9" />
+              <span>Red Modbus RTU ({props.port || "COM3"})</span>
+            </div>
+            <div className="dt-col-type"></div>
+            <div className="dt-col-status">
+              <div className="dot" style={{ background: '#8b929e', boxShadow: 'none' }}></div> Activa
+            </div>
+          </div>
+
+          <div className="dt-children">
+            {props.devices.length === 0 ? (
+               <div style={{padding: '15px', color: '#8b929e', textAlign: 'center'}}>Sesión limpia: todavía no hay dispositivos detectados.</div>
+            ) : props.devices.map((device) => {
+               const isJWPLC = device.name.toLowerCase().includes("jwplc");
+               return (
+                <div key={device.id} className={`dt-child-row ${device.id === props.activeId ? 'active' : ''}`} onClick={() => props.selectDevice(device.id)}>
+                  <div className="dt-child-title">
+                    <div style={{display: 'flex', alignItems: 'center'}}>
+                      {isJWPLC ? <JwplcIcon size={20} className="dt-icon" /> : <Server size={20} className="dt-icon" />}
                     </div>
-                    <span className="fusion-device-subtitle">ID: {device.id} • RTU</span>
+                    <span className="dt-id">{device.id}</span>
+                    <div className="dt-name-hex">
+                       <strong>{device.name}</strong>
+                       <small>(0x{device.id.toString(16).padStart(2, '0').toUpperCase()})</small>
+                    </div>
+                  </div>
+                  <div className="dt-col-type">
+                    {isJWPLC ? "Controlador JWPLC" : "Dispositivo Genérico"}
+                  </div>
+                  <div className="dt-col-status">
+                    <div className="dot" style={{ background: '#22c55e', boxShadow: '0 0 5px #22c55e' }}></div> <span style={{color: '#22c55e'}}>En línea</span>
                   </div>
                 </div>
-              <div className="fusion-device-right">
-                <span className="dot online"></span> En línea
-              </div>
-            </button>
-          );
-        })}
-        </div>}
-        <p className="note" style={{marginTop: '15px'}}><Info size={16} />Los nombres personalizados se asignarán desde la sesión o desde el mapa del dispositivo.</p>
+               );
+            })}
+          </div>
+        </div>
+        
+        <div className="dt-footer">
+          <div className="dt-last-scan">
+            Último escaneo: {props.lastScan ? fmt(props.lastScan) : "Nunca"}
+          </div>
+          <button style={{color: '#0ea5e9', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '14px', padding: 0}} onClick={props.scanDevices}>
+            [ Escanear ahora
+          </button>
+        </div>
       </Card>
 
       <Card title="Resumen" className="summary panel-fusion" action={
@@ -677,7 +732,7 @@ function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value
       </Card>
 
       <div className="devicesLower">
-        <Card title="3. Lectura rápida de registros" className="quickPanel" action={
+        <Card title="Lectura rápida de registros" className="quickPanel" action={
           <span style={{ fontSize: '12.5px', color: '#8b929e' }}>Slave activo: <strong className="cyan">{props.activeDevice ? `${props.activeDevice.name} — ID ${props.activeDevice.id}` : "Sin seleccionar"}</strong></span>
         }>
           <div className="quickbar">
@@ -907,6 +962,23 @@ function TrafficView({ traffic }: { traffic: TrafficRow[] }) {
           min-height: 0 !important;
           height: max-content !important;
         }
+        /* Hacer realmente más pequeño el check anulando el width/height fijo del CSS base */
+        #traffic-master .happened h3 svg {
+          width: 18px !important;
+          height: 18px !important;
+        }
+        /* Subir el texto de abajo reduciendo el margen inferior del título verde y superior del párrafo */
+        #traffic-master .happened h3 {
+          margin-bottom: 0px !important;
+        }
+        #traffic-master .happened p {
+          margin-top: 4px !important;
+        }
+        /* Hacer más pequeño el cuadro de consejo y quitar el espacio excesivo arriba */
+        #traffic-master .tip {
+          margin-top: 15px !important;
+          padding: 8px 12px !important;
+        }
       `}</style>
       <div id="traffic-master" className="traffic grid" style={{ height: "calc(100vh - 120px)" }}>
         <Card title="Tráfico Modbus" className="trafficmain" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -963,12 +1035,12 @@ function TrafficView({ traffic }: { traffic: TrafficRow[] }) {
 
       <Card title="¿Qué pasó?" className="happened" style={{ display: "flex", flexDirection: "column" }}>
         <h3>
-          <CheckCircle2 size={24} />
+          <CheckCircle2 size={14} />
           {selected?.status === "OK" ? "La operación fue exitosa." : "Esperando tráfico."}
         </h3>
         <p>{selected ? `El ${selected.route?.split("→")[0]?.trim() ?? "equipo"} envió una petición de lectura (${selected.fn}) al ${selected.route?.split("→")[1]?.trim() ?? "dispositivo"} (ID ${selected.slave}).` : "Cuando se ejecute una lectura, aquí aparecerá la explicación."}</p>
         <p>El dispositivo respondió correctamente en {selected?.ms ?? "—"}. No se detectaron errores en la comunicación.</p>
-        <div className="tip" style={{ marginTop: "auto" }}>
+        <div className="tip" style={{ marginTop: "15px" }}>
           <Star size={20} className="tip-icon" />
           <p>Consejo: Los mensajes se muestran en el orden en que ocurrieron. Usa los filtros para enfocarte en lo que necesitas.</p>
         </div>
