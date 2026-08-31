@@ -9,8 +9,8 @@
 */
 
 #include <JWPLC_ModbusRTU.h>
-#include <JWPLC_Display.h> // REQUERIDO para compilar y encender la pantalla en la nueva version
-#include <Arduino.h>
+//#include <JWPLC_Display.h> // REQUERIDO para compilar y encender la pantalla en la nueva version
+//#include <Arduino.h>
 
 // Creamos un arreglo de 2 registros Modbus (Holding Registers)
 // Registro 0 (Direccin 0): Guardar el estado de las Entradas I0_X
@@ -23,11 +23,6 @@ unsigned long ultimoTiempoIO = 0;
 void setup() {
   Serial.begin(115200);
   
-  // El nuevo Core de JWPLC inicializa automticamente el bus I2C, el chip TCA6424A
-  // y configura los pines I0_X como entrada y Q0_X como salida en segundo plano!
-  // NUNCA debes llamar a Wire.begin() ni pinMode para estos pines industriales aqu,
-  // porque chocar con el RTOS y congelar la pantalla y el equipo.
-
   Serial.println("Iniciando PLC como Esclavo Modbus...");
 
   // 1. Iniciar el Modbus RTU (Slave ID 1, 9600 Baudios, 8N1)
