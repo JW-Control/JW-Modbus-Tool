@@ -1,6 +1,7 @@
-import { BrowserWindow, clipboard, dialog, ipcMain } from "electron";
-import type { OpenDialogOptions } from "electron";
+import { BrowserWindow, clipboard, dialog, ipcMain, app } from "electron";
+import type { OpenDialogOptions, SaveDialogOptions } from "electron";
 import { readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
   readCoils,
   readDiscreteInputs,
@@ -96,8 +97,11 @@ export function registerIpcHandlers(): void {
       let filePath = typeof request.filePath === "string" && request.filePath.trim() ? request.filePath : undefined;
 
       if (!filePath) {
-        const defaultPath = normalizeSessionFileName(request.defaultFileName);
-        const options = {
+        let defaultPath = normalizeSessionFileName(request.defaultFileName);
+        const lastDir = await getLastDir();
+        if (lastDir) defaultPath = join(lastDir, defaultPath);
+
+        const options: SaveDialogOptions = {
           title: "Guardar sesión JW Modbus",
           defaultPath,
           filters: [{ name: "JW Modbus Session", extensions: ["jwmodbus-session"] }]
@@ -113,6 +117,7 @@ export function registerIpcHandlers(): void {
         filePath = saveResult.filePath;
       }
 
+      await setLastDir(filePath);
       await writeFile(filePath, json, "utf8");
       return { canceled: false, filePath, bytesWritten: Buffer.byteLength(json, "utf8") };
     })
@@ -122,8 +127,10 @@ export function registerIpcHandlers(): void {
       let filePath = typeof request?.filePath === "string" && request.filePath.trim() ? request.filePath : undefined;
 
       if (!filePath) {
+        const lastDir = await getLastDir();
         const options: OpenDialogOptions = {
           title: "Abrir sesión JW Modbus",
+          defaultPath: lastDir,
           properties: ["openFile"],
           filters: [{ name: "JW Modbus Session", extensions: ["jwmodbus-session"] }]
         };
@@ -138,6 +145,7 @@ export function registerIpcHandlers(): void {
         filePath = openResult.filePaths[0];
       }
 
+      await setLastDir(filePath);
       const raw = await readFile(filePath, "utf8");
       return { canceled: false, filePath, data: JSON.parse(raw) };
     })
@@ -205,3 +213,26 @@ function normalizeSessionFileName(fileName: string | undefined): string {
 
   return baseName.toLowerCase().endsWith(".jwmodbus-session") ? baseName : `${baseName}.jwmodbus-session`;
 }
+
+async function getLastDir(): Promise<string | undefined> {
+  try {
+    const configPath = join(app.getPath("userData"), "modbus-tool-config.json");
+    const data = JSON.parse(await readFile(configPath, "utf8"));
+    return data.lastDir;
+  } catch {
+    return undefined;
+  }
+}
+
+async function setLastDir(filePath: string): Promise<void> {
+  try {
+    const configPath = join(app.getPath("userData"), "modbus-tool-config.json");
+    let data: any = {};
+    try {
+      data = JSON.parse(await readFile(configPath, "utf8"));
+    } catch {}
+    data.lastDir = dirname(filePath);
+    await writeFile(configPath, JSON.stringify(data), "utf8");
+  } catch {}
+}
+

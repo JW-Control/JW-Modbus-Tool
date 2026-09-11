@@ -16,6 +16,7 @@ describe("simple tests runtime", () => {
 
   it("parses explicit coil values and rejects ambiguous tokens", () => {
     expect(parsePlanCoilValues("ON, 0, yes, off")).toEqual([true, false, true, false]);
+    expect(parsePlanCoilValues("0xFF00, 0x0000, 65280")).toEqual([true, false, true]);
     expect(() => parsePlanCoilValues("ON, maybe")).toThrow("Valor de bobina 2");
   });
 

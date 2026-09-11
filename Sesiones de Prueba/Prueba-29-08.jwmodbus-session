@@ -5,7 +5,7 @@
     "id": "session-1788035612892",
     "name": "Prueba 29/08",
     "createdAt": "2026-08-29T20:24:28.908Z",
-    "updatedAt": "2026-08-29T22:13:58.897Z",
+    "updatedAt": "2026-09-11T14:17:49.069Z",
     "status": "Modificada",
     "notes": ""
   },
@@ -764,7 +764,7 @@
   "testsRuntime": {
     "format": "jwmodbus-tests-runtime",
     "version": 6,
-    "savedAt": "2026-08-29T22:13:24.965Z",
+    "savedAt": "2026-09-11T14:17:10.548Z",
     "selectedScenario": "normal",
     "simulatorState": "Detenido",
     "steps": [
@@ -3037,7 +3037,7 @@
       "error": null
     }
   ],
-  "testsExecutionHistoryUpdatedAt": "2026-08-29T22:13:58.897Z",
+  "testsExecutionHistoryUpdatedAt": "2026-09-11T14:17:49.069Z",
   "registerMaps": [],
   "templates": []
 }

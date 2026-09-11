@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle2, Activity, AlertTriangle, ListOrdered } from "lucide-react";
 
 export type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc5" | "fc6" | "fc15" | "fc16" | "delay";
@@ -260,7 +261,7 @@ function parseBoundedInteger(value: unknown, label: string, min: number, max: nu
 
 function normalizeBool(value: unknown) {
   const text = String(value ?? "").trim().toLowerCase();
-  return ["1", "true", "on", "si", "sí", "yes", "high"].includes(text);
+  return ["1", "true", "on", "si", "sí", "yes", "high", "65280", "0xff00", "ff00"].includes(text);
 }
 
 function boolText(value: unknown) {
@@ -269,8 +270,8 @@ function boolText(value: unknown) {
 
 function parsePlanCoilValue(value: unknown, label = "Valor de bobina") {
   const text = String(value ?? "").trim().toLowerCase();
-  if (["1", "true", "on", "si", "sí", "yes", "high"].includes(text)) return true;
-  if (["0", "false", "off", "no", "low"].includes(text)) return false;
+  if (["1", "true", "on", "si", "sí", "yes", "high", "65280", "0xff00", "ff00"].includes(text)) return true;
+  if (["0", "false", "off", "no", "low", "0x0000", "0000"].includes(text)) return false;
   throw new Error(`${label} invalido. Usa ON/OFF o 1/0.`);
 }
 
@@ -292,6 +293,65 @@ export function parsePlanCoilValues(value: unknown) {
 
 export function parsePlanRegisterValues(value: unknown) {
   return parseRegisterList(value);
+}
+
+
+function getModbusOffset(address: string | number): number {
+  const n = Number(address);
+  if (!Number.isFinite(n)) return 0;
+  if (n >= 40001) return n - 40001;
+  if (n >= 30001) return n - 30001;
+  if (n >= 10001) return n - 10001;
+  if (n >= 1) return n - 1;
+  return 0;
+}
+
+function bitDecimal(bits: boolean[], limit = 16): number {
+  let value = 0;
+  for (let index = 0; index < Math.min(limit, bits.length); index += 1) {
+    if (bits[index]) value |= (1 << index);
+  }
+  return value;
+}
+
+function boolListText(bits: boolean[]) {
+  return bits.map((bit) => bit ? "1" : "0").join(" ");
+}
+
+function bitRowsValue(rows: StepDetailRow[], field: "expected" | "actual") {
+  return boolListText(rows.filter((row) => row.type === "bool").map((row) => normalizeBool(row[field])));
+}
+
+function hasBitRows(step: TestStep) {
+  return step.rows.some((row) => row.type === "bool");
+}
+
+function bitAddressLabel(fn: Fn, startAddress: string, index: number) {
+  const address = displayAddress(fn, numeric(startAddress, 0), index);
+  return String(address).padStart(5, "0");
+}
+
+function bitEditorCopy(fn: Fn, field: "value" | "expected") {
+  if (fn === "fc2") {
+    return {
+      title: "Editar entradas",
+      description: field === "expected"
+        ? "Define el patron esperado para las entradas discretas FC02."
+        : "Visualizacion de entradas discretas FC02."
+    };
+  }
+  if (fn === "fc1") {
+    return {
+      title: "Editar coils",
+      description: field === "expected"
+        ? "Define el patron esperado para los coils FC01."
+        : "Visualizacion de coils FC01."
+    };
+  }
+  return {
+    title: "Editar bobinas",
+    description: "Define el patron de bobinas para FC15 Write Multiple Coils."
+  };
 }
 
 function rawAddress(fn: Fn, address: number) {
@@ -861,6 +921,225 @@ function downloadTextFile(filename: string, content: string, mimeType: string) {
 export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, onRuntimeStateChange, onMessage, onSaveSession, isSessionSaved }: TestsViewProps) {
   const defaultSlave = activeSlaveId ?? 2;
   const [state, setState] = useState<TestsState>(() => createInitialState(runtimeState, defaultSlave));
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
+  const shiftAnchorRef = useRef<number | null>(null);
+  const [undoStack, setUndoStack] = useState<TestStep[][]>([]);
+  const [redoStack, setRedoStack] = useState<TestStep[][]>([]);
+  const [editingBits, setEditingBits] = useState<{ index: number; field: "value" | "expected" } | null>(null);
+  const [editingRegisters, setEditingRegisters] = useState<{ index: number } | null>(null);
+
+  function pushHistory(newSteps: TestStep[]) {
+    setUndoStack(curr => [...curr, state.steps].slice(-50));
+    setRedoStack([]);
+  }
+
+  function undo() {
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    setUndoStack(curr => curr.slice(0, -1));
+    setRedoStack(curr => [...curr, state.steps].slice(-50));
+    setState(s => ({ ...s, steps: prev }));
+  }
+
+  function redo() {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(curr => curr.slice(0, -1));
+    setUndoStack(curr => [...curr, state.steps].slice(-50));
+    setState(s => ({ ...s, steps: next }));
+  }
+
+  function handleRowClick(index: number, e: React.MouseEvent) {
+    if (e.shiftKey && lastSelectedIndex !== null) {
+      const start = Math.min(lastSelectedIndex, index);
+      const end = Math.max(lastSelectedIndex, index);
+      const newSelection = [];
+      for (let i = start; i <= end; i++) newSelection.push(i);
+      setSelectedRows(newSelection);
+    } else if (e.ctrlKey || e.metaKey) {
+      if (selectedRows.includes(index)) {
+        setSelectedRows(selectedRows.filter(r => r !== index));
+      } else {
+        setSelectedRows([...selectedRows, index]);
+      }
+      setLastSelectedIndex(index);
+    } else {
+      setSelectedRows([index]);
+      setLastSelectedIndex(index);
+    }
+  }
+
+  
+  useEffect(() => {
+    if (lastSelectedIndex !== null) {
+      const row = document.querySelector(`.testsPlanTable tbody tr:nth-child(${lastSelectedIndex + 1})`);
+      if (row) {
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }
+  }, [lastSelectedIndex]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      const table = document.querySelector('.testsPlanTable');
+      if (table && !table.contains(e.target as Node)) {
+        setSelectedRows([]);
+        setLastSelectedIndex(null);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+
+            if (e.key === 'Escape') {
+        window.dispatchEvent(new CustomEvent('clear-drag-lines'));
+        e.preventDefault();
+        setSelectedRows([]);
+        setLastSelectedIndex(null);
+        return;
+      }
+      if (e.ctrlKey && e.key === 'a') {
+        e.preventDefault();
+        setSelectedRows(state.steps.map((_, i) => i));
+        return;
+      }
+
+      if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); return; }
+      if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); return; }
+
+      
+      // Alt + Arrows to move items
+      if (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        if (selectedRows.length === 0) return;
+        const sorted = [...selectedRows].sort((a,b)=>a-b);
+        const direction = e.key === 'ArrowUp' ? -1 : 1;
+        if (direction === -1 && sorted[0] === 0) return;
+        if (direction === 1 && sorted[sorted.length - 1] === state.steps.length - 1) return;
+        
+        const nextSteps = [...state.steps];
+        const newSelection = [];
+        
+        if (direction === -1) {
+          for (const idx of sorted) {
+            const temp = nextSteps[idx - 1];
+            nextSteps[idx - 1] = nextSteps[idx];
+            nextSteps[idx] = temp;
+            newSelection.push(idx - 1);
+          }
+        } else {
+          for (let i = sorted.length - 1; i >= 0; i--) {
+            const idx = sorted[i];
+            const temp = nextSteps[idx + 1];
+            nextSteps[idx + 1] = nextSteps[idx];
+            nextSteps[idx] = temp;
+            newSelection.push(idx + 1);
+          }
+        }
+        pushHistory(nextSteps);
+        setState(s => ({ ...s, steps: nextSteps }));
+        setSelectedRows(newSelection.sort((a,b)=>a-b));
+        if (lastSelectedIndex !== null) setLastSelectedIndex(lastSelectedIndex + direction);
+        return;
+      }
+
+      // Shift + Arrows
+
+      if (e.shiftKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        if (lastSelectedIndex === null) return;
+        // Ensure anchor is set before first shift+arrow
+        if (shiftAnchorRef.current === null) shiftAnchorRef.current = lastSelectedIndex;
+        const nextIndex = e.key === 'ArrowDown'
+          ? Math.min(state.steps.length - 1, lastSelectedIndex + 1)
+          : Math.max(0, lastSelectedIndex - 1);
+        // Build contiguous range from fixed anchor to new cursor
+        const anchor = shiftAnchorRef.current;
+        const rangeStart = Math.min(anchor, nextIndex);
+        const rangeEnd = Math.max(anchor, nextIndex);
+        const newSel: number[] = [];
+        for (let ri = rangeStart; ri <= rangeEnd; ri++) newSel.push(ri);
+        setSelectedRows(newSel);
+        setLastSelectedIndex(nextIndex);
+        return;
+      } else if (!e.shiftKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        let nextIndex = 0;
+        if (lastSelectedIndex !== null) {
+          nextIndex = e.key === 'ArrowDown' ? Math.min(state.steps.length - 1, lastSelectedIndex + 1) : Math.max(0, lastSelectedIndex - 1);
+        }
+        setSelectedRows([nextIndex]);
+        setLastSelectedIndex(nextIndex);
+        shiftAnchorRef.current = nextIndex; // reset anchor on non-shift navigation
+        return;
+      }
+
+      if (e.ctrlKey && e.key === 'c' && selectedRows.length > 0) {
+        e.preventDefault();
+        const toCopy = [...selectedRows].sort((a, b) => a - b).map(idx => stripStep(state.steps[idx]));
+        navigator.clipboard.writeText(JSON.stringify({ __jwmodbus_test_multi: true, data: toCopy }));
+      }
+      else if (e.ctrlKey && e.key === 'v') {
+        e.preventDefault();
+        navigator.clipboard.readText().then(text => {
+          try {
+            const parsed = JSON.parse(text);
+            const toInsert = parsed.__jwmodbus_test_multi ? parsed.data : (parsed.__jwmodbus_test ? [parsed.data] : null);
+            if (toInsert && Array.isArray(toInsert)) {
+              const newSteps = toInsert.map(d => {
+                const s = createStep(defaultSlave, d.fn, d.address, d.quantity, d.value, d.validationMode);
+                s.expected = d.expected || "";
+                s.timeoutMs = d.timeoutMs || 1000;
+                return s;
+              });
+              const nextSteps = [...state.steps];
+              const insertAt = selectedRows.length > 0 ? Math.max(...selectedRows) + 1 : nextSteps.length;
+              nextSteps.splice(insertAt, 0, ...newSteps);
+              pushHistory(nextSteps);
+              setState(s => ({ ...s, steps: nextSteps }));
+              const newSelection = newSteps.map((_, i) => insertAt + i);
+              setSelectedRows(newSelection);
+              setLastSelectedIndex(newSelection[newSelection.length - 1]);
+            }
+          } catch (e) {}
+        }).catch(() => {});
+      }
+      else if (e.ctrlKey && e.key === 'd' && selectedRows.length > 0) {
+        e.preventDefault();
+        const toDuplicate = [...selectedRows].sort((a, b) => a - b).map(idx => state.steps[idx]);
+        const newSteps = toDuplicate.map(d => {
+          const s = createStep(defaultSlave, d.fn, d.address, d.quantity, d.value, d.validationMode);
+          s.expected = d.expected;
+          s.timeoutMs = d.timeoutMs;
+          return s;
+        });
+        const nextSteps = [...state.steps];
+        const insertAt = Math.max(...selectedRows) + 1;
+        nextSteps.splice(insertAt, 0, ...newSteps);
+        pushHistory(nextSteps);
+        setState(s => ({ ...s, steps: nextSteps }));
+        const newSelection = newSteps.map((_, i) => insertAt + i);
+        setSelectedRows(newSelection);
+        setLastSelectedIndex(newSelection[newSelection.length - 1]);
+      }
+      else if (e.key === 'Delete' && selectedRows.length > 0) {
+        e.preventDefault();
+        const nextSteps = state.steps.filter((_, idx) => !selectedRows.includes(idx));
+        pushHistory(nextSteps);
+        setState(s => ({ ...s, steps: nextSteps, detailIndex: null }));
+        setSelectedRows([]);
+        setLastSelectedIndex(null);
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [state.steps, selectedRows, lastSelectedIndex, undoStack, redoStack]);
+
   const stateRef = useRef(state);
   const publishTimerRef = useRef<number | null>(null);
   const publishReadyRef = useRef(false);
@@ -921,7 +1200,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
     return { active: active.length, executed, responsive, passed, failed, timeouts, otherFailed, running, avg, rate };
   }, [state.steps, state.cumulativeStats, state.history]);
 
-  function patchStep(index: number, patch: Partial<TestStep>) {
+  function patchStep(index: number, patch: Partial<TestStep>) { pushHistory(state.steps);
     setState((current) => ({
       ...current,
       detailIndex: null,
@@ -982,6 +1261,111 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     downloadTextFile(`jw-modbus-pruebas-${stamp}.csv`, executionCsv(state.history || []), "text/csv;charset=utf-8");
     onMessage("Registro de ejecucion exportado a CSV.");
+  }
+
+  
+  async function runSingleStep(index: number) {
+    if (state.running) return;
+    const step = state.steps[index];
+    if (!step) return;
+
+    const runningStep: TestStep = {
+      ...step,
+      result: "Ejecutando",
+      elapsedMs: null,
+      detail: "Ejecutando solicitud Modbus...",
+      rows: [],
+      values: "",
+      at: new Date().toLocaleTimeString("es-PE", { hour12: false })
+    };
+    setState(curr => ({ ...curr, steps: curr.steps.map((s, i) => i === index ? runningStep : s) }));
+
+    try {
+      const executed = await executeStep(step);
+      const historyId = crypto.randomUUID();
+      const executedWithId = { ...executed, historyId };
+      setState(curr => {
+        const c = curr.cumulativeStats || { executed: 0, passed: 0, failed: 0, timeouts: 0, responsive: 0, elapsedMsTotal: 0 };
+        const isPass = executed.result === "Aprobado";
+        const isTimeout = executed.result === "Timeout";
+        const hasElapsed = executed.elapsedMs != null;
+        return {
+          ...curr,
+          steps: curr.steps.map((s, i) => i === index ? executedWithId : s),
+          history: [...(curr.history || []), executedWithId].slice(-100),
+          cumulativeStats: {
+            executed: c.executed + 1,
+            passed: c.passed + (isPass ? 1 : 0),
+            failed: c.failed + (isPass ? 0 : 1),
+            timeouts: c.timeouts + (isTimeout ? 1 : 0),
+            responsive: c.responsive + (hasElapsed ? 1 : 0),
+            elapsedMsTotal: c.elapsedMsTotal + (executed.elapsedMs || 0)
+          }
+        };
+      });
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : error || "Error de comunicacion.");
+      const result = classifyStepErrorResult(message);
+      const historyId = crypto.randomUUID();
+      const failed: TestStep = {
+        ...step,
+        result,
+        elapsedMs: result === "Timeout" ? numeric(step.timeoutMs, 1000) : null,
+        detail: message,
+        rows: [],
+        values: "",
+        at: new Date().toLocaleTimeString("es-PE", { hour12: false }),
+        historyId
+      };
+      setState(curr => {
+        const c = curr.cumulativeStats || { executed: 0, passed: 0, failed: 0, timeouts: 0, responsive: 0, elapsedMsTotal: 0 };
+        const isTimeout = result === "Timeout";
+        const hasElapsed = failed.elapsedMs != null;
+        return {
+          ...curr,
+          steps: curr.steps.map((s, i) => i === index ? failed : s),
+          history: [...(curr.history || []), failed].slice(-100),
+          cumulativeStats: {
+            executed: c.executed + 1,
+            passed: c.passed,
+            failed: c.failed + 1,
+            timeouts: c.timeouts + (isTimeout ? 1 : 0),
+            responsive: c.responsive + (hasElapsed ? 1 : 0),
+            elapsedMsTotal: c.elapsedMsTotal + (failed.elapsedMs || 0)
+          }
+        };
+      });
+    }
+  }
+
+  function duplicateStep(index: number) {
+    const step = state.steps[index];
+    if (!step) return;
+    pushHistory(state.steps);
+    const cloned: TestStep = {
+      ...clone(step),
+      id: createId(),
+      result: "Pendiente",
+      detail: "",
+      elapsedMs: null,
+      at: "",
+      rows: []
+    };
+    setState(curr => {
+      const steps = [...curr.steps];
+      steps.splice(index + 1, 0, cloned);
+      return { ...curr, steps, detailIndex: null };
+    });
+  }
+
+  const allStepsChecked = state.steps.length > 0 && state.steps.every(s => s.enabled);
+  function toggleAllSteps() {
+    const next = !allStepsChecked;
+    pushHistory(state.steps);
+    setState(curr => ({
+      ...curr,
+      steps: curr.steps.map(s => ({ ...s, enabled: next }))
+    }));
   }
 
   async function runPlan(loop = false) {
@@ -1100,30 +1484,120 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
             <button onClick={() => setState((current) => ({ ...current, stopRequested: true }))} disabled={!state.running}>
               {state.stopRequested ? "Deteniendo..." : "Detener"}
             </button>
-            <button onClick={() => setState((current) => ({ ...current, steps: [...current.steps, createStep(defaultSlave, "fc3", "40000", "1", "", "count")] }))}>+ Agregar paso</button>
+            <button onClick={() => { pushHistory(state.steps); setState((current) => ({ ...current, steps: [...current.steps, createStep(defaultSlave, "fc3", "40000", "1", "", "count")] })); }}>+ Agregar paso</button>
             <button onClick={savePlanToScenario}>Guardar plan</button>
           </div>
         </div>
-        <div className="testsPlanTable">
+        <div className="testsPlanTable" onDragOver={(e) => {
+          // Auto-scroll while dragging near edges
+          const container = e.currentTarget;
+          const rect = container.getBoundingClientRect();
+          const zone = 50;
+          const speed = 12;
+          if (e.clientY < rect.top + zone) {
+            container.scrollBy({ top: -speed, behavior: 'instant' });
+          } else if (e.clientY > rect.bottom - zone) {
+            container.scrollBy({ top: speed, behavior: 'instant' });
+          }
+        }}>
+      <style>{`
+        .testsPlanTable table tr.drag-over td { border-top: 2px solid #00bfff !important; }
+        .testsPlanTable table tr.drag-over-bottom td { border-bottom: 2px solid #00bfff !important; }
+        .testsPlanTable table { border-collapse: collapse !important; }
+        .testsPlanTable tbody tr { scroll-margin-top: 55px; scroll-margin-bottom: 55px; }
+        .testsPlanTable { position: relative; }
+      `}</style>
           <table>
             <colgroup>
-              <col style={{ width: '40px' }} />
-              <col style={{ width: '45px' }} />
-              <col style={{ width: '60px' }} />
-              <col style={{ width: '160px' }} />
-              <col style={{ width: '90px' }} />
+              <col style={{ width: '32px' }} />
+              <col style={{ width: '38px' }} />
+              <col style={{ width: '70px' }} />
+              <col style={{ width: '175px' }} />
               <col style={{ width: '85px' }} />
-              <col style={{ width: '90px' }} />
-              <col style={{ width: '145px' }} />
-              <col style={{ width: 'auto' }} />
-              <col style={{ width: '80px' }} />
+              <col style={{ width: '75px' }} />
+              <col style={{ width: '165px' }} />
+              <col style={{ width: '135px' }} />
+              <col style={{ width: '115px' }} />
+              <col style={{ width: '85px' }} />
               <col style={{ width: '110px' }} />
               <col style={{ width: '35px' }} />
             </colgroup>
-            <thead><tr><th>Activo</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad</th><th>Valor</th><th>Validacion</th><th>Esperado</th><th>Timeout</th><th>Resultado</th><th /></tr></thead>
-            <tbody>{state.steps.map((step, index) => <StepRow key={step.id} step={step} index={index} onPatch={(patch) => patchStep(index, patch)} onFn={(fn) => changeFn(index, fn)} onValue={(value) => changeValue(index, value)} onValidation={(mode) => changeValidation(index, mode)} onDelete={() => setState((current) => ({ ...current, steps: current.steps.filter((_, itemIndex) => itemIndex !== index), detailIndex: null }))} onReorder={(from, to) => { if (from === to) return; setState((current) => { const steps = [...current.steps]; const [moved] = steps.splice(from, 1); steps.splice(to, 0, moved); return { ...current, steps, detailIndex: null }; }); }} />)}</tbody>
+            <thead><tr>
+                <th style={{textAlign:'center'}}>Activo</th>
+                <th style={{textAlign:'center'}}>Paso</th>
+                <th style={{textAlign:'center'}}>Slave</th>
+                <th style={{textAlign:'center'}}>Funcion</th>
+                <th style={{textAlign:'center'}}>Direccion</th>
+                <th style={{textAlign:'center'}}>Cantidad</th>
+                <th style={{textAlign:'center'}}>Valor</th>
+                <th style={{textAlign:'center'}}>Validacion</th>
+                <th style={{textAlign:'center'}}>Esperado</th>
+                <th style={{textAlign:'center'}}>Timeout</th>
+                <th style={{textAlign:'center'}}>Resultado</th>
+                <th />
+              </tr></thead>
+            <tbody>{state.steps.map((step, index) => <StepRow key={step.id} step={step} index={index} selected={selectedRows.includes(index)} onSelect={(e) => handleRowClick(index, e)} onPatch={(patch) => patchStep(index, patch)} onFn={(fn) => changeFn(index, fn)} onValue={(value) => changeValue(index, value)} onValidation={(mode) => changeValidation(index, mode)} onEditBits={(field) => setEditingBits({ index, field })} onEditRegisters={() => setEditingRegisters({ index })} onDelete={() => { pushHistory(state.steps); setState((current) => ({ ...current, steps: current.steps.filter((_, itemIndex) => itemIndex !== index), detailIndex: null })); setSelectedRows([]); setLastSelectedIndex(null); }} dragPayload={selectedRows.includes(index) ? selectedRows : [index]} onReorder={(payload, to) => {
+  let fromIndices = [];
+  try { fromIndices = JSON.parse(payload); } catch(e) { fromIndices = [Number(payload)]; }
+  if (!Array.isArray(fromIndices) || fromIndices.length === 0) return;
+  fromIndices.sort((a,b)=>a-b);
+  if (fromIndices.includes(to) || (fromIndices.length === 1 && (fromIndices[0] === to || fromIndices[0] === to - 1))) return;
+  
+  pushHistory(state.steps);
+  setState((current) => {
+    const steps = [...current.steps];
+    const movedItems = fromIndices.map(i => steps[i]);
+    for (let i = fromIndices.length - 1; i >= 0; i--) {
+      steps.splice(fromIndices[i], 1);
+    }
+    const shift = fromIndices.filter(i => i < to).length;
+    const finalTo = to - shift;
+    steps.splice(finalTo, 0, ...movedItems);
+    
+    setTimeout(() => {
+      const newSelection = movedItems.map((_, idx) => finalTo + idx);
+      setSelectedRows(newSelection);
+      setLastSelectedIndex(newSelection[0]);
+    }, 0);
+
+    return { ...current, steps, detailIndex: null };
+  });
+}} />)}</tbody>
           </table>
         </div>
+        {editingBits && state.steps[editingBits.index] && (
+          <BitEditorModal 
+            value={editingBits.field === "value" ? state.steps[editingBits.index].value : state.steps[editingBits.index].expected}
+            quantity={Number(state.steps[editingBits.index].quantity) || 1}
+            startAddress={state.steps[editingBits.index].address || "0"}
+            fn={state.steps[editingBits.index].fn}
+            field={editingBits.field}
+            onClose={() => setEditingBits(null)}
+            onApply={(val, qty) => {
+              if (editingBits.field === "value") {
+                patchStep(editingBits.index, { value: val, quantity: String(qty) });
+              } else {
+                patchStep(editingBits.index, { expected: val, quantity: String(qty) });
+              }
+              setEditingBits(null);
+            }}
+          />
+        )}
+        {editingRegisters && state.steps[editingRegisters.index] && (
+          <RegisterExpectedModal
+            step={state.steps[editingRegisters.index]}
+            onClose={() => setEditingRegisters(null)}
+            onApply={(expectedVal, validationMode, newAddress, newQty) => {
+              patchStep(editingRegisters.index, { 
+                expected: expectedVal, 
+                validationMode,
+                address: newAddress,
+                quantity: String(newQty)
+              });
+              setEditingRegisters(null);
+            }}
+          />
+        )}
         <p className="testsInfo">Cantidad se usa en lecturas. Valor se usa en escrituras. Validacion define si basta respuesta/cantidad o si se comparan valores exactos.</p>
       </section>
 
@@ -1179,23 +1653,186 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   );
 }
 
-function StepRow({ step, index, onPatch, onFn, onValue, onValidation, onDelete, onReorder }: { step: TestStep; index: number; onPatch: (patch: Partial<TestStep>) => void; onFn: (fn: Fn) => void; onValue: (value: string) => void; onValidation: (mode: ValidationMode) => void; onDelete: () => void; onReorder: (from: number, to: number) => void }) {
-  const [dragOver, setDragOver] = useState(false);
+function StepRow({ step, index, onPatch, onFn, onValue, onValidation, onDelete, onReorder, selected, onSelect, dragPayload, onEditBits, onEditRegisters }: { step: TestStep; index: number; onPatch: (patch: Partial<TestStep>) => void; onFn: (fn: Fn) => void; onValue: (value: string) => void; onValidation: (mode: ValidationMode) => void; onDelete: () => void; onReorder: (payload: string, to: number) => void; selected?: boolean; onSelect?: (e: React.MouseEvent) => void; dragPayload: number[]; onEditBits?: (field: "value" | "expected") => void; onEditRegisters?: () => void; }) {
+  const [canDrag, setCanDrag] = useState(false);
   const read = isRead(step.fn);
   const isSingleWrite = step.fn === "fc5" || step.fn === "fc6";
   const expectedDisabled = step.validationMode === "response" || step.validationMode === "count";
   const modeOptions: ValidationMode[] = isWrite(step.fn) ? ["response", "exact", "byAddress"] : ["count", "exact", "byAddress"];
+  const actualBitValue = hasBitRows(step) ? bitRowsValue(step.rows, "actual") : "";
   return (
-    <tr draggable className={dragOver ? "drag-over" : ""} onDragStart={(e) => { e.dataTransfer.setData("text/plain", index.toString()); e.dataTransfer.effectAllowed = "move"; }} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={(e) => { e.preventDefault(); setDragOver(false); const from = Number(e.dataTransfer.getData("text/plain")); onReorder(from, index); }}>
+    <tr onClick={onSelect} style={{ background: selected ? "#00bfff22" : undefined }} draggable={canDrag} onDragStart={(e) => { 
+  e.dataTransfer.setData("application/json", JSON.stringify(dragPayload)); 
+  e.dataTransfer.effectAllowed = "move"; 
+  if (dragPayload.length > 1) {
+    const ghost = document.createElement('div');
+    ghost.style.position = 'absolute';
+    ghost.style.top = '-9999px';
+    ghost.style.opacity = '0.55';
+    ghost.style.pointerEvents = 'none';
+    ghost.style.zIndex = '9999';
+    ghost.style.background = '#071d30';
+    ghost.style.borderRadius = '8px';
+    ghost.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)';
+    ghost.style.border = '1px solid #00bfff';
+    ghost.style.overflow = 'hidden';
+    
+    const table = document.createElement('table');
+    table.className = 'testsPlanTable';
+    table.style.borderCollapse = 'collapse';
+    table.style.width = e.currentTarget.closest('table')?.offsetWidth + 'px' || '800px';
+    table.style.margin = '0';
+    
+    const tbody = document.createElement('tbody');
+    const allRows = Array.from(e.currentTarget.parentElement?.children || []);
+    dragPayload.forEach(idx => {
+       if (allRows[idx]) {
+         const clone = allRows[idx].cloneNode(true) as HTMLElement;
+         clone.style.background = '#00bfff22';
+         // remove specific drag classes from clone if they exist
+         clone.classList.remove('drag-over', 'drag-over-bottom');
+         tbody.appendChild(clone);
+       }
+    });
+    
+    table.appendChild(tbody);
+    ghost.appendChild(table);
+    document.body.appendChild(ghost);
+    
+    e.dataTransfer.setDragImage(ghost, 30, 30);
+    setTimeout(() => { if(document.body.contains(ghost)) document.body.removeChild(ghost); }, 0);
+  }
+}} onDragOver={(e) => { 
+  e.preventDefault(); 
+  e.dataTransfer.dropEffect = "move"; 
+  document.querySelectorAll('.drag-over, .drag-over-bottom').forEach(el => {
+    if (el !== e.currentTarget) el.classList.remove('drag-over', 'drag-over-bottom');
+  });
+  const rect = e.currentTarget.getBoundingClientRect(); 
+  const isBottom = e.clientY > rect.top + rect.height / 2; 
+  if (isBottom) {
+    e.currentTarget.classList.add('drag-over-bottom');
+    e.currentTarget.classList.remove('drag-over');
+  } else {
+    e.currentTarget.classList.add('drag-over');
+    e.currentTarget.classList.remove('drag-over-bottom');
+  }
+}} onDragEnd={() => {
+  setCanDrag(false);
+  document.querySelectorAll('.drag-over, .drag-over-bottom').forEach(el => el.classList.remove('drag-over', 'drag-over-bottom'));
+}} 
+onDragLeave={(e) => { 
+  const rect = e.currentTarget.getBoundingClientRect();
+  if (e.clientY <= rect.top || e.clientY >= rect.bottom || e.clientX <= rect.left || e.clientX >= rect.right) {
+    e.currentTarget.classList.remove('drag-over', 'drag-over-bottom');
+  }
+}} onDrop={(e) => { 
+  e.preventDefault(); 
+  const isBottom = e.currentTarget.classList.contains('drag-over-bottom');
+  document.querySelectorAll('.drag-over, .drag-over-bottom').forEach(el => el.classList.remove('drag-over', 'drag-over-bottom'));
+  const payload = e.dataTransfer.getData("application/json") || e.dataTransfer.getData("text/plain"); 
+  let to = index; 
+  if (isBottom) { to = index + 1; } 
+  onReorder(payload, to); 
+}}>
       <td><input type="checkbox" checked={step.enabled} onChange={(event) => onPatch({ enabled: event.target.checked })} /></td>
-      <td style={{ cursor: 'grab' }} title="Arrastra para reordenar">☰ {index + 1}</td>
+      <td 
+        style={{ cursor: 'grab', userSelect: 'none' }} 
+        title="Arrastra para reordenar"
+        onMouseEnter={() => setCanDrag(true)}
+        onMouseLeave={() => setCanDrag(false)}
+      >
+        ☰ {index + 1}
+      </td>
       <td><input type={step.fn === "delay" ? "text" : "number"} min="1" max="247" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.slave} onChange={(event) => onPatch({ slave: event.target.value.replace(/\D/g, "").slice(0, 3) })} onBlur={() => onPatch({ slave: clampSlave(step.slave, 2) })} /></td>
       <td><select value={step.fn} onChange={(event) => onFn(event.target.value as Fn)}>{functionOrder.map((fn) => <option key={fn} value={fn}>{labels[fn]}</option>)}</select></td>
       <td><input type={step.fn === "delay" ? "text" : "number"} min="0" max="65535" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.address} onChange={(event) => onPatch({ address: sanitizeNumericText(event.target.value, 8) })} /></td>
       <td><input type={!read || step.fn === "delay" ? "text" : "number"} min="1" disabled={!read || step.fn === "delay"} value={step.fn === "delay" ? "-" : (read ? step.quantity : countFor(step))} onChange={(event) => onPatch({ quantity: event.target.value.replace(/\D/g, "").slice(0, 4) })} /></td>
-      <td><input type={isSingleWrite ? "number" : "text"} min="0" max="65535" disabled={read && step.fn !== "delay"} value={read && step.fn !== "delay" ? "-" : step.value} onChange={(event) => onValue(event.target.value)} /></td>
+      <td>
+        {step.fn === "fc5" ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 4px' }}>
+            {(() => {
+              const isFc5On = normalizeBool(step.value);
+              return (
+                <>
+                  <div
+                    onClick={(e) => { e.stopPropagation(); onValue(isFc5On ? "OFF" : "ON"); }}
+                    style={{
+                      width: '38px', height: '22px', borderRadius: '12px',
+                      background: isFc5On ? '#10b981' : '#1e3242',
+                      border: isFc5On ? '1px solid #34d399' : '1px solid #314a5d',
+                      boxShadow: isFc5On ? '0 0 8px rgba(16,185,129,0.55)' : 'none',
+                      position: 'relative', cursor: 'pointer',
+                      transition: 'all 0.2s ease', flexShrink: 0
+                    }}
+                  >
+                    <div style={{
+                      width: '15px', height: '15px', borderRadius: '50%',
+                      background: '#ffffff', position: 'absolute',
+                      top: '3px', left: isFc5On ? '19px' : '3px',
+                      transition: 'all 0.2s ease',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.4)'
+                    }} />
+                  </div>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: isFc5On ? '#34d399' : 'var(--muted)' }}>
+                    {isFc5On ? 'ON' : 'OFF'}
+                  </span>
+                </>
+              );
+            })()}
+          </div>
+        ) : step.fn === "fc15" ? (
+          <BitPreview value={step.value} quantity={Number(step.quantity) || 1} onClick={() => onEditBits && onEditBits("value")} onChange={onValue} />
+        ) : step.fn === "fc2" ? (
+          <BitPreview value={actualBitValue} quantity={countFor(step)} readOnly emptyText="Sin lectura" />
+        ) : (
+          <input type={isSingleWrite ? "number" : "text"} min="0" max="65535" disabled={read && step.fn !== "delay"} value={read && step.fn !== "delay" ? "-" : step.value} onChange={(event) => onValue(event.target.value)} />
+        )}
+      </td>
       <td><select disabled={step.fn === "delay"} value={step.validationMode} onChange={(event) => onValidation(event.target.value as ValidationMode)}>{modeOptions.map((mode) => <option key={mode} value={mode}>{validationLabels[mode]}</option>)}</select></td>
-      <td><input disabled={expectedDisabled || step.fn === "delay"} value={step.fn === "delay" ? "-" : (expectedDisabled ? expectedAutoText(step) : step.expected)} placeholder={expectedAutoText(step)} onChange={(event) => onPatch({ expected: event.target.value })} /></td>
+      <td>
+        {step.validationMode === "exact" && (step.fn === "fc1" || step.fn === "fc2") ? (
+          <BitPreview value={step.expected} quantity={Number(step.quantity) || 1} onClick={() => onEditBits && onEditBits("expected")} onChange={(val) => onPatch({ expected: val })} emptyText="Definir" />
+        ) : (step.fn === "fc3" || step.fn === "fc4") ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "3px", width: "100%" }}>
+            <input 
+              disabled={expectedDisabled} 
+              value={expectedDisabled ? expectedAutoText(step) : step.expected} 
+              placeholder={expectedAutoText(step)} 
+              onChange={(event) => onPatch({ expected: event.target.value })} 
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <button
+              type="button"
+              title="Configurar valores esperados"
+              style={{
+                minHeight: "24px",
+                height: "24px",
+                width: "24px",
+                padding: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "rgba(0, 191, 255, 0.12)",
+                border: "1px solid rgba(0, 191, 255, 0.45)",
+                color: "var(--cyan)",
+                borderRadius: "4px",
+                cursor: "pointer",
+                flexShrink: 0,
+                fontSize: "0.9rem",
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditRegisters && onEditRegisters();
+              }}
+            >
+              ✎
+            </button>
+          </div>
+        ) : (
+          <input disabled={expectedDisabled || step.fn === "delay"} value={step.fn === "delay" ? "-" : (expectedDisabled ? expectedAutoText(step) : step.expected)} placeholder={expectedAutoText(step)} onChange={(event) => onPatch({ expected: event.target.value })} />
+        )}
+      </td>
       <td><input type={step.fn === "delay" ? "text" : "number"} min="1" step="100" max="60000" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.timeoutMs} onChange={(event) => onPatch({ timeoutMs: event.target.value.replace(/\D/g, "").slice(0, 5) })} /></td>
       <td><ResultPill result={step.result} /></td>
       <td><button className="tiny" onClick={onDelete} title="Eliminar paso">x</button></td>
@@ -1284,9 +1921,1017 @@ function ResultPill({ result }: { result: Result }) {
 }
 
 function ExecutionTable({ steps, onDetail }: { steps: TestStep[]; onDetail: (index: number) => void }) {
-  return <div className="testsExecutionTable"><table><thead><tr><th>Hora</th><th>Paso</th><th>Slave</th><th>Funcion</th><th>Direccion</th><th>Cantidad/Valor</th><th>Resultado</th><th>Tiempo</th><th>Detalle</th><th>Info</th></tr></thead><tbody>{[...steps].map((step, originalIndex) => ({ step, originalIndex })).reverse().map(({ step, originalIndex }) => <tr key={step.historyId || `${step.id}-${originalIndex}`}><td>{step.at || "-"}</td><td>{originalIndex + 1}</td><td>Slave ID {step.slave || "-"}</td><td>{labels[step.fn]}</td><td>{step.address}</td><td>{isRead(step.fn) ? countFor(step) : step.value}</td><td><ResultPill result={step.result} /></td><td>{step.elapsedMs == null ? "-" : `${step.elapsedMs} ms`}</td><td>{step.detail || "Pendiente de ejecucion."}</td><td><button className="tiny" onClick={() => onDetail(originalIndex)}>Info</button></td></tr>)}</tbody></table></div>;
+  return (
+    <div className="testsExecutionTable">
+      <table>
+        <thead>
+          <tr>
+            <th>Hora</th>
+            <th>Paso</th>
+            <th>Slave</th>
+            <th>Funcion</th>
+            <th>Direccion</th>
+            <th>Cantidad/Valor</th>
+            <th>Resultado</th>
+            <th>Tiempo</th>
+            <th>Detalle</th>
+            <th>Info</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...steps].map((step, originalIndex) => ({ step, originalIndex })).reverse().map(({ step, originalIndex }) => (
+            <tr key={step.historyId || `${step.id}-${originalIndex}`}>
+              <td>{step.at || "-"}</td>
+              <td>{originalIndex + 1}</td>
+              <td>Slave ID {step.slave || "-"}</td>
+              <td>{labels[step.fn]}</td>
+              <td>{step.address}</td>
+              <td><ExecutionValue step={step} /></td>
+              <td><ResultPill result={step.result} /></td>
+              <td>{step.elapsedMs == null ? "-" : `${step.elapsedMs} ms`}</td>
+              <td>{step.detail || "Pendiente de ejecucion."}</td>
+              <td><button className="tiny" onClick={() => onDetail(originalIndex)}>Info</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ExecutionValue({ step }: { step: TestStep }) {
+  if (step.fn === "fc2" && hasBitRows(step)) {
+    return <BitPreview value={bitRowsValue(step.rows, "actual")} quantity={countFor(step)} readOnly emptyText="Sin lectura" />;
+  }
+  return <>{isRead(step.fn) ? countFor(step) : step.value}</>;
+}
+
+function BitCellValue({ value }: { value: string }) {
+  if (!value || value === "-") return <>{value || "-"}</>;
+  const isOn = normalizeBool(value);
+  return <span className={`bitChip ${isOn ? "on" : "off"}`}>{isOn ? "ON" : "OFF"}</span>;
 }
 
 function StepDetail({ step, index, onClose }: { step: TestStep; index: number; onClose: () => void }) {
-  return <div className="testsDetailPanel"><button className="tiny closeDetail" onClick={onClose}>Cerrar</button><h2>Detalle del paso {index + 1}</h2><p>{labels[step.fn]} - {step.detail || "Sin detalle."}</p><div className="testsDetailFacts"><span><small>Funcion</small><strong>{labels[step.fn]}</strong></span><span><small>Slave ID</small><strong>{step.slave}</strong></span><span><small>Direccion inicial</small><strong>{step.address}</strong></span><span><small>{isRead(step.fn) ? "Cantidad" : "Valor"}</small><strong>{isRead(step.fn) ? countFor(step) : step.value}</strong></span><span><small>Validacion</small><strong>{validationLabels[step.validationMode]}</strong></span><span><small>Resultado</small><strong>{step.result}</strong></span></div><div className="testsExecutionTable testsDetailTable"><table><thead><tr><th>Direccion</th><th>Nombre</th><th>Esperado</th><th>Leido/Escrito</th><th>Tipo</th><th>Validacion</th></tr></thead><tbody>{step.rows.length === 0 ? <tr><td colSpan={6}>Este paso no tiene valores detallados.</td></tr> : step.rows.map((row) => <tr key={`${row.address}-${row.name}`}><td>{row.address}</td><td>{row.name}</td><td>{row.expected}</td><td>{row.type === "bool" ? <span className={`bitChip ${normalizeBool(row.actual) ? "on" : "off"}`}>{row.actual}</span> : row.actual}</td><td>{row.type}</td><td className={row.validation === "OK" ? "oktext" : row.validation === "No coincide" ? "badstatus" : ""}>{row.validation}</td></tr>)}</tbody></table></div></div>;
+  const actualBitValue = hasBitRows(step) ? bitRowsValue(step.rows, "actual") : "";
+  return (
+    <div className="testsDetailPanel">
+      <button className="tiny closeDetail" onClick={onClose}>Cerrar</button>
+      <h2>Detalle del paso {index + 1}</h2>
+      <p>{labels[step.fn]} - {step.detail || "Sin detalle."}</p>
+      <div className="testsDetailFacts">
+        <span><small>Funcion</small><strong>{labels[step.fn]}</strong></span>
+        <span><small>Slave ID</small><strong>{step.slave}</strong></span>
+        <span><small>Direccion inicial</small><strong>{step.address}</strong></span>
+        <span><small>{isRead(step.fn) ? "Cantidad" : "Valor"}</small><strong>{isRead(step.fn) ? countFor(step) : step.value}</strong></span>
+        <span><small>Validacion</small><strong>{validationLabels[step.validationMode]}</strong></span>
+        <span><small>Resultado</small><strong>{step.result}</strong></span>
+      </div>
+      {step.fn === "fc2" && actualBitValue ? (
+        <div className="bitReadout">
+          <small>Entradas leidas</small>
+          <BitPreview value={actualBitValue} quantity={countFor(step)} readOnly emptyText="Sin lectura" />
+        </div>
+      ) : null}
+      <div className="testsExecutionTable testsDetailTable">
+        <table>
+          <thead>
+            <tr>
+              <th>Direccion</th>
+              <th>Nombre</th>
+              <th>Esperado</th>
+              <th>Leido/Escrito</th>
+              <th>Tipo</th>
+              <th>Validacion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {step.rows.length === 0 ? (
+              <tr><td colSpan={6}>Este paso no tiene valores detallados.</td></tr>
+            ) : step.rows.map((row) => (
+              <tr key={`${row.address}-${row.name}`}>
+                <td>{row.address}</td>
+                <td>{row.name}</td>
+                <td>{row.type === "bool" ? <BitCellValue value={row.expected} /> : row.expected}</td>
+                <td>{row.type === "bool" ? <BitCellValue value={row.actual} /> : row.actual}</td>
+                <td>{row.type}</td>
+                <td className={row.validation === "OK" ? "oktext" : row.validation === "No coincide" ? "badstatus" : ""}>{row.validation}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function BitPreview({
+  value,
+  quantity,
+  onClick,
+  onChange,
+  readOnly = false,
+  emptyText = "OFF"
+}: {
+  value: string;
+  quantity: number;
+  onClick?: () => void;
+  onChange?: (newValue: string) => void;
+  readOnly?: boolean;
+  emptyText?: string;
+}) {
+  let bits: boolean[] = [];
+  try {
+    bits = parseBoolList(value);
+  } catch {
+    bits = [];
+  }
+  const hasValue = splitValues(value).length > 0;
+  const q = Math.max(1, quantity);
+  const fullBits = Array.from({ length: Math.max(q, bits.length) }, (_, i) => !!bits[i]);
+  const displayBits = fullBits.slice(0, 8);
+  const hasMore = quantity > 8;
+  const decValue = bitDecimal(fullBits.slice(0, Math.min(q, 16)));
+
+  const toggleBitAt = (i: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!onChange || readOnly) return;
+    const next = [...fullBits];
+    next[i] = !next[i];
+    onChange(next.slice(0, q).map(b => b ? "1" : "0").join(" "));
+  };
+
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "#041727",
+        border: "1px solid #2d5c75",
+        borderRadius: "6px",
+        padding: "3px 6px",
+        width: "100%",
+        height: "34px",
+        boxSizing: "border-box",
+      }}
+    >
+      <div style={{ display: "flex", gap: "4px", alignItems: "center", overflow: "hidden" }}>
+        {!hasValue ? (
+          <span style={{ fontSize: "0.72rem", color: "var(--muted)", whiteSpace: "nowrap" }}>{emptyText}</span>
+        ) : (
+          <>
+            <span style={{ fontFamily: "monospace", fontSize: "0.78rem", color: "#fff", fontWeight: 600, marginRight: "2px", flexShrink: 0 }}>
+              {decValue}
+            </span>
+            {displayBits.map((b, i) => (
+              <span
+                key={i}
+                onClick={(e) => toggleBitAt(i, e)}
+                title={`Bit ${i}: ${b ? '1 (ON)' : '0 (OFF)'}${readOnly ? "" : " - Clic para alternar"}`}
+                style={{
+                  width: "11px",
+                  height: "11px",
+                  borderRadius: "50%",
+                  display: "inline-block",
+                  background: b ? "#10b981" : "#253a4b",
+                  boxShadow: b ? "0 0 6px #10b981" : "none",
+                  border: b ? "1px solid #6ee7b7" : "1px solid #1c2e3d",
+                  flexShrink: 0,
+                  cursor: onChange && !readOnly ? "pointer" : "default",
+                  transition: "all 0.15s ease",
+                }}
+              />
+            ))}
+            {hasMore && <span style={{ color: "var(--muted)", fontSize: "0.68rem", marginLeft: "2px" }}>+{quantity - 8}</span>}
+          </>
+        )}
+      </div>
+      {onClick ? <button
+        type="button"
+        style={{
+          minHeight: "24px",
+          height: "24px",
+          width: "24px",
+          padding: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "rgba(0, 191, 255, 0.12)",
+          border: "1px solid rgba(0, 191, 255, 0.45)",
+          color: "var(--cyan)",
+          borderRadius: "4px",
+          cursor: "pointer",
+          flexShrink: 0,
+          fontSize: "0.9rem",
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onClick();
+        }}
+      >
+        ✎
+      </button> : null}
+    </div>
+  );
+}
+
+function BitEditorModal({
+  value,
+  quantity,
+  startAddress,
+  fn,
+  field,
+  onClose,
+  onApply
+}: {
+  value: string;
+  quantity: number;
+  startAddress: string;
+  fn: Fn;
+  field: "value" | "expected";
+  onClose: () => void;
+  onApply: (val: string, qty: number) => void;
+}) {
+  const copy = bitEditorCopy(fn, field);
+  const [localQuantity, setLocalQuantity] = useState<number>(() => {
+    const q = Math.max(1, Math.min(16, quantity || 16));
+    return q;
+  });
+
+  const [bits, setBits] = useState<boolean[]>(() => {
+    const arr = Array.from({ length: 16 }, () => false);
+    try {
+      const parsed = parseBoolList(value);
+      for (let i = 0; i < 16; i++) {
+        if (i < quantity && i < parsed.length) {
+          arr[i] = !!parsed[i];
+        }
+      }
+    } catch {}
+    return arr;
+  });
+
+  const toggleBit = (index: number) => {
+    if (index >= localQuantity) return;
+    const next = [...bits];
+    next[index] = !next[index];
+    setBits(next);
+  };
+
+  const handleQuantityChange = (newQty: number) => {
+    const clamped = Math.max(1, Math.min(16, newQty));
+    setLocalQuantity(clamped);
+    // When quantity decreases, turn off remaining bits
+    setBits(prev => prev.map((b, i) => i < clamped ? b : false));
+  };
+
+  const setAll = (state: boolean) => {
+    setBits(prev => prev.map((b, i) => i < localQuantity ? state : false));
+  };
+
+  const invert = () => {
+    setBits(prev => prev.map((b, i) => i < localQuantity ? !b : false));
+  };
+
+  let decVal = 0;
+  for (let i = 0; i < 16; i++) {
+    if (i < localQuantity && bits[i]) {
+      decVal |= (1 << i);
+    }
+  }
+
+  const hexVal = "0x" + decVal.toString(16).toUpperCase().padStart(4, "0");
+
+  let binVal = "";
+  for (let i = 15; i >= 0; i--) {
+    binVal += (i < localQuantity && bits[i]) ? "1" : "0";
+    if (i > 0 && i % 4 === 0) binVal += " ";
+  }
+
+  const handleApply = () => {
+    const valString = bits.slice(0, localQuantity).map(b => b ? "1" : "0").join(" ");
+    onApply(valString, localQuantity);
+  };
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        backgroundColor: "rgba(2, 10, 18, 0.85)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 999999,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        style={{
+          background: "#071b2d",
+          border: "1px solid #1c4b6e",
+          borderRadius: "14px",
+          padding: "22px 26px",
+          width: "640px",
+          maxWidth: "94vw",
+          maxHeight: "90vh",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.95), 0 0 25px rgba(0,191,255,0.2)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "16px",
+          color: "#edf8ff",
+          userSelect: "none"
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header matching Image 2 */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            <div style={{ width: "36px", height: "36px", borderRadius: "8px", background: "rgba(0,191,255,0.12)", border: "1px solid rgba(0,191,255,0.35)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--cyan)", fontSize: "1.4rem" }}>
+              ➿
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.25rem", color: "#fff", fontWeight: 700 }}>{copy.title}</h2>
+              <p style={{ margin: "3px 0 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>
+                {copy.description}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="tiny ghost"
+            style={{ minWidth: "30px", height: "30px", padding: 0, borderRadius: "50%", fontSize: "1rem", color: "var(--muted)" }}
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Info & Quantity bar */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#051625", padding: "8px 14px", borderRadius: "8px", border: "1px solid #16364d" }}>
+          <span style={{ fontSize: "0.86rem", color: "#edf8ff" }}>
+            Inicio: <strong>{startAddress}</strong> <span style={{ color: "var(--muted)" }}>(offset {getModbusOffset(startAddress)})</span>
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "0.86rem", color: "var(--muted)" }}>Cantidad:</span>
+            <input 
+              type="number" 
+              min={1} 
+              max={16} 
+              value={localQuantity} 
+              onChange={(e) => handleQuantityChange(parseInt(e.target.value) || 1)}
+              style={{ width: "58px", height: "28px", textAlign: "center", background: "#082136", border: "1px solid #235475", borderRadius: "5px", color: "#fff", fontWeight: "bold", fontSize: "0.9rem" }}
+            />
+          </div>
+        </div>
+
+        {/* 16 Coils Grid (8x2) matching Image 2 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px", background: "#051625", padding: "14px", borderRadius: "10px", border: "1px solid #16364d" }}>
+          {/* Row 1: Coils 0 to 7 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: "8px" }}>
+            {Array.from({ length: 8 }, (_, i) => {
+              const isActive = i < localQuantity;
+              const isOn = isActive ? bits[i] : false;
+              const addr = bitAddressLabel(fn, startAddress, i);
+
+              return (
+                <div 
+                  key={i} 
+                  style={{ 
+                    display: "flex", 
+                    flexDirection: "column", 
+                    alignItems: "center", 
+                    gap: "6px",
+                    opacity: isActive ? 1 : 0.3,
+                    filter: isActive ? "none" : "grayscale(0.8)",
+                    transition: "all 0.15s ease"
+                  }}
+                >
+                  <span style={{ fontSize: "0.72rem", color: isActive ? "#9ec6e0" : "var(--muted)", fontFamily: "monospace", fontWeight: 600 }}>
+                    {addr}
+                  </span>
+                  <div
+                    onClick={() => toggleBit(i)}
+                    style={{
+                      width: "34px",
+                      height: "19px",
+                      borderRadius: "10px",
+                      background: isOn ? "#10b981" : "#1b2f3f",
+                      border: isOn ? "1px solid #34d399" : "1px solid #29475e",
+                      boxShadow: isOn ? "0 0 8px rgba(16,185,129,0.6)" : "none",
+                      position: "relative",
+                      cursor: isActive ? "pointer" : "not-allowed",
+                      transition: "all 0.15s ease"
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: "13px",
+                        height: "13px",
+                        borderRadius: "50%",
+                        background: "#ffffff",
+                        position: "absolute",
+                        top: "2px",
+                        left: isOn ? "17px" : "3px",
+                        transition: "all 0.15s ease",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.5)"
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Row 2: Coils 8 to 15 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: "8px" }}>
+            {Array.from({ length: 8 }, (_, i) => {
+              const idx = i + 8;
+              const isActive = idx < localQuantity;
+              const isOn = isActive ? bits[idx] : false;
+              const addr = bitAddressLabel(fn, startAddress, idx);
+
+              return (
+                <div 
+                  key={idx} 
+                  style={{ 
+                    display: "flex", 
+                    flexDirection: "column", 
+                    alignItems: "center", 
+                    gap: "6px",
+                    opacity: isActive ? 1 : 0.3,
+                    filter: isActive ? "none" : "grayscale(0.8)",
+                    transition: "all 0.15s ease"
+                  }}
+                >
+                  <span style={{ fontSize: "0.72rem", color: isActive ? "#9ec6e0" : "var(--muted)", fontFamily: "monospace", fontWeight: 600 }}>
+                    {addr}
+                  </span>
+                  <div
+                    onClick={() => toggleBit(idx)}
+                    style={{
+                      width: "34px",
+                      height: "19px",
+                      borderRadius: "10px",
+                      background: isOn ? "#10b981" : "#1b2f3f",
+                      border: isOn ? "1px solid #34d399" : "1px solid #29475e",
+                      boxShadow: isOn ? "0 0 8px rgba(16,185,129,0.6)" : "none",
+                      position: "relative",
+                      cursor: isActive ? "pointer" : "not-allowed",
+                      transition: "all 0.15s ease"
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: "13px",
+                        height: "13px",
+                        borderRadius: "50%",
+                        background: "#ffffff",
+                        position: "absolute",
+                        top: "2px",
+                        left: isOn ? "17px" : "3px",
+                        transition: "all 0.15s ease",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.5)"
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Acciones rápidas matching Image 2 */}
+        <div>
+          <span style={{ fontSize: "0.82rem", color: "var(--cyan)", fontWeight: 700, display: "block", marginBottom: "8px" }}>
+            Acciones rápidas
+          </span>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px" }}>
+            <button
+              type="button"
+              onClick={() => setAll(true)}
+              style={{
+                height: "36px",
+                borderRadius: "8px",
+                background: "rgba(16,185,129,0.08)",
+                border: "1px solid rgba(16,185,129,0.35)",
+                color: "#edf8ff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 6px #10b981" }}></span>
+              Todo ON
+            </button>
+            <button
+              type="button"
+              onClick={() => setAll(false)}
+              style={{
+                height: "36px",
+                borderRadius: "8px",
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid #1f425c",
+                color: "#edf8ff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", border: "1.5px solid var(--muted)" }}></span>
+              Todo OFF
+            </button>
+            <button
+              type="button"
+              onClick={invert}
+              style={{
+                height: "36px",
+                borderRadius: "8px",
+                background: "rgba(0,191,255,0.08)",
+                border: "1px solid rgba(0,191,255,0.35)",
+                color: "#edf8ff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              <span style={{ color: "var(--cyan)", fontSize: "1.1rem" }}>⇄</span>
+              Invertir
+            </button>
+          </div>
+        </div>
+
+        {/* Representación del patrón matching Image 2 */}
+        <div>
+          <span style={{ fontSize: "0.82rem", color: "var(--cyan)", fontWeight: 700, display: "block", marginBottom: "8px" }}>
+            Representación del patrón
+          </span>
+          <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.1fr 2fr", gap: "10px" }}>
+            <div style={{ background: "#051625", border: "1px solid #16364d", borderRadius: "8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "4px" }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 600 }}>DEC (uint16)</span>
+              <strong style={{ fontSize: "1.25rem", color: "#fff", fontFamily: "monospace" }}>{decVal}</strong>
+            </div>
+            <div style={{ background: "#051625", border: "1px solid #16364d", borderRadius: "8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "4px" }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 600 }}>HEX</span>
+              <strong style={{ fontSize: "1.25rem", color: "var(--cyan)", fontFamily: "monospace" }}>{hexVal}</strong>
+            </div>
+            <div style={{ background: "#051625", border: "1px solid #16364d", borderRadius: "8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "4px" }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 600 }}>BIN (b15 ... b0)</span>
+              <strong style={{ fontSize: "1.05rem", color: "#9ee6a5", fontFamily: "monospace", letterSpacing: "1px", lineHeight: "1.4" }}>{binVal}</strong>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer buttons matching Image 2 */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "6px" }}>
+          <button
+            type="button"
+            className="ghost"
+            style={{ minHeight: "36px", padding: "0 18px", fontSize: "0.88rem", borderRadius: "7px" }}
+            onClick={onClose}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="primary"
+            style={{ minHeight: "36px", padding: "0 22px", fontSize: "0.88rem", borderRadius: "7px", display: "flex", alignItems: "center", gap: "8px", fontWeight: 700 }}
+            onClick={handleApply}
+          >
+            <span>✓</span>
+            <span>Aplicar</span>
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
+function RegisterExpectedModal({
+  step,
+  onClose,
+  onApply
+}: {
+  step: TestStep;
+  onClose: () => void;
+  onApply: (expected: string, validationMode: ValidationMode, newAddress: string, newQuantity: number) => void;
+}) {
+  const fn = step.fn;
+  const [localAddress, setLocalAddress] = useState<string>(step.address || "40000");
+  const [localQuantity, setLocalQuantity] = useState<number>(() => {
+    return Math.max(1, Math.min(125, Number(step.quantity) || 1));
+  });
+
+  const offset = getModbusOffset(localAddress);
+
+  const [validationMode, setValidationMode] = useState<ValidationMode>(
+    step.validationMode === "exact" ? "exact" : (step.validationMode || "exact")
+  );
+  const [dataType, setDataType] = useState<"UInt16" | "Int16" | "Hex16">("UInt16");
+
+  // Parse existing expected values
+  const [values, setValues] = useState<number[]>(() => {
+    const parts = splitValues(step.expected);
+    const arr: number[] = [];
+    for (let i = 0; i < localQuantity; i++) {
+      const part = parts[i];
+      if (part !== undefined && part !== "") {
+        const num = part.toLowerCase().startsWith("0x") ? parseInt(part, 16) : parseInt(part, 10);
+        arr.push(isNaN(num) ? 0 : num);
+      } else {
+        arr.push(i === 0 ? 100 : (i === 1 ? 200 : 0));
+      }
+    }
+    return arr;
+  });
+
+  const [selectedIndex, setSelectedIndex] = useState<number>(0);
+  const startNum = parseInt(localAddress, 10) || 0;
+
+  const handleQuantityChange = (newQty: number) => {
+    const clamped = Math.max(1, Math.min(125, newQty));
+    setLocalQuantity(clamped);
+    setValues(prev => {
+      const next: number[] = [];
+      for (let i = 0; i < clamped; i++) {
+        next.push(prev[i] !== undefined ? prev[i] : (i === 0 ? 100 : (i === 1 ? 200 : 0)));
+      }
+      return next;
+    });
+    if (selectedIndex >= clamped) {
+      setSelectedIndex(clamped - 1);
+    }
+  };
+
+  const updateValue = (index: number, rawInput: string) => {
+    let num = 0;
+    const trimmed = rawInput.trim();
+    if (trimmed.toLowerCase().startsWith("0x")) {
+      num = parseInt(trimmed, 16);
+    } else {
+      num = parseInt(trimmed, 10);
+    }
+    if (isNaN(num)) num = 0;
+    setValues(prev => {
+      const next = [...prev];
+      next[index] = num;
+      return next;
+    });
+  };
+
+  // Selected register representations
+  const currentVal = values[selectedIndex] ?? 0;
+  const u16 = ((currentVal % 65536) + 65536) % 65536;
+  const s16 = u16 > 32767 ? u16 - 65536 : u16;
+  const hex = "0x" + u16.toString(16).toUpperCase().padStart(4, "0");
+  const bin = u16.toString(2).padStart(16, "0").replace(/(.{4})/g, "$1 ").trim();
+
+  const handleApply = () => {
+    const formatted = values.slice(0, localQuantity).map(v => {
+      const clamped = ((v % 65536) + 65536) % 65536;
+      return dataType === "Hex16" 
+        ? "0x" + clamped.toString(16).toUpperCase().padStart(4, "0") 
+        : String(dataType === "Int16" ? (clamped > 32767 ? clamped - 65536 : clamped) : clamped);
+    }).join(" ");
+    onApply(formatted, validationMode, localAddress, localQuantity);
+  };
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        backgroundColor: "rgba(2, 10, 18, 0.85)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 999999,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        style={{
+          background: "#071b2d",
+          border: "1px solid #1c4b6e",
+          borderRadius: "14px",
+          padding: "22px 26px",
+          width: "530px",
+          maxWidth: "94vw",
+          maxHeight: "90vh",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.95), 0 0 25px rgba(0,191,255,0.2)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "16px",
+          color: "#edf8ff",
+          userSelect: "none",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header matching modal styling */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            <div style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "8px",
+              background: "rgba(0,191,255,0.12)",
+              border: "1px solid rgba(0,191,255,0.35)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--cyan)",
+              fontSize: "1.25rem"
+            }}>
+              ✎
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.25rem", color: "#fff", fontWeight: 700 }}>Valor esperado</h2>
+              <p style={{ margin: "3px 0 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>
+                {fn.toUpperCase()} · {fn === "fc3" ? "Read Holding Registers" : fn === "fc4" ? "Read Input Registers" : labels[fn]}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="tiny ghost"
+            style={{ minWidth: "30px", height: "30px", padding: 0, borderRadius: "50%", fontSize: "1rem", color: "var(--muted)" }}
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Info bar with editable Inicio & Cantidad */}
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          background: "#051625",
+          padding: "8px 14px",
+          borderRadius: "8px",
+          border: "1px solid #16364d",
+          fontSize: "0.86rem",
+          gap: "10px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ color: "var(--muted)" }}>Inicio:</span>
+            <input
+              type="text"
+              value={localAddress}
+              onChange={(e) => setLocalAddress(sanitizeNumericText(e.target.value, 8))}
+              style={{
+                width: "75px",
+                height: "28px",
+                textAlign: "center",
+                background: "#082136",
+                border: "1px solid #235475",
+                borderRadius: "5px",
+                color: "#fff",
+                fontWeight: "bold",
+                fontSize: "0.88rem",
+                fontFamily: "monospace"
+              }}
+            />
+            <span style={{ color: "var(--muted)", fontSize: "0.82rem" }}>(offset {offset})</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ color: "var(--muted)" }}>Cantidad:</span>
+            <input
+              type="number"
+              min={1}
+              max={125}
+              value={localQuantity}
+              onChange={(e) => handleQuantityChange(parseInt(e.target.value) || 1)}
+              style={{
+                width: "55px",
+                height: "28px",
+                textAlign: "center",
+                background: "#082136",
+                border: "1px solid #235475",
+                borderRadius: "5px",
+                color: "#fff",
+                fontWeight: "bold",
+                fontSize: "0.88rem"
+              }}
+            />
+            <span style={{ color: "var(--muted)", fontSize: "0.82rem" }}>registros</span>
+          </div>
+        </div>
+
+        {/* Controls row: Tipo de dato & Validación */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "5px" }}>
+              Tipo de dato
+            </label>
+            <select
+              value={dataType}
+              onChange={(e) => setDataType(e.target.value as any)}
+              style={{
+                width: "100%",
+                background: "#051625",
+                border: "1px solid #1e4b6c",
+                borderRadius: "6px",
+                color: "#fff",
+                padding: "6px 10px",
+                fontSize: "0.88rem"
+              }}
+            >
+              <option value="UInt16">UInt16</option>
+              <option value="Int16">Int16</option>
+              <option value="Hex16">Hex16</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "5px" }}>
+              Validación
+            </label>
+            <select
+              value={validationMode}
+              onChange={(e) => setValidationMode(e.target.value as ValidationMode)}
+              style={{
+                width: "100%",
+                background: "#051625",
+                border: "1px solid #1e4b6c",
+                borderRadius: "6px",
+                color: "#fff",
+                padding: "6px 10px",
+                fontSize: "0.88rem"
+              }}
+            >
+              <option value="exact">Valor exacto</option>
+              <option value="response">Solo respuesta OK</option>
+              <option value="byAddress">Por dirección</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Valores esperados por registro */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#00c8ff" }}>
+            Valores esperados por registro
+          </span>
+          <div style={{
+            background: "#051625",
+            border: "1px solid #16364d",
+            borderRadius: "8px",
+            padding: "8px 12px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px"
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "var(--muted)", padding: "0 4px" }}>
+              <span>Registro</span>
+              <span>Valor esperado</span>
+            </div>
+            <div style={{ maxHeight: "160px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "6px", paddingRight: "4px" }}>
+              {values.slice(0, localQuantity).map((val, idx) => {
+                const regAddr = startNum + idx;
+                const isSelected = selectedIndex === idx;
+                const displayVal = dataType === "Hex16"
+                  ? "0x" + (((val % 65536) + 65536) % 65536).toString(16).toUpperCase().padStart(4, "0")
+                  : dataType === "Int16"
+                  ? (val > 32767 ? val - 65536 : val)
+                  : (((val % 65536) + 65536) % 65536);
+
+                return (
+                  <div
+                    key={idx}
+                    onClick={() => setSelectedIndex(idx)}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "5px 10px",
+                      borderRadius: "6px",
+                      background: isSelected ? "rgba(0, 191, 255, 0.1)" : "#031422",
+                      border: isSelected ? "1px solid #00bfff" : "1px solid #14354c",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease"
+                    }}
+                  >
+                    <span style={{ fontSize: "0.86rem", fontFamily: "monospace", color: "#edf8ff" }}>
+                      <strong>{regAddr}</strong> <span style={{ color: "var(--muted)", marginLeft: "6px" }}>[{idx}]</span>
+                    </span>
+                    <input
+                      type={dataType === "Hex16" ? "text" : "number"}
+                      value={displayVal}
+                      onFocus={() => setSelectedIndex(idx)}
+                      onChange={(e) => updateValue(idx, e.target.value)}
+                      style={{
+                        width: "160px",
+                        height: "28px",
+                        textAlign: "right",
+                        padding: "2px 8px",
+                        background: "#061a2b",
+                        border: "1px solid #1e4b6c",
+                        borderRadius: "5px",
+                        color: "#fff",
+                        fontWeight: 600,
+                        fontSize: "0.9rem",
+                        fontFamily: "monospace"
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Representaciones del seleccionado */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#00c8ff" }}>
+            Representaciones del seleccionado
+          </span>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+            <div style={{ background: "#041424", border: "1px solid #14354c", borderRadius: "6px", padding: "8px 12px" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginBottom: "2px" }}>DEC (uint16)</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#fff" }}>{u16}</div>
+            </div>
+            <div style={{ background: "#041424", border: "1px solid #14354c", borderRadius: "6px", padding: "8px 12px" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginBottom: "2px" }}>DEC (int16)</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#fff" }}>{s16}</div>
+            </div>
+            <div style={{ background: "#041424", border: "1px solid #14354c", borderRadius: "6px", padding: "8px 12px" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginBottom: "2px" }}>HEX</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#00c8ff", fontFamily: "monospace" }}>{hex}</div>
+            </div>
+            <div style={{ background: "#041424", border: "1px solid #14354c", borderRadius: "6px", padding: "8px 12px" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginBottom: "2px" }}>BIN (16 bits)</div>
+              <div style={{ fontSize: "0.92rem", fontWeight: 700, color: "#10b981", fontFamily: "monospace", letterSpacing: "1px" }}>{bin}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Action buttons */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "4px" }}>
+          <button
+            type="button"
+            style={{
+              background: "#0c2338",
+              border: "1px solid #1e4768",
+              color: "#edf8ff",
+              padding: "7px 18px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "0.88rem",
+              fontWeight: 600
+            }}
+            onClick={onClose}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            style={{
+              background: "#0088ff",
+              border: "none",
+              color: "#fff",
+              padding: "7px 22px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "0.88rem",
+              fontWeight: 700,
+              boxShadow: "0 0 14px rgba(0, 136, 255, 0.45)"
+            }}
+            onClick={handleApply}
+          >
+            ✓ Aplicar
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
 }
