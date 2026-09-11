@@ -4,7 +4,7 @@ import { CheckCircle2, Activity, AlertTriangle, ListOrdered } from "lucide-react
 
 export type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc5" | "fc6" | "fc15" | "fc16" | "delay";
 export type Result = "Pendiente" | "Ejecutando" | "Aprobado" | "Timeout" | "CRC Error" | "Excepcion" | "Validacion fallida" | "Error";
-export type ValidationMode = "response" | "count" | "exact" | "byAddress";
+export type ValidationMode = "response" | "count" | "exact" | "byAddress" | "tolerance";
 type ScenarioColor = "shield" | "clock" | "warn" | "bad" | "cyan";
 type SimulatorState = "Detenido" | "Preparado";
 
@@ -36,6 +36,7 @@ interface TestStep {
   values: string;
   at: string;
   historyId?: string;
+  dataType?: "Float32" | "UInt16" | "Int16" | "Int32" | "UInt32" | "Hex16" | "Bin16";
 }
 
 interface ExecutableStepCommand {
@@ -59,6 +60,7 @@ export interface StoredStep {
   validationMode: ValidationMode;
   expected: string;
   timeoutMs: string;
+  dataType?: "Float32" | "UInt16" | "Int16" | "Int32" | "UInt32" | "Hex16" | "Bin16";
 }
 
 export interface TestsRunSummary {
@@ -164,7 +166,8 @@ const validationLabels: Record<ValidationMode, string> = {
   response: "Respuesta OK",
   count: "Cantidad solicitada",
   exact: "Valores exactos",
-  byAddress: "Por direccion"
+  byAddress: "Por direccion",
+  tolerance: "± Tolerancia"
 };
 
 const defaultScenarios: Record<string, Scenario> = {
@@ -226,6 +229,7 @@ function defaultQuantity(fn: Fn) {
   if (fn === "fc1" || fn === "fc2") return "8";
   if (fn === "fc15") return "4";
   if (fn === "fc16") return "3";
+  if (fn === "fc4") return "2";
   return "1";
 }
 
@@ -234,6 +238,7 @@ function defaultValue(fn: Fn) {
   if (fn === "fc6") return "1234";
   if (fn === "fc15") return "1,0,1,0";
   if (fn === "fc16") return "10,20,30";
+  if (fn === "delay") return "1000";
   return "";
 }
 
@@ -387,6 +392,7 @@ function countFor(step: Pick<TestStep, "fn" | "quantity" | "value">) {
 
 function expectedAutoText(step: Pick<TestStep, "fn" | "quantity" | "value" | "validationMode" | "expected">) {
   if (step.validationMode === "response") return "OK";
+  if (step.validationMode === "tolerance") return step.expected || "25.50 ± 0.10";
   if (step.validationMode === "count") {
     const suffix = step.fn === "fc1" ? "coils" : step.fn === "fc2" ? "bits" : "regs";
     return `${countFor(step)} ${suffix}`;
@@ -399,6 +405,7 @@ function inferValidation(fn: Fn, expected: unknown): ValidationMode {
   if (!text) return defaultValidation(fn);
   if (/^ok$/i.test(text)) return "response";
   if (/^\d+\s*(regs?|coils?|bits?)$/i.test(text)) return "count";
+  if (text.includes("±") || text.includes("+/-")) return "tolerance";
   if (text.includes("=")) return "byAddress";
   return "exact";
 }
@@ -428,7 +435,8 @@ function normalizeStep(input: Partial<TestStep> & Partial<StoredStep> & LegacySt
     detail: input.detail || "",
     rows: Array.isArray(input.rows) ? input.rows : [],
     values: input.values || "",
-    at: input.at || ""
+    at: input.at || "",
+    dataType: input.dataType || (String(input.expected || "").includes(".") ? "Float32" : (Number(input.quantity) === 1 ? "UInt16" : undefined))
   };
 }
 
@@ -447,7 +455,8 @@ function stripStep(step: TestStep | StoredStep): StoredStep {
     value: normalized.value,
     validationMode: normalized.validationMode,
     expected: normalized.expected,
-    timeoutMs: normalized.timeoutMs
+    timeoutMs: normalized.timeoutMs,
+    dataType: normalized.dataType
   };
 }
 
@@ -924,10 +933,13 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const shiftAnchorRef = useRef<number | null>(null);
+  const shouldCenterOnArrowRef = useRef(false);
   const [undoStack, setUndoStack] = useState<TestStep[][]>([]);
   const [redoStack, setRedoStack] = useState<TestStep[][]>([]);
   const [editingBits, setEditingBits] = useState<{ index: number; field: "value" | "expected" } | null>(null);
   const [editingRegisters, setEditingRegisters] = useState<{ index: number } | null>(null);
+  const [editingFc04, setEditingFc04] = useState<{ index: number } | null>(null);
+  const [editingFc06, setEditingFc06] = useState<{ index: number } | null>(null);
 
   function pushHistory(newSteps: TestStep[]) {
     setUndoStack(curr => [...curr, state.steps].slice(-50));
@@ -972,7 +984,8 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
 
   
   useEffect(() => {
-    if (lastSelectedIndex !== null) {
+    if (shouldCenterOnArrowRef.current && lastSelectedIndex !== null) {
+      shouldCenterOnArrowRef.current = false;
       const row = document.querySelector(`.testsPlanTable tbody tr:nth-child(${lastSelectedIndex + 1})`);
       if (row) {
         row.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -991,6 +1004,30 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (selectedRows.length === 1) {
+      const step = state.steps[selectedRows[0]];
+      if (!step) return;
+      let desc = "";
+      switch (step.fn) {
+        case "fc1": desc = "FC01 (Read Coils): Lee salidas digitales desde el PLC. En Dato/Valor configura los LEDs que esperas recibir."; break;
+        case "fc2": desc = "FC02 (Read Discrete Inputs): Lee entradas físicas. Solo lectura. Configura qué patrón de LEDs esperas leer."; break;
+        case "fc3": desc = "FC03 (Read Holding Registers): Lee registros internos. Usa el lápiz (✎) para configurar qué valores exactos esperas."; break;
+        case "fc4": desc = "FC04 (Read Input Registers): Lee registros analógicos. Configura el valor exacto y un margen de tolerancia (±)."; break;
+        case "fc5": desc = "FC05 (Write Single Coil): Escribe una única bobina. Usa el switch ON/OFF para forzar su estado en el PLC."; break;
+        case "fc6": desc = "FC06 (Write Single Register): Escribe un registro interno. Introduce el número (0-65535) a enviar."; break;
+        case "fc15": desc = "FC15 (Write Multiple Coils): Escribe múltiples salidas a la vez. Define el patrón de LEDs que inyectarás."; break;
+        case "fc16": desc = "FC16 (Write Multiple Registers): Escribe una secuencia de valores numéricos en registros consecutivos (ej. 10, 20, 30)."; break;
+        case "delay": desc = "Retardo: Pausa la ejecución de la prueba durante el tiempo configurado (en ms) sin enviar comandos."; break;
+      }
+      onMessage(desc);
+    } else if (selectedRows.length > 1) {
+      onMessage(`Has seleccionado ${selectedRows.length} pasos.`);
+    } else {
+      onMessage("Selecciona un paso de la tabla para ver cómo funciona.");
+    }
+  }, [selectedRows, state.steps, onMessage]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -1044,6 +1081,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
         pushHistory(nextSteps);
         setState(s => ({ ...s, steps: nextSteps }));
         setSelectedRows(newSelection.sort((a,b)=>a-b));
+        shouldCenterOnArrowRef.current = true;
         if (lastSelectedIndex !== null) setLastSelectedIndex(lastSelectedIndex + direction);
         return;
       }
@@ -1065,6 +1103,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
         const newSel: number[] = [];
         for (let ri = rangeStart; ri <= rangeEnd; ri++) newSel.push(ri);
         setSelectedRows(newSel);
+        shouldCenterOnArrowRef.current = true;
         setLastSelectedIndex(nextIndex);
         return;
       } else if (!e.shiftKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
@@ -1074,6 +1113,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
           nextIndex = e.key === 'ArrowDown' ? Math.min(state.steps.length - 1, lastSelectedIndex + 1) : Math.max(0, lastSelectedIndex - 1);
         }
         setSelectedRows([nextIndex]);
+        shouldCenterOnArrowRef.current = true;
         setLastSelectedIndex(nextIndex);
         shiftAnchorRef.current = nextIndex; // reset anchor on non-shift navigation
         return;
@@ -1509,18 +1549,16 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
       `}</style>
           <table>
             <colgroup>
-              <col style={{ width: '32px' }} />
-              <col style={{ width: '38px' }} />
-              <col style={{ width: '70px' }} />
-              <col style={{ width: '175px' }} />
+              <col style={{ width: '35px' }} />
+              <col style={{ width: '45px' }} />
+              <col style={{ width: '75px' }} />
+              <col style={{ width: '185px' }} />
               <col style={{ width: '85px' }} />
               <col style={{ width: '75px' }} />
-              <col style={{ width: '165px' }} />
-              <col style={{ width: '135px' }} />
-              <col style={{ width: '115px' }} />
+              <col style={{ width: '375px' }} />
               <col style={{ width: '85px' }} />
-              <col style={{ width: '110px' }} />
-              <col style={{ width: '35px' }} />
+              <col style={{ width: '120px' }} />
+              <col style={{ width: '40px' }} />
             </colgroup>
             <thead><tr>
                 <th style={{textAlign:'center'}}>Activo</th>
@@ -1529,14 +1567,12 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
                 <th style={{textAlign:'center'}}>Funcion</th>
                 <th style={{textAlign:'center'}}>Direccion</th>
                 <th style={{textAlign:'center'}}>Cantidad</th>
-                <th style={{textAlign:'center'}}>Valor</th>
-                <th style={{textAlign:'center'}}>Validacion</th>
-                <th style={{textAlign:'center'}}>Esperado</th>
+                <th style={{textAlign:'center'}}>Dato / Valor</th>
                 <th style={{textAlign:'center'}}>Timeout</th>
                 <th style={{textAlign:'center'}}>Resultado</th>
                 <th />
               </tr></thead>
-            <tbody>{state.steps.map((step, index) => <StepRow key={step.id} step={step} index={index} selected={selectedRows.includes(index)} onSelect={(e) => handleRowClick(index, e)} onPatch={(patch) => patchStep(index, patch)} onFn={(fn) => changeFn(index, fn)} onValue={(value) => changeValue(index, value)} onValidation={(mode) => changeValidation(index, mode)} onEditBits={(field) => setEditingBits({ index, field })} onEditRegisters={() => setEditingRegisters({ index })} onDelete={() => { pushHistory(state.steps); setState((current) => ({ ...current, steps: current.steps.filter((_, itemIndex) => itemIndex !== index), detailIndex: null })); setSelectedRows([]); setLastSelectedIndex(null); }} dragPayload={selectedRows.includes(index) ? selectedRows : [index]} onReorder={(payload, to) => {
+            <tbody>{state.steps.map((step, index) => <StepRow key={step.id} step={step} index={index} selected={selectedRows.includes(index)} onSelect={(e) => handleRowClick(index, e)} onPatch={(patch) => patchStep(index, patch)} onFn={(fn) => changeFn(index, fn)} onValue={(value) => changeValue(index, value)} onValidation={(mode) => changeValidation(index, mode)} onEditBits={(field) => setEditingBits({ index, field })} onEditRegisters={() => setEditingRegisters({ index })} onEditFc04={() => setEditingFc04({ index })} onEditFc06={() => setEditingFc06({ index })} onDelete={() => { pushHistory(state.steps); setState((current) => ({ ...current, steps: current.steps.filter((_, itemIndex) => itemIndex !== index), detailIndex: null })); setSelectedRows([]); setLastSelectedIndex(null); }} dragPayload={selectedRows.includes(index) ? selectedRows : [index]} onReorder={(payload, to) => {
   let fromIndices = [];
   try { fromIndices = JSON.parse(payload); } catch(e) { fromIndices = [Number(payload)]; }
   if (!Array.isArray(fromIndices) || fromIndices.length === 0) return;
@@ -1587,18 +1623,57 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
           <RegisterExpectedModal
             step={state.steps[editingRegisters.index]}
             onClose={() => setEditingRegisters(null)}
-            onApply={(expectedVal, validationMode, newAddress, newQty) => {
-              patchStep(editingRegisters.index, { 
-                expected: expectedVal, 
-                validationMode,
-                address: newAddress,
-                quantity: String(newQty)
-              });
+            onApply={(val, validationMode, newAddress, newQty) => {
+              const target = state.steps[editingRegisters.index];
+              if (target.fn === "fc16") {
+                patchStep(editingRegisters.index, { 
+                  value: val, 
+                  address: newAddress,
+                  quantity: String(newQty)
+                });
+              } else {
+                patchStep(editingRegisters.index, { 
+                  expected: val, 
+                  validationMode,
+                  address: newAddress,
+                  quantity: String(newQty)
+                });
+              }
               setEditingRegisters(null);
             }}
           />
         )}
-        <p className="testsInfo">Cantidad se usa en lecturas. Valor se usa en escrituras. Validacion define si basta respuesta/cantidad o si se comparan valores exactos.</p>
+        {editingFc06 && state.steps[editingFc06.index] && (
+          <Fc06EditModal
+            step={state.steps[editingFc06.index]}
+            onClose={() => setEditingFc06(null)}
+            onApply={(newVal, newAddress, newDt) => {
+              patchStep(editingFc06.index, { 
+                value: newVal, 
+                address: newAddress,
+                dataType: newDt
+              });
+              setEditingFc06(null);
+            }}
+          />
+        )}
+        {editingFc04 && state.steps[editingFc04.index] && (
+          <Fc04ExpectedModal
+            step={state.steps[editingFc04.index]}
+            onClose={() => setEditingFc04(null)}
+            onApply={(expectedVal, validationMode, newAddress, newQty, newDataType) => {
+              patchStep(editingFc04.index, { 
+                expected: expectedVal, 
+                validationMode,
+                address: newAddress,
+                quantity: String(newQty),
+                dataType: newDataType
+              });
+              setEditingFc04(null);
+            }}
+          />
+        )}
+        <p className="testsInfo">Cantidad define el número de registros o bobinas en lecturas y en FC16. Valor define el contenido de escritura o tiempo de retardo.</p>
       </section>
 
       <div className="testsSide">
@@ -1653,15 +1728,153 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
   );
 }
 
-function StepRow({ step, index, onPatch, onFn, onValue, onValidation, onDelete, onReorder, selected, onSelect, dragPayload, onEditBits, onEditRegisters }: { step: TestStep; index: number; onPatch: (patch: Partial<TestStep>) => void; onFn: (fn: Fn) => void; onValue: (value: string) => void; onValidation: (mode: ValidationMode) => void; onDelete: () => void; onReorder: (payload: string, to: number) => void; selected?: boolean; onSelect?: (e: React.MouseEvent) => void; dragPayload: number[]; onEditBits?: (field: "value" | "expected") => void; onEditRegisters?: () => void; }) {
+function Fc04Preview({
+  step,
+  onClick
+}: {
+  step: TestStep;
+  onClick: () => void;
+}) {
+  const dt = step.dataType || (step.expected && !step.expected.includes(".") && Number(step.quantity) === 1 ? "UInt16" : "Float32");
+  const isFloat = dt === "Float32";
+  const match = String(step.expected || "").match(/([-+]?[0-9]*\.?[0-9]+)(\s*±\s*([0-9]*\.?[0-9]+))?/);
+  const target = match && match[1] ? match[1] : (step.expected || (isFloat ? "25.50" : "100"));
+  const tol = match && match[3] ? match[3] : (isFloat ? "0.10" : "5");
+
+  let displayText: React.ReactNode = null;
+  let title = `Configurar valor analógico ${dt} (FC04)`;
+
+  if (step.validationMode === "tolerance") {
+    const tNum = parseFloat(target) || 0;
+    const tolNum = parseFloat(tol) || 0;
+    const minR = isFloat ? (tNum - tolNum).toFixed(2) : String(Math.round(tNum - tolNum));
+    const maxR = isFloat ? (tNum + tolNum).toFixed(2) : String(Math.round(tNum + tolNum));
+
+    displayText = (
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", overflow: "hidden", whiteSpace: "nowrap" }}>
+        <span style={{ fontSize: "0.68rem", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", padding: "1px 5px", borderRadius: "4px", color: "#9ec6e0", whiteSpace: "nowrap", fontWeight: 600 }}>
+          Esperado:
+        </span>
+        <span style={{ fontWeight: 700, fontSize: "0.88rem", color: "#edf8ff", fontFamily: "monospace" }}>
+          {target}
+        </span>
+        <span style={{
+          fontSize: "0.72rem",
+          fontWeight: 600,
+          color: "#34d399",
+          background: "rgba(16, 185, 129, 0.15)",
+          border: "1px solid rgba(16, 185, 129, 0.35)",
+          padding: "1px 5px",
+          borderRadius: "4px",
+          lineHeight: 1.2
+        }}>
+          ±{tol}
+        </span>
+        <span style={{
+          fontSize: "0.72rem",
+          color: "#7dd3fc",
+          background: "rgba(0, 191, 255, 0.08)",
+          border: "1px solid rgba(0, 191, 255, 0.22)",
+          padding: "1px 6px",
+          borderRadius: "4px",
+          fontFamily: "monospace"
+        }}>
+          [{minR} ~ {maxR}]
+        </span>
+        <span style={{
+          fontSize: "0.70rem",
+          color: isFloat && Number(step.quantity) < 2 ? "#f59e0b" : "var(--muted)",
+          background: isFloat && Number(step.quantity) < 2 ? "rgba(245, 158, 11, 0.12)" : "rgba(255, 255, 255, 0.04)",
+          border: isFloat && Number(step.quantity) < 2 ? "1px solid rgba(245, 158, 11, 0.35)" : "1px solid rgba(255, 255, 255, 0.08)",
+          padding: "1px 5px",
+          borderRadius: "4px"
+        }} title={isFloat && Number(step.quantity) < 2 ? "Float32 requiere 2 registros (32 bits). Ajusta Cantidad a 2." : `${dt} (${step.quantity || 1} regs)`}>
+          {isFloat && Number(step.quantity) < 2 ? "Float32 (req. 2 regs)" : `${dt} · ${step.quantity || (isFloat ? 2 : 1)} reg${Number(step.quantity) === 1 ? "" : "s"}`}
+        </span>
+      </div>
+    );
+    title = `${dt}: ${target} | Tolerancia: ±${tol} | Rango válido: [${minR}, ${maxR}] | Clic para configurar`;
+  } else if (step.validationMode === "exact") {
+    displayText = (
+      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+        <span style={{ fontSize: "0.68rem", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", padding: "1px 5px", borderRadius: "4px", color: "#9ec6e0", whiteSpace: "nowrap", fontWeight: 600 }}>
+          Esperado:
+        </span>
+        <span style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--cyan)", fontFamily: "monospace" }}>
+          {step.expected || target}
+        </span>
+        <span style={{ fontSize: "0.70rem", color: "#34d399", background: "rgba(16, 185, 129, 0.12)", border: "1px solid rgba(16, 185, 129, 0.3)", padding: "1px 5px", borderRadius: "4px" }}>
+          Exacto
+        </span>
+        <span style={{ fontSize: "0.70rem", color: "var(--muted)", background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(255, 255, 255, 0.08)", padding: "1px 5px", borderRadius: "4px" }}>
+          {dt} · {step.quantity || (isFloat ? 2 : 1)} reg{Number(step.quantity) === 1 ? "" : "s"}
+        </span>
+      </div>
+    );
+    title = `Valor exacto ${dt}: ${step.expected || target} | Clic para configurar`;
+  } else if (step.validationMode === "response") {
+    displayText = <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Respuesta OK</span>;
+  } else {
+    displayText = <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>{step.quantity} regs</span>;
+  }
+
+  return (
+    <div
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "#041727",
+        border: "1px solid #2d5c75",
+        borderRadius: "6px",
+        padding: "2px 6px",
+        width: "100%",
+        height: "34px",
+        boxSizing: "border-box",
+        cursor: "pointer"
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", overflow: "hidden", minWidth: 0, gap: "6px" }}>
+        {displayText}
+      </div>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
+        style={{
+          minHeight: "22px",
+          height: "22px",
+          width: "22px",
+          padding: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "rgba(0, 191, 255, 0.12)",
+          border: "1px solid rgba(0, 191, 255, 0.45)",
+          color: "var(--cyan)",
+          borderRadius: "4px",
+          cursor: "pointer",
+          flexShrink: 0,
+          fontSize: "0.85rem"
+        }}
+      >
+        ✎
+      </button>
+    </div>
+  );
+}
+
+function StepRow({ step, index, onPatch, onFn, onValue, onValidation, onDelete, onReorder, selected, onSelect, dragPayload, onEditBits, onEditRegisters, onEditFc04, onEditFc06 }: { step: TestStep; index: number; onPatch: (patch: Partial<TestStep>) => void; onFn: (fn: Fn) => void; onValue: (value: string) => void; onValidation: (mode: ValidationMode) => void; onDelete: () => void; onReorder: (payload: string, to: number) => void; selected?: boolean; onSelect?: (e: React.MouseEvent) => void; dragPayload: number[]; onEditBits?: (field: "value" | "expected") => void; onEditRegisters?: () => void; onEditFc04?: () => void; onEditFc06?: () => void; }) {
   const [canDrag, setCanDrag] = useState(false);
   const read = isRead(step.fn);
+  const isQtyEditable = read || step.fn === "fc16" || step.fn === "fc15";
   const isSingleWrite = step.fn === "fc5" || step.fn === "fc6";
   const expectedDisabled = step.validationMode === "response" || step.validationMode === "count";
-  const modeOptions: ValidationMode[] = isWrite(step.fn) ? ["response", "exact", "byAddress"] : ["count", "exact", "byAddress"];
+  const modeOptions: ValidationMode[] = isWrite(step.fn) ? ["response", "exact", "byAddress"] : (step.fn === "fc4" ? ["tolerance", "exact", "count", "byAddress"] : ["count", "exact", "byAddress"]);
   const actualBitValue = hasBitRows(step) ? bitRowsValue(step.rows, "actual") : "";
   return (
-    <tr onClick={onSelect} style={{ background: selected ? "#00bfff22" : undefined }} draggable={canDrag} onDragStart={(e) => { 
+    <tr onClick={onSelect} style={{ background: selected ? "#00bfff22" : (step.fn === "delay" ? "rgba(245, 158, 11, 0.03)" : undefined) }} draggable={canDrag} onDragStart={(e) => { 
   e.dataTransfer.setData("application/json", JSON.stringify(dragPayload)); 
   e.dataTransfer.effectAllowed = "move"; 
   if (dragPayload.length > 1) {
@@ -1747,91 +1960,561 @@ onDragLeave={(e) => {
       <td><input type={step.fn === "delay" ? "text" : "number"} min="1" max="247" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.slave} onChange={(event) => onPatch({ slave: event.target.value.replace(/\D/g, "").slice(0, 3) })} onBlur={() => onPatch({ slave: clampSlave(step.slave, 2) })} /></td>
       <td><select value={step.fn} onChange={(event) => onFn(event.target.value as Fn)}>{functionOrder.map((fn) => <option key={fn} value={fn}>{labels[fn]}</option>)}</select></td>
       <td><input type={step.fn === "delay" ? "text" : "number"} min="0" max="65535" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.address} onChange={(event) => onPatch({ address: sanitizeNumericText(event.target.value, 8) })} /></td>
-      <td><input type={!read || step.fn === "delay" ? "text" : "number"} min="1" disabled={!read || step.fn === "delay"} value={step.fn === "delay" ? "-" : (read ? step.quantity : countFor(step))} onChange={(event) => onPatch({ quantity: event.target.value.replace(/\D/g, "").slice(0, 4) })} /></td>
       <td>
-        {step.fn === "fc5" ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 4px' }}>
-            {(() => {
-              const isFc5On = normalizeBool(step.value);
-              return (
-                <>
+        <input 
+          type={!isQtyEditable || step.fn === "delay" ? "text" : "number"} 
+          min="1" 
+          max={step.fn === "fc16" ? "123" : (step.fn === "fc15" ? "1968" : (read ? maxReadQuantity(step.fn) : undefined))} 
+          disabled={!isQtyEditable || step.fn === "delay"} 
+          value={step.fn === "delay" ? "-" : (isQtyEditable ? (step.quantity !== undefined && step.quantity !== "" ? step.quantity : String(countFor(step))) : countFor(step))} 
+          onChange={(event) => {
+            const rawVal = event.target.value.replace(/\D/g, "").slice(0, 4);
+            if (step.fn === "fc16") {
+              if (rawVal === "") {
+                onPatch({ quantity: "" });
+                return;
+              }
+              const newQty = parseInt(rawVal, 10);
+              if (isNaN(newQty) || newQty < 1) {
+                onPatch({ quantity: rawVal });
+                return;
+              }
+              const clampedQty = Math.min(newQty, 123);
+              const currentRegs = splitValues(step.value);
+              let nextRegs = [...currentRegs];
+              if (currentRegs.length === 0) {
+                nextRegs = Array(clampedQty).fill("0");
+              } else if (clampedQty > currentRegs.length) {
+                while (nextRegs.length < clampedQty) {
+                  nextRegs.push("0");
+                }
+              } else if (clampedQty < currentRegs.length) {
+                nextRegs = nextRegs.slice(0, clampedQty);
+              }
+              onPatch({
+                quantity: String(clampedQty),
+                value: nextRegs.join(" ")
+              });
+            } else if (step.fn === "fc15") {
+              if (rawVal === "") {
+                onPatch({ quantity: "" });
+                return;
+              }
+              const newQty = parseInt(rawVal, 10);
+              if (isNaN(newQty) || newQty < 1) {
+                onPatch({ quantity: rawVal });
+                return;
+              }
+              const clampedQty = Math.min(newQty, 1968);
+              const tokens = splitValues(step.value);
+              const currentBools: boolean[] = [];
+              for (let i = 0; i < tokens.length; i++) {
+                try {
+                  currentBools.push(normalizeBool(tokens[i]));
+                } catch {
+                  currentBools.push(false);
+                }
+              }
+              let nextBools = [...currentBools];
+              if (nextBools.length === 0) {
+                nextBools = Array(clampedQty).fill(false);
+              } else if (clampedQty > nextBools.length) {
+                // Si se incrementa la cantidad, las bobinas nuevas se añaden siempre apagadas (false -> "0")
+                while (nextBools.length < clampedQty) {
+                  nextBools.push(false);
+                }
+              } else if (clampedQty < nextBools.length) {
+                // Al bajar la cantidad, se eliminan/apagan las bobinas excedentes
+                nextBools = nextBools.slice(0, clampedQty);
+              }
+              onPatch({
+                quantity: String(clampedQty),
+                value: nextBools.map((b) => (b ? "1" : "0")).join(" ")
+              });
+            } else {
+              onPatch({ quantity: rawVal });
+            }
+          }}
+          onBlur={() => {
+            if (step.fn === "fc16") {
+              const currentRegs = splitValues(step.value);
+              const q = parseInt(step.quantity, 10);
+              const validQty = isNaN(q) || q < 1 ? Math.max(1, currentRegs.length) : Math.min(q, 123);
+              let nextRegs = [...currentRegs];
+              if (nextRegs.length === 0) {
+                nextRegs = Array(validQty).fill("0");
+              } else if (validQty > nextRegs.length) {
+                while (nextRegs.length < validQty) {
+                  nextRegs.push("0");
+                }
+              } else if (validQty < nextRegs.length) {
+                nextRegs = nextRegs.slice(0, validQty);
+              }
+              onPatch({
+                quantity: String(validQty),
+                value: nextRegs.join(" ")
+              });
+            } else if (step.fn === "fc15") {
+              const tokens = splitValues(step.value);
+              const q = parseInt(step.quantity, 10);
+              const validQty = isNaN(q) || q < 1 ? Math.max(1, tokens.length) : Math.min(q, 1968);
+              const currentBools: boolean[] = [];
+              for (let i = 0; i < tokens.length; i++) {
+                try {
+                  currentBools.push(normalizeBool(tokens[i]));
+                } catch {
+                  currentBools.push(false);
+                }
+              }
+              let nextBools = [...currentBools];
+              if (nextBools.length === 0) {
+                nextBools = Array(validQty).fill(false);
+              } else if (validQty > nextBools.length) {
+                while (nextBools.length < validQty) {
+                  nextBools.push(false);
+                }
+              } else if (validQty < nextBools.length) {
+                nextBools = nextBools.slice(0, validQty);
+              }
+              onPatch({
+                quantity: String(validQty),
+                value: nextBools.map((b) => (b ? "1" : "0")).join(" ")
+              });
+            } else if (read) {
+              if (!step.quantity || Number(step.quantity) < 1) {
+                onPatch({ quantity: "1" });
+              }
+            }
+          }}
+        />
+      </td>
+      <td>
+        {(() => {
+          if (step.fn === "fc5") {
+            const isFc5On = normalizeBool(step.value);
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: "#041727", border: "1px solid #2d5c75", borderRadius: "6px", padding: "2px 6px", height: "34px", width: "100%", boxSizing: "border-box" }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div
-                    onClick={(e) => { e.stopPropagation(); onValue(isFc5On ? "OFF" : "ON"); }}
-                    style={{
-                      width: '38px', height: '22px', borderRadius: '12px',
-                      background: isFc5On ? '#10b981' : '#1e3242',
-                      border: isFc5On ? '1px solid #34d399' : '1px solid #314a5d',
-                      boxShadow: isFc5On ? '0 0 8px rgba(16,185,129,0.55)' : 'none',
-                      position: 'relative', cursor: 'pointer',
-                      transition: 'all 0.2s ease', flexShrink: 0
-                    }}
+                    onClick={(e) => { e.stopPropagation(); onValue(isFc5On ? "OFF" : "ON"); onValidation("response"); }}
+                    style={{ width: '38px', height: '22px', borderRadius: '12px', background: isFc5On ? '#10b981' : '#1e3242', border: isFc5On ? '1px solid #34d399' : '1px solid #314a5d', boxShadow: isFc5On ? '0 0 8px rgba(16,185,129,0.55)' : 'none', position: 'relative', cursor: 'pointer', transition: 'all 0.2s ease', flexShrink: 0 }}
                   >
-                    <div style={{
-                      width: '15px', height: '15px', borderRadius: '50%',
-                      background: '#ffffff', position: 'absolute',
-                      top: '3px', left: isFc5On ? '19px' : '3px',
-                      transition: 'all 0.2s ease',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.4)'
-                    }} />
+                    <div style={{ width: '15px', height: '15px', borderRadius: '50%', background: '#ffffff', position: 'absolute', top: '3px', left: isFc5On ? '19px' : '3px', transition: 'all 0.2s ease', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
                   </div>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: isFc5On ? '#34d399' : 'var(--muted)' }}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: isFc5On ? '#34d399' : 'var(--muted)', fontFamily: 'monospace' }}>
                     {isFc5On ? 'ON' : 'OFF'}
                   </span>
-                </>
-              );
-            })()}
-          </div>
-        ) : step.fn === "fc15" ? (
-          <BitPreview value={step.value} quantity={Number(step.quantity) || 1} onClick={() => onEditBits && onEditBits("value")} onChange={onValue} />
-        ) : step.fn === "fc2" ? (
-          <BitPreview value={actualBitValue} quantity={countFor(step)} readOnly emptyText="Sin lectura" />
-        ) : (
-          <input type={isSingleWrite ? "number" : "text"} min="0" max="65535" disabled={read && step.fn !== "delay"} value={read && step.fn !== "delay" ? "-" : step.value} onChange={(event) => onValue(event.target.value)} />
-        )}
-      </td>
-      <td><select disabled={step.fn === "delay"} value={step.validationMode} onChange={(event) => onValidation(event.target.value as ValidationMode)}>{modeOptions.map((mode) => <option key={mode} value={mode}>{validationLabels[mode]}</option>)}</select></td>
-      <td>
-        {step.validationMode === "exact" && (step.fn === "fc1" || step.fn === "fc2") ? (
-          <BitPreview value={step.expected} quantity={Number(step.quantity) || 1} onClick={() => onEditBits && onEditBits("expected")} onChange={(val) => onPatch({ expected: val })} emptyText="Definir" />
-        ) : (step.fn === "fc3" || step.fn === "fc4") ? (
-          <div style={{ display: "flex", alignItems: "center", gap: "3px", width: "100%" }}>
-            <input 
-              disabled={expectedDisabled} 
-              value={expectedDisabled ? expectedAutoText(step) : step.expected} 
-              placeholder={expectedAutoText(step)} 
-              onChange={(event) => onPatch({ expected: event.target.value })} 
-              style={{ flex: 1, minWidth: 0 }}
-            />
-            <button
-              type="button"
-              title="Configurar valores esperados"
-              style={{
-                minHeight: "24px",
-                height: "24px",
-                width: "24px",
-                padding: 0,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "rgba(0, 191, 255, 0.12)",
-                border: "1px solid rgba(0, 191, 255, 0.45)",
-                color: "var(--cyan)",
-                borderRadius: "4px",
-                cursor: "pointer",
-                flexShrink: 0,
-                fontSize: "0.9rem",
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onEditRegisters && onEditRegisters();
-              }}
-            >
-              ✎
-            </button>
-          </div>
-        ) : (
-          <input disabled={expectedDisabled || step.fn === "delay"} value={step.fn === "delay" ? "-" : (expectedDisabled ? expectedAutoText(step) : step.expected)} placeholder={expectedAutoText(step)} onChange={(event) => onPatch({ expected: event.target.value })} />
-        )}
+                </div>
+                <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>Escritura de bobina</span>
+              </div>
+            );
+          }
+          if (step.fn === "fc1" || step.fn === "fc2") {
+            return <BitPreview value={step.expected} quantity={Number(step.quantity) || 1} onClick={() => { onValidation("exact"); onEditBits && onEditBits("expected"); }} onChange={(val) => { onPatch({ expected: val }); onValidation("exact"); }} emptyText={`${step.quantity} bits`} isReadExpected />;
+          }
+          if (step.fn === "fc15") {
+            return <BitPreview value={step.value} quantity={Number(step.quantity) || 1} onClick={() => { onValidation("response"); onEditBits && onEditBits("value"); }} onChange={(val) => { onValue(val); onValidation("response"); }} emptyText="Definir bobinas" />;
+          }
+          if (step.fn === "fc6") {
+            const rawVal = String(step.value ?? "1234").trim();
+            const parsed = rawVal.toLowerCase().startsWith("0x") ? parseInt(rawVal, 16) : parseInt(rawVal, 10);
+            const numVal = isNaN(parsed) ? 1234 : parsed;
+            const u16 = ((numVal % 65536) + 65536) % 65536;
+            const s16 = u16 > 32767 ? u16 - 65536 : u16;
+            const hex = "0x" + u16.toString(16).toUpperCase().padStart(4, "0");
+            const bin = u16.toString(2).padStart(16, "0").match(/.{1,4}/g)?.join(" ") || "";
+            const dt = step.dataType || "UInt16";
+
+            let displayVal = String(u16);
+            if (dt === "Int16") displayVal = String(s16);
+            else if (dt === "Hex16") displayVal = hex;
+            else if (dt === "Bin16") displayVal = bin;
+
+            return (
+              <div
+                onClick={(e) => { e.stopPropagation(); onEditFc06 && onEditFc06(); }}
+                title={`FC06 · Valor a escribir: ${displayVal}\nDEC uint16: ${u16}\nDEC int16: ${s16}\nHEX: ${hex}\nBIN: ${bin}\nClic para abrir editor avanzado`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: "#041727",
+                  border: "1px solid #2d5c75",
+                  borderRadius: "6px",
+                  padding: "2px 8px",
+                  height: "34px",
+                  width: "100%",
+                  boxSizing: "border-box",
+                  cursor: 'pointer'
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", overflow: "hidden" }}>
+                  <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "#fff", fontFamily: "monospace" }}>
+                    {displayVal}
+                  </span>
+                  <span style={{
+                    fontSize: "0.70rem",
+                    color: "var(--cyan)",
+                    background: "rgba(0, 191, 255, 0.08)",
+                    border: "1px solid rgba(0, 191, 255, 0.25)",
+                    padding: "1px 6px",
+                    borderRadius: "4px"
+                  }}>
+                    {dt}
+                  </span>
+                  <span style={{ fontSize: "0.75rem", color: "#00c8ff", fontFamily: "monospace" }}>
+                    {hex}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  style={{
+                    minHeight: "22px",
+                    height: "22px",
+                    width: "22px",
+                    padding: 0,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(0, 191, 255, 0.12)",
+                    border: "1px solid rgba(0, 191, 255, 0.45)",
+                    color: "var(--cyan)",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    fontSize: "0.85rem"
+                  }}
+                >
+                  ✎
+                </button>
+              </div>
+            );
+          }
+          if (step.fn === "fc16") {
+            const regs = splitValues(step.value);
+            const totalQty = Number(step.quantity) || regs.length || 1;
+            const previewVals = regs.slice(0, 4);
+            const remaining = regs.length > 4 ? regs.length - 4 : 0;
+
+            return (
+              <div
+                onClick={(e) => { e.stopPropagation(); onEditRegisters && onEditRegisters(); }}
+                title={regs.length > 0 ? `Valores a escribir (${regs.length}): ${regs.join(", ")} | Clic para configurar` : "Configurar valores a escribir"}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: "#041727",
+                  border: "1px solid #2d5c75",
+                  borderRadius: "6px",
+                  padding: "2px 8px",
+                  height: "34px",
+                  width: "100%",
+                  boxSizing: "border-box",
+                  cursor: 'pointer'
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", overflow: "hidden", minWidth: 0 }}>
+                  {regs.length === 0 ? (
+                    <span style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)", fontWeight: 600 }}>
+                      Definir registros
+                    </span>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: "4px", overflow: "hidden" }}>
+                      {previewVals.map((v, i) => (
+                        <span
+                          key={i}
+                          style={{
+                            background: "#082136",
+                            border: "1px solid #1c4b6e",
+                            borderRadius: "4px",
+                            padding: "1px 6px",
+                            fontFamily: "monospace",
+                            fontSize: "0.80rem",
+                            fontWeight: 700,
+                            color: "#edf8ff",
+                            whiteSpace: "nowrap"
+                          }}
+                        >
+                          {v}
+                        </span>
+                      ))}
+                      {remaining > 0 && (
+                        <span style={{ fontSize: "0.72rem", color: "#9ec6e0", padding: "1px 5px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", whiteSpace: "nowrap" }}>
+                          +{remaining} más
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                  <span style={{
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                    color: "var(--cyan)",
+                    background: "rgba(0, 191, 255, 0.08)",
+                    border: "1px solid rgba(0, 191, 255, 0.25)",
+                    padding: "1px 6px",
+                    borderRadius: "4px",
+                    whiteSpace: "nowrap"
+                  }}>
+                    {regs.length > 0 ? `${regs.length} regs` : `${totalQty} regs`}
+                  </span>
+                  <button
+                    type="button"
+                    style={{
+                      minHeight: "22px",
+                      height: "22px",
+                      width: "22px",
+                      padding: 0,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: "rgba(0, 191, 255, 0.12)",
+                      border: "1px solid rgba(0, 191, 255, 0.45)",
+                      color: "var(--cyan)",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                      fontSize: "0.85rem"
+                    }}
+                  >
+                    ✎
+                  </button>
+                </div>
+              </div>
+            );
+          }
+          if (step.fn === "fc3") {
+            const qty = Math.max(1, Number(step.quantity) || 1);
+            const allVals = splitValues(step.expected);
+            const vals = allVals.slice(0, qty);
+            const previewVals = vals.slice(0, 4);
+            const remaining = qty > 4 ? qty - 4 : 0;
+
+            return (
+              <div
+                onClick={(e) => { e.stopPropagation(); onEditRegisters && onEditRegisters(); }}
+                title={allVals.length > 0 ? `Valores esperados (${qty} regs): ${vals.join(", ")}${allVals.length > qty ? ` (${allVals.length - qty} valores adicionales omitidos por Cantidad=${qty})` : ""} | Clic para configurar` : `Configurar ${qty} valores esperados por registro`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: "#041727",
+                  border: "1px solid #2d5c75",
+                  borderRadius: "6px",
+                  padding: "2px 6px",
+                  height: "34px",
+                  width: "100%",
+                  boxSizing: "border-box",
+                  cursor: 'pointer'
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", overflow: "hidden", minWidth: 0 }}>
+                  <span style={{ fontSize: "0.68rem", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", padding: "1px 5px", borderRadius: "4px", color: "#9ec6e0", whiteSpace: "nowrap", fontWeight: 600 }}>
+                    Esperado:
+                  </span>
+                  {vals.length === 0 ? (
+                    <span style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)", fontWeight: 600, padding: "0 4px" }}>
+                      -
+                    </span>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: "4px", overflow: "hidden" }}>
+                      {previewVals.map((v, i) => (
+                        <span
+                          key={i}
+                          style={{
+                            background: "#082136",
+                            border: "1px solid #1c4b6e",
+                            borderRadius: "4px",
+                            padding: "1px 6px",
+                            fontFamily: "monospace",
+                            fontSize: "0.80rem",
+                            fontWeight: 700,
+                            color: "#edf8ff",
+                            whiteSpace: "nowrap"
+                          }}
+                        >
+                          {v}
+                        </span>
+                      ))}
+                      {remaining > 0 && (
+                        <span style={{ fontSize: "0.72rem", color: "#9ec6e0", padding: "1px 5px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", whiteSpace: "nowrap" }}>
+                          +{remaining} más
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                  <span style={{
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                    color: "var(--cyan)",
+                    background: "rgba(0, 191, 255, 0.08)",
+                    border: "1px solid rgba(0, 191, 255, 0.25)",
+                    padding: "1px 6px",
+                    borderRadius: "4px",
+                    whiteSpace: "nowrap"
+                  }}>
+                    {qty} regs
+                  </span>
+                  <button
+                    type="button"
+                    style={{
+                      minHeight: "22px",
+                      height: "22px",
+                      width: "22px",
+                      padding: 0,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: "rgba(0, 191, 255, 0.12)",
+                      border: "1px solid rgba(0, 191, 255, 0.45)",
+                      color: "var(--cyan)",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                      fontSize: "0.85rem"
+                    }}
+                  >
+                    ✎
+                  </button>
+                </div>
+              </div>
+            );
+          }
+          if (step.fn === "fc4") {
+            return <Fc04Preview step={step} onClick={() => onEditFc04 && onEditFc04()} />;
+          }
+          if (step.fn === "delay") {
+            const currentMs = parseInt(step.value || "1000", 10) || 1000;
+            const secVal = currentMs / 1000;
+            const secText = currentMs % 1000 === 0 ? `${secVal} s` : `${secVal.toFixed(1)} s`;
+            const presets = [
+              { label: "250ms", ms: 250 },
+              { label: "500ms", ms: 500 },
+              { label: "1s", ms: 1000 },
+              { label: "2s", ms: 2000 },
+              { label: "5s", ms: 5000 },
+            ];
+
+            return (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  background: "linear-gradient(90deg, rgba(245, 158, 11, 0.10) 0%, #041727 75%)",
+                  border: "1px solid rgba(245, 158, 11, 0.35)",
+                  borderRadius: "6px",
+                  padding: "2px 8px",
+                  height: "34px",
+                  width: "100%",
+                  boxSizing: "border-box",
+                  gap: "6px"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                  <span style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    fontSize: "0.80rem",
+                    fontWeight: 700,
+                    color: "#fbbf24",
+                    letterSpacing: "0.2px"
+                  }}>
+                    <span style={{ fontSize: "0.95rem" }}>⏱</span>
+                    <span>Pausa</span>
+                  </span>
+                  <span
+                    title={`Equivale a ${secText}`}
+                    style={{
+                      fontSize: "0.72rem",
+                      fontWeight: 600,
+                      fontFamily: "monospace",
+                      color: "#fde68a",
+                      background: "rgba(245, 158, 11, 0.15)",
+                      border: "1px solid rgba(245, 158, 11, 0.3)",
+                      padding: "1px 5px",
+                      borderRadius: "4px"
+                    }}
+                  >
+                    {secText}
+                  </span>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: "3px", overflow: "hidden" }}>
+                  {presets.map((p) => {
+                    const isActive = currentMs === p.ms;
+                    return (
+                      <button
+                        key={p.ms}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onValue(String(p.ms));
+                          onValidation("count");
+                        }}
+                        style={{
+                          padding: "1px 5px",
+                          fontSize: "0.68rem",
+                          fontWeight: isActive ? 700 : 500,
+                          fontFamily: "monospace",
+                          borderRadius: "4px",
+                          cursor: "pointer",
+                          border: isActive ? "1px solid #fbbf24" : "1px solid rgba(255, 255, 255, 0.12)",
+                          background: isActive ? "rgba(245, 158, 11, 0.28)" : "rgba(255, 255, 255, 0.04)",
+                          color: isActive ? "#ffffff" : "var(--muted)",
+                          boxShadow: isActive ? "0 0 6px rgba(245, 158, 11, 0.35)" : "none",
+                          transition: "all 0.15s ease",
+                          minHeight: "20px",
+                          lineHeight: "18px",
+                          flexShrink: 0
+                        }}
+                        title={`Fijar tiempo a ${p.label}`}
+                      >
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
+                  <input
+                    type="number"
+                    min="1"
+                    max="60000"
+                    step="100"
+                    value={step.value || ""}
+                    placeholder="1000"
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      onValue(e.target.value.replace(/\D/g, "").slice(0, 5));
+                      onValidation("count");
+                    }}
+                    style={{
+                      width: "60px",
+                      height: "24px",
+                      fontSize: "0.82rem",
+                      fontWeight: 700,
+                      fontFamily: "monospace",
+                      background: "#082136",
+                      border: "1px solid rgba(245, 158, 11, 0.4)",
+                      color: "#ffffff",
+                      borderRadius: "4px",
+                      textAlign: "center",
+                      boxSizing: "border-box"
+                    }}
+                  />
+                  <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "#fbbf24", fontFamily: "monospace" }}>ms</span>
+                </div>
+              </div>
+            );
+          }
+          return <span style={{ color: "var(--muted)" }}>-</span>;
+        })()}
       </td>
       <td><input type={step.fn === "delay" ? "text" : "number"} min="1" step="100" max="60000" disabled={step.fn === "delay"} value={step.fn === "delay" ? "-" : step.timeoutMs} onChange={(event) => onPatch({ timeoutMs: event.target.value.replace(/\D/g, "").slice(0, 5) })} /></td>
       <td><ResultPill result={step.result} /></td>
@@ -1960,6 +2643,9 @@ function ExecutionTable({ steps, onDetail }: { steps: TestStep[]; onDetail: (ind
 }
 
 function ExecutionValue({ step }: { step: TestStep }) {
+  if (step.fn === "delay") {
+    return <span style={{ color: "#fbbf24", fontFamily: "monospace", fontWeight: 600 }}>⏱ {step.value || "1000"} ms</span>;
+  }
   if (step.fn === "fc2" && hasBitRows(step)) {
     return <BitPreview value={bitRowsValue(step.rows, "actual")} quantity={countFor(step)} readOnly emptyText="Sin lectura" />;
   }
@@ -2031,7 +2717,8 @@ function BitPreview({
   onClick,
   onChange,
   readOnly = false,
-  emptyText = "OFF"
+  emptyText = "OFF",
+  isReadExpected = false
 }: {
   value: string;
   quantity: number;
@@ -2039,6 +2726,7 @@ function BitPreview({
   onChange?: (newValue: string) => void;
   readOnly?: boolean;
   emptyText?: string;
+  isReadExpected?: boolean;
 }) {
   let bits: boolean[] = [];
   try {
@@ -2077,36 +2765,35 @@ function BitPreview({
         boxSizing: "border-box",
       }}
     >
-      <div style={{ display: "flex", gap: "4px", alignItems: "center", overflow: "hidden" }}>
-        {!hasValue ? (
-          <span style={{ fontSize: "0.72rem", color: "var(--muted)", whiteSpace: "nowrap" }}>{emptyText}</span>
-        ) : (
-          <>
-            <span style={{ fontFamily: "monospace", fontSize: "0.78rem", color: "#fff", fontWeight: 600, marginRight: "2px", flexShrink: 0 }}>
-              {decValue}
-            </span>
-            {displayBits.map((b, i) => (
-              <span
-                key={i}
-                onClick={(e) => toggleBitAt(i, e)}
-                title={`Bit ${i}: ${b ? '1 (ON)' : '0 (OFF)'}${readOnly ? "" : " - Clic para alternar"}`}
-                style={{
-                  width: "11px",
-                  height: "11px",
-                  borderRadius: "50%",
-                  display: "inline-block",
-                  background: b ? "#10b981" : "#253a4b",
-                  boxShadow: b ? "0 0 6px #10b981" : "none",
-                  border: b ? "1px solid #6ee7b7" : "1px solid #1c2e3d",
-                  flexShrink: 0,
-                  cursor: onChange && !readOnly ? "pointer" : "default",
-                  transition: "all 0.15s ease",
-                }}
-              />
-            ))}
-            {hasMore && <span style={{ color: "var(--muted)", fontSize: "0.68rem", marginLeft: "2px" }}>+{quantity - 8}</span>}
-          </>
+      <div style={{ display: "flex", gap: "5px", alignItems: "center", overflow: "hidden", opacity: hasValue ? 1 : 0.45 }}>
+        {isReadExpected && (
+          <span style={{ fontSize: "0.68rem", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", padding: "1px 5px", borderRadius: "4px", color: "#9ec6e0", whiteSpace: "nowrap", marginRight: "2px", fontWeight: 600 }}>
+            Esperado:
+          </span>
         )}
+        <span style={{ fontFamily: "monospace", fontSize: "0.78rem", color: "#fff", fontWeight: 600, marginRight: "8px", flexShrink: 0, minWidth: "45px", textAlign: "center", display: "inline-block" }}>
+          {hasValue ? decValue : "-"}
+        </span>
+        {displayBits.map((b, i) => (
+          <span
+            key={i}
+            onClick={(e) => toggleBitAt(i, e)}
+            title={`Bit ${i}: ${b ? '1 (ON)' : '0 (OFF)'}${readOnly ? "" : " - Clic para alternar"}`}
+            style={{
+              width: "16px",
+              height: "16px",
+              borderRadius: "50%",
+              display: "inline-block",
+              background: b ? "#10b981" : "#253a4b",
+              boxShadow: b && hasValue ? "0 0 6px #10b981" : "none",
+              border: b ? "1px solid #6ee7b7" : "1px solid #1c2e3d",
+              flexShrink: 0,
+              cursor: onChange && !readOnly ? "pointer" : "default",
+              transition: "all 0.15s ease",
+            }}
+          />
+        ))}
+        {hasMore && <span style={{ color: "var(--muted)", fontSize: "0.68rem", marginLeft: "2px" }}>+{quantity - 8}</span>}
       </div>
       {onClick ? <button
         type="button"
@@ -2554,7 +3241,7 @@ function RegisterExpectedModal({
 
   // Parse existing expected values
   const [values, setValues] = useState<number[]>(() => {
-    const parts = splitValues(step.expected);
+    const parts = splitValues(step.fn === "fc16" ? step.value : step.expected);
     const arr: number[] = [];
     for (let i = 0; i < localQuantity; i++) {
       const part = parts[i];
@@ -2674,7 +3361,7 @@ function RegisterExpectedModal({
               ✎
             </div>
             <div>
-              <h2 style={{ margin: 0, fontSize: "1.25rem", color: "#fff", fontWeight: 700 }}>Valor esperado</h2>
+              <h2 style={{ margin: 0, fontSize: "1.25rem", color: "#fff", fontWeight: 700 }}>{step.fn === "fc16" ? "Editar registros" : "Valor esperado"}</h2>
               <p style={{ margin: "3px 0 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>
                 {fn.toUpperCase()} · {fn === "fc3" ? "Read Holding Registers" : fn === "fc4" ? "Read Input Registers" : labels[fn]}
               </p>
@@ -2896,6 +3583,913 @@ function RegisterExpectedModal({
 
         {/* Action buttons */}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "4px" }}>
+          <button
+            type="button"
+            style={{
+              background: "#0c2338",
+              border: "1px solid #1e4768",
+              color: "#edf8ff",
+              padding: "7px 18px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "0.88rem",
+              fontWeight: 600
+            }}
+            onClick={onClose}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            style={{
+              background: "#0088ff",
+              border: "none",
+              color: "#fff",
+              padding: "7px 22px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "0.88rem",
+              fontWeight: 700,
+              boxShadow: "0 0 14px rgba(0, 136, 255, 0.45)"
+            }}
+            onClick={handleApply}
+          >
+            ✓ Aplicar
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
+function encodeFloat32Words(val: number, order: "ABCD" | "CDAB" | "BADC" | "DCBA") {
+  const buffer = new ArrayBuffer(4);
+  const view = new DataView(buffer);
+  view.setFloat32(0, val, false); // Big-endian
+  const a = view.getUint8(0);
+  const b = view.getUint8(1);
+  const c = view.getUint8(2);
+  const d = view.getUint8(3);
+
+  const ieeeHex = "0x" + ((a << 24) | (b << 16) | (c << 8) | d).toString(16).toUpperCase().padStart(8, "0");
+
+  let bytes: number[];
+  switch (order) {
+    case "ABCD": bytes = [a, b, c, d]; break;
+    case "CDAB": bytes = [c, d, a, b]; break;
+    case "BADC": bytes = [b, a, d, c]; break;
+    case "DCBA": bytes = [d, c, b, a]; break;
+    default: bytes = [a, b, c, d];
+  }
+
+  const w1 = (bytes[0] << 8) | bytes[1];
+  const w2 = (bytes[2] << 8) | bytes[3];
+  const hex1 = w1.toString(16).toUpperCase().padStart(4, "0");
+  const hex2 = w2.toString(16).toUpperCase().padStart(4, "0");
+
+  return {
+    words: [w1, w2],
+    previewHex: `${hex1} ${hex2}`,
+    ieeeHex
+  };
+}
+
+function Fc04ExpectedModal({
+  step,
+  onClose,
+  onApply
+}: {
+  step: TestStep;
+  onClose: () => void;
+  onApply: (expected: string, validationMode: ValidationMode, newAddress: string, newQuantity: number, newDataType?: "Float32" | "UInt16" | "Int16" | "Int32" | "UInt32") => void;
+}) {
+  const [localAddress, setLocalAddress] = useState<string>(step.address || "30000");
+
+  const [dataType, setDataType] = useState<"Float32" | "UInt16" | "Int16" | "Int32" | "UInt32">(() => {
+    if (step.dataType && step.dataType !== "Hex16" && step.dataType !== "Bin16") return step.dataType;
+    if (step.expected && !step.expected.includes(".") && Number(step.quantity) === 1) return "UInt16";
+    return "Float32";
+  });
+
+  const is32Bit = (dt: string) => dt === "Float32" || dt === "Int32" || dt === "UInt32";
+
+  const [localQuantity, setLocalQuantity] = useState<number>(() => {
+    const initialDt = (step.dataType && step.dataType !== "Hex16" && step.dataType !== "Bin16") ? step.dataType : (step.expected && !step.expected.includes(".") && Number(step.quantity) === 1 ? "UInt16" : "Float32");
+    const q = Number(step.quantity) || (is32Bit(initialDt) ? 2 : 1);
+    return is32Bit(initialDt) ? Math.max(2, q) : Math.max(1, q);
+  });
+
+  const offset = getModbusOffset(localAddress);
+  const startNum = parseInt(localAddress, 10) || 30000;
+  const [order, setOrder] = useState<"ABCD" | "CDAB" | "BADC" | "DCBA">("ABCD");
+  const [validationMode, setValidationMode] = useState<ValidationMode>(
+    step.validationMode === "tolerance" ? "tolerance" : (step.validationMode || "tolerance")
+  );
+
+  // Parse initial target value and tolerance
+  const [targetVal, setTargetVal] = useState<number>(() => {
+    const match = String(step.expected || "").match(/([-+]?[0-9]*\.?[0-9]+)/);
+    if (match) return parseFloat(match[1]);
+    const initialDt = step.dataType || (step.expected && !step.expected.includes(".") && Number(step.quantity) === 1 ? "UInt16" : "Float32");
+    return initialDt === "Float32" ? 25.50 : 100;
+  });
+
+  const [tolerance, setTolerance] = useState<number>(() => {
+    const match = String(step.expected || "").match(/±\s*([0-9]*\.?[0-9]+)/);
+    if (match) return parseFloat(match[1]);
+    const initialDt = step.dataType || (step.expected && !step.expected.includes(".") && Number(step.quantity) === 1 ? "UInt16" : "Float32");
+    return initialDt === "Float32" ? 0.10 : 5;
+  });
+
+  const handleDataTypeChange = (newType: "Float32" | "UInt16" | "Int16" | "Int32" | "UInt32") => {
+    setDataType(newType);
+    if (is32Bit(newType)) {
+      if (localQuantity < 2) setLocalQuantity(2);
+      if (newType === "Float32" && tolerance < 1 && tolerance === 0 && validationMode === "tolerance") {
+        setTolerance(0.10);
+      }
+    } else {
+      // 16-bit
+      if (localQuantity === 2 && step.quantity !== "2") setLocalQuantity(1);
+      if (validationMode === "tolerance" && tolerance < 1 && tolerance !== 0) {
+        setTolerance(5);
+      }
+      setTargetVal(prev => Math.round(prev));
+    }
+  };
+
+  let previewHex = "";
+  let ieeeHex = "";
+  let minRange = "";
+  let maxRange = "";
+
+  if (dataType === "Float32") {
+    const fRes = encodeFloat32Words(targetVal, order);
+    previewHex = fRes.previewHex;
+    ieeeHex = fRes.ieeeHex;
+    minRange = (targetVal - tolerance).toFixed(2);
+    maxRange = (targetVal + tolerance).toFixed(2);
+  } else if (dataType === "UInt16") {
+    const u = ((Math.round(targetVal) % 65536) + 65536) % 65536;
+    previewHex = "0x" + u.toString(16).toUpperCase().padStart(4, "0");
+    ieeeHex = previewHex;
+    minRange = String(Math.max(0, Math.round(targetVal - tolerance)));
+    maxRange = String(Math.min(65535, Math.round(targetVal + tolerance)));
+  } else if (dataType === "Int16") {
+    const val = Math.round(targetVal);
+    const u = ((val % 65536) + 65536) % 65536;
+    previewHex = "0x" + u.toString(16).toUpperCase().padStart(4, "0");
+    ieeeHex = previewHex;
+    minRange = String(Math.max(-32768, Math.round(targetVal - tolerance)));
+    maxRange = String(Math.min(32767, Math.round(targetVal + tolerance)));
+  } else {
+    const val = Math.round(targetVal);
+    previewHex = "0x" + (val >>> 0).toString(16).toUpperCase().padStart(8, "0");
+    ieeeHex = previewHex;
+    minRange = String(Math.round(targetVal - tolerance));
+    maxRange = String(Math.round(targetVal + tolerance));
+  }
+
+  const handleApply = () => {
+    let expectedStr = "";
+    if (dataType === "Float32") {
+      if (validationMode === "tolerance") {
+        expectedStr = `${targetVal.toFixed(2)} ± ${tolerance.toFixed(2)}`;
+      } else if (validationMode === "exact") {
+        expectedStr = targetVal.toFixed(2);
+      }
+    } else {
+      const cleanTarget = Math.round(targetVal);
+      const cleanTol = Math.round(tolerance);
+      if (validationMode === "tolerance") {
+        expectedStr = `${cleanTarget} ± ${cleanTol}`;
+      } else if (validationMode === "exact") {
+        expectedStr = String(cleanTarget);
+      }
+    }
+    onApply(expectedStr, validationMode, localAddress, localQuantity, dataType);
+  };
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        backgroundColor: "rgba(2, 10, 18, 0.85)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 999999,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        style={{
+          background: "#071b2d",
+          border: "1px solid #1c4b6e",
+          borderRadius: "14px",
+          padding: "22px 26px",
+          width: "520px",
+          maxWidth: "94vw",
+          maxHeight: "90vh",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.95), 0 0 25px rgba(0,191,255,0.2)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "16px",
+          color: "#edf8ff",
+          userSelect: "none",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            <div style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "8px",
+              background: "rgba(0,191,255,0.12)",
+              border: "1px solid rgba(0,191,255,0.35)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--cyan)",
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              </svg>
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.25rem", color: "#fff", fontWeight: 700 }}>Valor esperado</h2>
+              <p style={{ margin: "3px 0 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>
+                FC04 · Read Input Registers
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="tiny ghost"
+            style={{ minWidth: "30px", height: "30px", padding: 0, borderRadius: "50%", fontSize: "1rem", color: "var(--muted)" }}
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Info bar with editable Inicio & Cantidad */}
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          background: "#051625",
+          padding: "8px 14px",
+          borderRadius: "8px",
+          border: "1px solid #16364d",
+          fontSize: "0.86rem",
+          gap: "10px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ color: "var(--muted)" }}>Inicio:</span>
+            <input
+              type="text"
+              value={localAddress}
+              onChange={(e) => setLocalAddress(sanitizeNumericText(e.target.value, 8))}
+              style={{
+                width: "75px",
+                height: "28px",
+                textAlign: "center",
+                background: "#082136",
+                border: "1px solid #235475",
+                borderRadius: "5px",
+                color: "#fff",
+                fontWeight: "bold",
+                fontSize: "0.88rem",
+                fontFamily: "monospace"
+              }}
+            />
+            <span style={{ color: "var(--muted)", fontSize: "0.82rem" }}>(offset {offset})</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ color: "var(--muted)" }}>Cantidad:</span>
+            <input
+              type="number"
+              min={1}
+              max={125}
+              value={localQuantity}
+              onChange={(e) => setLocalQuantity(Math.max(1, Math.min(125, parseInt(e.target.value) || 2)))}
+              style={{
+                width: "55px",
+                height: "28px",
+                textAlign: "center",
+                background: "#082136",
+                border: "1px solid #235475",
+                borderRadius: "5px",
+                color: "#fff",
+                fontWeight: "bold",
+                fontSize: "0.88rem"
+              }}
+            />
+            <span style={{ color: "var(--muted)", fontSize: "0.82rem" }}>registros</span>
+          </div>
+        </div>
+
+        {/* Controls row: Tipo de dato, Orden, Validación */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.3fr", gap: "12px" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "5px" }}>
+              Tipo de dato
+            </label>
+            <select
+              value={dataType}
+              onChange={(e) => handleDataTypeChange(e.target.value as any)}
+              style={{
+                width: "100%",
+                background: "#051625",
+                border: "1px solid #1e4b6c",
+                borderRadius: "6px",
+                color: "#fff",
+                padding: "6px 10px",
+                fontSize: "0.88rem"
+              }}
+            >
+              <option value="Float32">Float32</option>
+              <option value="UInt16">UInt16</option>
+              <option value="Int16">Int16</option>
+              <option value="Int32">Int32</option>
+              <option value="UInt32">UInt32</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "5px" }}>
+              Orden
+            </label>
+            <select
+              value={order}
+              onChange={(e) => setOrder(e.target.value as any)}
+              style={{
+                width: "100%",
+                background: "#051625",
+                border: "1px solid #1e4b6c",
+                borderRadius: "6px",
+                color: "#fff",
+                padding: "6px 10px",
+                fontSize: "0.88rem"
+              }}
+            >
+              <option value="ABCD">ABCD</option>
+              <option value="CDAB">CDAB</option>
+              <option value="BADC">BADC</option>
+              <option value="DCBA">DCBA</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "5px" }}>
+              Validación
+            </label>
+            <select
+              value={validationMode}
+              onChange={(e) => {
+                const newMode = e.target.value as ValidationMode;
+                setValidationMode(newMode);
+                if (newMode !== "tolerance") {
+                  setTolerance(0);
+                } else if (tolerance === 0) {
+                  setTolerance(0.10);
+                }
+              }}
+              style={{
+                width: "100%",
+                background: "#051625",
+                border: "1px solid #1e4b6c",
+                borderRadius: "6px",
+                color: "#fff",
+                padding: "6px 10px",
+                fontSize: "0.88rem"
+              }}
+            >
+              <option value="tolerance">Valor ± tolerancia</option>
+              <option value="exact">Valor exacto</option>
+              <option value="response">Solo respuesta OK</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Inputs row: Valor esperado & Tolerancia */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "5px" }}>
+              Valor esperado
+            </label>
+            <input
+              type="number"
+              step={dataType === "Float32" ? "0.01" : "1"}
+              value={dataType === "Float32" ? targetVal : Math.round(targetVal)}
+              onChange={(e) => setTargetVal(parseFloat(e.target.value) || 0)}
+              style={{
+                width: "100%",
+                height: "36px",
+                background: "#051625",
+                border: "1px solid #1e4b6c",
+                borderRadius: "6px",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: "1.05rem",
+                padding: "4px 10px"
+              }}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "5px" }}>
+              Tolerancia {validationMode !== "tolerance" && <span style={{ fontSize: "0.74rem", color: "var(--muted)", marginLeft: "4px" }}>(bloqueada en 0)</span>}
+            </label>
+            <input
+              type="number"
+              step={dataType === "Float32" ? "0.01" : "1"}
+              min="0"
+              disabled={validationMode !== "tolerance"}
+              value={validationMode !== "tolerance" ? 0 : tolerance}
+              onChange={(e) => setTolerance(Math.max(0, parseFloat(e.target.value) || 0))}
+              style={{
+                width: "100%",
+                height: "36px",
+                background: validationMode !== "tolerance" ? "#030f1a" : "#051625",
+                border: validationMode !== "tolerance" ? "1px solid #142a3a" : "1px solid #1e4b6c",
+                borderRadius: "6px",
+                color: validationMode !== "tolerance" ? "var(--muted)" : "#fff",
+                fontWeight: 700,
+                fontSize: "1.05rem",
+                padding: "4px 10px",
+                opacity: validationMode !== "tolerance" ? 0.45 : 1,
+                cursor: validationMode !== "tolerance" ? "not-allowed" : "text"
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Middle Preview Card */}
+        <div style={{
+          background: "#051625",
+          border: "1px solid #16364d",
+          borderRadius: "8px",
+          padding: "12px 16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "6px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1 }}>
+              <div style={{
+                width: "22px",
+                height: "22px",
+                borderRadius: "50%",
+                border: "1px solid #00bfff",
+                color: "#00bfff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "0.75rem",
+                fontWeight: 700
+              }}>
+                ⓘ
+              </div>
+              <div>
+                <div style={{ fontSize: "0.74rem", color: "var(--muted)" }}>Registros (direcciones)</div>
+                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#edf8ff" }}>
+                  {startNum} – {startNum + localQuantity - 1}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ width: "1px", height: "36px", background: "#1c4b6e", margin: "0 16px" }} />
+
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: "0.74rem", color: "var(--muted)" }}>Vista previa (HEX)</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#00c8ff", fontFamily: "monospace" }}>
+                {previewHex}
+              </div>
+            </div>
+          </div>
+          <div style={{ fontSize: "0.74rem", color: "var(--muted)", marginTop: "2px" }}>
+            El valor se codifica según el orden de bytes seleccionado ({order}).
+          </div>
+        </div>
+
+        {/* Interpretación section */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#00c8ff" }}>
+            Interpretación
+          </span>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr 1.2fr", gap: "8px" }}>
+            <div style={{ background: "#041424", border: "1px solid #14354c", borderRadius: "6px", padding: "8px 12px" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginBottom: "2px" }}>{dataType}</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#fff" }}>{dataType === "Float32" ? targetVal.toFixed(2) : Math.round(targetVal)}</div>
+            </div>
+            <div style={{ background: "#041424", border: "1px solid #14354c", borderRadius: "6px", padding: "8px 12px" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginBottom: "2px" }}>Rango válido</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#10b981" }}>{validationMode === "exact" ? (dataType === "Float32" ? targetVal.toFixed(2) : Math.round(targetVal)) : `${minRange} – ${maxRange}`}</div>
+            </div>
+            <div style={{ background: "#041424", border: "1px solid #14354c", borderRadius: "6px", padding: "8px 12px" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginBottom: "2px" }}>IEEE754 HEX</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#00c8ff", fontFamily: "monospace" }}>{ieeeHex}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Action buttons */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "4px" }}>
+          <button
+            type="button"
+            style={{
+              background: "#0c2338",
+              border: "1px solid #1e4768",
+              color: "#edf8ff",
+              padding: "7px 18px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "0.88rem",
+              fontWeight: 600
+            }}
+            onClick={onClose}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            style={{
+              background: "#0088ff",
+              border: "none",
+              color: "#fff",
+              padding: "7px 22px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "0.88rem",
+              fontWeight: 700,
+              boxShadow: "0 0 14px rgba(0, 136, 255, 0.45)"
+            }}
+            onClick={handleApply}
+          >
+            ✓ Aplicar
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
+function Fc06EditModal({
+  step,
+  onClose,
+  onApply
+}: {
+  step: TestStep;
+  onClose: () => void;
+  onApply: (newValue: string, newAddress?: string, newDataType?: "UInt16" | "Int16" | "Hex16" | "Bin16") => void;
+}) {
+  const [localAddress, setLocalAddress] = useState<string>(step.address || "40001");
+  const offset = getModbusOffset(localAddress);
+
+  const [dataType, setDataType] = useState<"UInt16" | "Int16" | "Hex16" | "Bin16">(() => {
+    if (step.dataType === "Int16" || step.dataType === "Hex16" || step.dataType === "Bin16") return step.dataType;
+    return "UInt16";
+  });
+
+  // Numeric value 0..65535 internally
+  const [currentNum, setCurrentNum] = useState<number>(() => {
+    const raw = String(step.value || "1234").trim();
+    if (raw.toLowerCase().startsWith("0x")) return parseInt(raw, 16) || 0;
+    if (/^[01\s]+$/.test(raw) && raw.length >= 8) return parseInt(raw.replace(/\s+/g, ""), 2) || 0;
+    const n = parseInt(raw, 10);
+    return isNaN(n) ? 1234 : ((n % 65536) + 65536) % 65536;
+  });
+
+  // Derived representations
+  const u16 = ((currentNum % 65536) + 65536) % 65536;
+  const s16 = u16 > 32767 ? u16 - 65536 : u16;
+  const hex = "0x" + u16.toString(16).toUpperCase().padStart(4, "0");
+  const bin = u16.toString(2).padStart(16, "0").match(/.{1,4}/g)?.join(" ") || "0000 0000 0000 0000";
+
+  // Text input representation
+  const [inputValue, setInputValue] = useState<string>(() => {
+    if (dataType === "Int16") return String(s16);
+    if (dataType === "Hex16") return hex;
+    if (dataType === "Bin16") return bin;
+    return String(u16);
+  });
+
+  // When dataType changes, reformat input value
+  const handleTypeChange = (newType: "UInt16" | "Int16" | "Hex16" | "Bin16") => {
+    setDataType(newType);
+    if (newType === "Int16") setInputValue(String(s16));
+    else if (newType === "Hex16") setInputValue(hex);
+    else if (newType === "Bin16") setInputValue(bin);
+    else setInputValue(String(u16));
+  };
+
+  // When input value is typed
+  const handleInputChange = (raw: string) => {
+    setInputValue(raw);
+    const trimmed = raw.trim();
+    let num = 0;
+    if (dataType === "Hex16" || trimmed.toLowerCase().startsWith("0x")) {
+      num = parseInt(trimmed.replace(/^0x/i, ""), 16);
+    } else if (dataType === "Bin16") {
+      num = parseInt(trimmed.replace(/\s+/g, ""), 2);
+    } else if (dataType === "Int16") {
+      const signed = parseInt(trimmed, 10);
+      num = isNaN(signed) ? 0 : ((signed % 65536) + 65536) % 65536;
+    } else {
+      num = parseInt(trimmed, 10);
+    }
+    if (!isNaN(num)) {
+      setCurrentNum(((num % 65536) + 65536) % 65536);
+    }
+  };
+
+  const applyQuick = (val: number) => {
+    const clamped = ((val % 65536) + 65536) % 65536;
+    setCurrentNum(clamped);
+    const s = clamped > 32767 ? clamped - 65536 : clamped;
+    const h = "0x" + clamped.toString(16).toUpperCase().padStart(4, "0");
+    const b = clamped.toString(2).padStart(16, "0").match(/.{1,4}/g)?.join(" ") || "";
+    if (dataType === "Int16") setInputValue(String(s));
+    else if (dataType === "Hex16") setInputValue(h);
+    else if (dataType === "Bin16") setInputValue(b);
+    else setInputValue(String(clamped));
+  };
+
+  const handleApply = () => {
+    let finalStr = String(u16);
+    if (dataType === "Int16") finalStr = String(s16);
+    else if (dataType === "Hex16") finalStr = hex;
+    onApply(finalStr, localAddress, dataType);
+  };
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        backgroundColor: "rgba(2, 10, 18, 0.85)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 999999,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        style={{
+          background: "#071b2d",
+          border: "1px solid #1c4b6e",
+          borderRadius: "14px",
+          padding: "22px 26px",
+          width: "480px",
+          maxWidth: "94vw",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.95), 0 0 25px rgba(0,191,255,0.2)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "14px",
+          color: "#edf8ff",
+          userSelect: "none",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            <div style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "8px",
+              background: "rgba(0,191,255,0.12)",
+              border: "1px solid rgba(0,191,255,0.35)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--cyan)",
+              fontSize: "1.1rem"
+            }}>
+              ✎
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.22rem", color: "#fff", fontWeight: 700 }}>Editar valor</h2>
+              <p style={{ margin: "2px 0 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>
+                FC06 · Write Single Register
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="tiny ghost"
+            style={{ minWidth: "30px", height: "30px", padding: 0, borderRadius: "50%", fontSize: "1rem", color: "var(--muted)" }}
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Dirección bar */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          background: "#051625",
+          padding: "8px 14px",
+          borderRadius: "8px",
+          border: "1px solid #16364d",
+          fontSize: "0.86rem",
+          gap: "8px"
+        }}>
+          <span style={{ color: "var(--muted)" }}>Dirección:</span>
+          <input
+            type="text"
+            value={localAddress}
+            onChange={(e) => setLocalAddress(sanitizeNumericText(e.target.value, 8))}
+            style={{
+              width: "75px",
+              height: "26px",
+              textAlign: "center",
+              background: "#082136",
+              border: "1px solid #235475",
+              borderRadius: "5px",
+              color: "#fff",
+              fontWeight: "bold",
+              fontSize: "0.88rem",
+              fontFamily: "monospace"
+            }}
+          />
+          <span style={{ color: "var(--muted)", fontSize: "0.82rem" }}>(offset {offset})</span>
+        </div>
+
+        {/* Controls: Tipo de dato */}
+        <div>
+          <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "5px" }}>
+            Tipo de dato
+          </label>
+          <select
+            value={dataType}
+            onChange={(e) => handleTypeChange(e.target.value as any)}
+            style={{
+              width: "100%",
+              background: "#051625",
+              border: "1px solid #1e4b6c",
+              borderRadius: "6px",
+              color: "#fff",
+              padding: "6px 10px",
+              fontSize: "0.88rem"
+            }}
+          >
+            <option value="UInt16">UInt16</option>
+            <option value="Int16">Int16</option>
+            <option value="Hex16">Hex16</option>
+            <option value="Bin16">Bin16</option>
+          </select>
+        </div>
+
+        {/* Control: Valor */}
+        <div>
+          <label style={{ display: "block", fontSize: "0.8rem", color: "var(--muted)", marginBottom: "5px" }}>
+            Valor
+          </label>
+          <div style={{ position: "relative", width: "100%" }}>
+            <input
+              type="text"
+              value={inputValue}
+              onChange={(e) => handleInputChange(e.target.value)}
+              style={{
+                width: "100%",
+                height: "36px",
+                background: "#051625",
+                border: "1px solid #1e4b6c",
+                borderRadius: "6px",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: "1.05rem",
+                padding: "4px 10px",
+                boxSizing: "border-box",
+                fontFamily: "monospace"
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Representaciones equivalentes matching Image 2 */}
+        <div>
+          <span style={{ fontSize: "0.82rem", color: "#00c8ff", fontWeight: 700, display: "block", marginBottom: "8px" }}>
+            Representaciones equivalentes
+          </span>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+            <div style={{ background: "#051625", border: "1px solid #16364d", borderRadius: "8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "3px" }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 600 }}>DEC (uint16)</span>
+              <strong style={{ fontSize: "1.15rem", color: "#fff", fontFamily: "monospace" }}>{u16}</strong>
+            </div>
+            <div style={{ background: "#051625", border: "1px solid #16364d", borderRadius: "8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "3px" }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 600 }}>DEC (int16)</span>
+              <strong style={{ fontSize: "1.15rem", color: "#00c8ff", fontFamily: "monospace" }}>{s16}</strong>
+            </div>
+            <div style={{ background: "#051625", border: "1px solid #16364d", borderRadius: "8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "3px" }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 600 }}>HEX</span>
+              <strong style={{ fontSize: "1.15rem", color: "#00c8ff", fontFamily: "monospace" }}>{hex}</strong>
+            </div>
+            <div style={{ background: "#051625", border: "1px solid #16364d", borderRadius: "8px", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "3px" }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 600 }}>BIN (16 bits)</span>
+              <strong style={{ fontSize: "0.95rem", color: "#10b981", fontFamily: "monospace", letterSpacing: "1px" }}>{bin}</strong>
+            </div>
+          </div>
+        </div>
+
+        {/* Acciones rápidas matching Image 2 */}
+        <div>
+          <span style={{ fontSize: "0.82rem", color: "#00c8ff", fontWeight: 700, display: "block", marginBottom: "8px" }}>
+            Acciones rápidas
+          </span>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
+            <button
+              type="button"
+              onClick={() => applyQuick(0)}
+              style={{
+                height: "36px",
+                borderRadius: "8px",
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid #1f425c",
+                color: "#edf8ff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "6px",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              <span>⊘</span>
+              Cero
+            </button>
+            <button
+              type="button"
+              onClick={() => applyQuick(dataType === "Int16" ? 32767 : 65535)}
+              style={{
+                height: "36px",
+                borderRadius: "8px",
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid #1f425c",
+                color: "#edf8ff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "6px",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              <span>↑</span>
+              Máximo
+            </button>
+            <button
+              type="button"
+              onClick={() => applyQuick(dataType === "Int16" ? -32768 : 0)}
+              style={{
+                height: "36px",
+                borderRadius: "8px",
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid #1f425c",
+                color: "#edf8ff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "6px",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              <span>↓</span>
+              Mínimo
+            </button>
+          </div>
+        </div>
+
+        {/* Footer buttons matching Image 2 */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "6px" }}>
           <button
             type="button"
             style={{
