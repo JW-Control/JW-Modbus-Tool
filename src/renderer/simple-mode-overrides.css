@@ -303,7 +303,6 @@
 
 .sessions .what {
   flex: 0 0 auto;
-}
   grid-column: 2 / 3;
   grid-row: 2;
 }
