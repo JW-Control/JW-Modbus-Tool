@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { AlertTriangle, Info, Play, Plus, RefreshCw, Square, Trash2 } from "lucide-react";
-import type { SerialParity, SerialPortDescriptor } from "../shared/serial/types.js";
+import { INTERNAL_SIMULATOR_PATH, type SerialParity, type SerialPortDescriptor } from "../shared/serial/types.js";
 import { findVirtualDeviceTemplate, virtualDeviceTemplates } from "../shared/slave/templates.js";
 import type {
   SlaveSimulatorSettings,
@@ -81,6 +81,10 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
   useEffect(() => {
     if (!bridge?.slave) return;
     void bridge.slave.getState().then((result) => { if (result.ok) setState(result.value); });
+    void bridge.slave.getTraffic().then((result) => {
+      // Entries that arrive between the request and the reply are already in the list.
+      if (result.ok) setTraffic((current) => mergeTraffic(current, result.value));
+    });
     void refreshPorts();
 
     const unsubscribe = bridge.slave.onEvent((event) => {
@@ -142,6 +146,10 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
 
   const slave = bridge.slave;
   const masterUsesPort = masterConnected && samePort(masterPort, settings.port);
+  const internalActive = masterConnected && samePort(masterPort, INTERNAL_SIMULATOR_PATH);
+  const badge = state.running
+    ? internalActive ? `${state.config?.path} + interno` : `Escuchando en ${state.config?.path}`
+    : internalActive ? "Canal interno activo" : "Detenido";
   const tableInfo = tables.find((item) => item.id === table) ?? tables[0];
   const values: Array<boolean | number> = device ? device[table] : [];
   const labels = device?.labels[table] ?? [];
@@ -239,7 +247,7 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
       <section className="card simConfig">
         <header>
           <h2>Simulador slave</h2>
-          <span className={`simBadge ${state.running ? "on" : ""}`}>{state.running ? `Escuchando en ${state.config?.path}` : "Detenido"}</span>
+          <span className={`simBadge ${state.running || internalActive ? "on" : ""}`}>{badge}</span>
         </header>
         <div className="simFields">
           <label>Puerto
@@ -282,6 +290,9 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
         <button className={state.running ? "simStop" : "purple"} disabled={busy || (!state.running && (!settings.port || masterUsesPort))} onClick={() => void toggleRunning()}>
           {state.running ? <><Square size={15} />Detener simulador</> : <><Play size={15} />Iniciar simulador</>}
         </button>
+        <p className="note"><Info size={16} />{internalActive
+          ? "El master de la app está conectado por el canal interno: responde sin iniciar el simulador ni usar un puerto COM."
+          : "Sin hardware: en Dispositivos, conecta el master a «Simulador interno (sin COM)». Iniciar el simulador solo hace falta para un puerto COM."}</p>
         {state.devices.length === 0 && <p className="note"><Info size={16} />Agrega al menos un dispositivo virtual; sin ellos el simulador no responde a ningún ID.</p>}
         <div className="simCounters">
           <Counter label="Peticiones" value={state.counters.requests} />
@@ -358,12 +369,12 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
       </section>
 
       <section className="card simTraffic">
-        <header><h2>Tráfico del simulador</h2><button className="ghost" onClick={() => setTraffic([])}>Limpiar</button></header>
+        <header><h2>Tráfico del simulador</h2><button className="ghost" onClick={() => { setTraffic([]); void slave.clearTraffic(); }}>Limpiar</button></header>
         {traffic.length === 0 ? <p className="note"><Info size={16} />Aquí aparecerá cada petición que llegue al puerto y la respuesta enviada.</p> : (
           <div className="simTrafficTable">
             <div className="tr head simTrafficRow"><span>Hora</span><span>ID</span><span>Función</span><span>Petición</span><span>Respuesta</span><span>Resultado</span><span>Falla</span></div>
             {traffic.map((entry) => (
-              <div className="tr simTrafficRow" key={entry.id} title={entry.summary}>
+              <div className="tr simTrafficRow" key={entry.id} title={`${entry.channel === INTERNAL_SIMULATOR_PATH ? "Canal interno" : entry.channel} · ${entry.summary}`}>
                 <span>{formatTime(entry.at)}</span>
                 <span>{entry.unitId ?? "—"}</span>
                 <span>{entry.functionCode === null ? "—" : `FC${entry.functionCode.toString(16).toUpperCase().padStart(2, "0")}`}</span>
@@ -447,6 +458,11 @@ function faultText(device: VirtualDeviceSummary) {
   const parts = device.faults.mode === "none" ? [] : [device.faults.mode === "exception" ? `Excepción ${String(device.faults.exceptionCode).padStart(2, "0")}` : mode?.label ?? ""];
   if (device.faults.delayMs > 0 && device.faults.mode !== "no-response") parts.push(`+${device.faults.delayMs} ms`);
   return parts.join(" ");
+}
+
+function mergeTraffic(live: SlaveTrafficEntry[], stored: SlaveTrafficEntry[]) {
+  const seen = new Set(live.map((entry) => entry.id));
+  return [...live, ...stored.filter((entry) => !seen.has(entry.id))].sort((left, right) => right.id - left.id).slice(0, MAX_TRAFFIC_ROWS);
 }
 
 function samePort(left: string, right: string) {

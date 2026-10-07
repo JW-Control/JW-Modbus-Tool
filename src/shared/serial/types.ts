@@ -1,3 +1,9 @@
+/**
+ * Port path that connects the master to the slave simulator in memory, with
+ * no COM port involved. The serial format is accepted but has no effect.
+ */
+export const INTERNAL_SIMULATOR_PATH = "INTERNO";
+
 export type SerialParity = "none" | "even" | "odd";
 
 export type SerialDataBits = 7 | 8;

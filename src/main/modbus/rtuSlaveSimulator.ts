@@ -4,7 +4,7 @@ import { formatHex } from "../../shared/modbus/byteUtils.js";
 import { isExceptionFunctionCode } from "../../shared/modbus/exceptions.js";
 import { RtuRequestFramer, rtuSilenceMs } from "../../shared/modbus/rtuRequestFramer.js";
 import { VirtualSlaveBus, type VirtualBusFrameResult } from "../../shared/modbus/virtualSlaveBus.js";
-import type { NormalizedSerialPortConfig, SerialPortConfig } from "../../shared/serial/types.js";
+import { INTERNAL_SIMULATOR_PATH, type NormalizedSerialPortConfig, type SerialPortConfig } from "../../shared/serial/types.js";
 import type {
   AddVirtualDeviceRequest,
   SetVirtualFaultsRequest,
@@ -18,7 +18,7 @@ import type {
   VirtualDeviceFaults,
   VirtualDeviceSnapshot
 } from "../../shared/slave/types.js";
-import { validateSerialPortConfig } from "../serial/serialManager.js";
+import { isInternalSimulatorPath, validateSerialPortConfig, type InternalSlaveEndpoint } from "../serial/serialManager.js";
 
 /** The slice of `SerialPort` the simulator needs; tests pass a fake. */
 export interface SlavePort {
@@ -32,11 +32,22 @@ export interface SlavePort {
 
 export type SlavePortFactory = (config: NormalizedSerialPortConfig) => SlavePort;
 
+/** Where a response goes: the COM port or the in-memory master. */
+interface ResponseSink {
+  channel: string;
+  isActive(): boolean;
+  write(response: Uint8Array): void;
+  /** Delayed responses waiting to be sent, so they can be dropped when the channel closes. */
+  pending: Set<ReturnType<typeof setTimeout>>;
+}
+
 // USB-serial adapters deliver bytes in bursts, so the idle timeout that
 // releases unframed bytes must be well above the theoretical 3.5 characters.
 const MIN_IDLE_FLUSH_MS = 20;
 // Counters change on every frame; the UI only needs them a few times a second.
 const STATE_EMIT_INTERVAL_MS = 200;
+// Traffic kept for the Simulator view, so it survives switching views.
+const MAX_TRAFFIC_ENTRIES = 500;
 
 const defaultPortFactory: SlavePortFactory = (config) =>
   new SerialPort({
@@ -54,15 +65,17 @@ export class RtuSlaveSimulator {
   private readonly events = new EventEmitter();
   private framer = new RtuRequestFramer();
   private port: SlavePort | null = null;
+  private comSink: ResponseSink | null = null;
+  private readonly internalPending = new Set<ReturnType<typeof setTimeout>>();
   private config?: NormalizedSerialPortConfig;
   private startedAt?: string;
   private lastError?: string;
   private counters: SlaveSimulatorCounters = emptyCounters();
   private nextTrafficId = 1;
+  private traffic: SlaveTrafficEntry[] = [];
   private idleFlushMs = MIN_IDLE_FLUSH_MS;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private stateTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly delayedResponses = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(private readonly portFactory: SlavePortFactory = defaultPortFactory) {}
 
@@ -85,6 +98,10 @@ export class RtuSlaveSimulator {
   async start(config: SerialPortConfig): Promise<SlaveSimulatorState> {
     if (this.port) {
       throw new Error(`El simulador ya está escuchando en ${this.config?.path}. Detenlo antes de cambiar el puerto.`);
+    }
+
+    if (isInternalSimulatorPath(config?.path)) {
+      throw new Error(`${INTERNAL_SIMULATOR_PATH} es el canal interno: el simulador ya lo atiende sin iniciarlo. Elige un puerto COM.`);
     }
 
     const normalizedConfig = validateSerialPortConfig(config);
@@ -110,6 +127,12 @@ export class RtuSlaveSimulator {
     });
 
     this.port = port;
+    this.comSink = {
+      channel: normalizedConfig.path,
+      isActive: () => this.port === port,
+      write: (response) => this.writeResponse(port, response),
+      pending: new Set()
+    };
     this.config = normalizedConfig;
     this.startedAt = new Date().toISOString();
     this.lastError = undefined;
@@ -171,12 +194,35 @@ export class RtuSlaveSimulator {
     return this.getState();
   }
 
+  /** Newest first. */
+  getTraffic(): SlaveTrafficEntry[] {
+    return [...this.traffic];
+  }
+
+  clearTraffic(): void {
+    this.traffic = [];
+  }
+
   getDevice(unitId: number): VirtualDeviceSnapshot {
     return this.bus.getDevice(unitId);
   }
 
   setValue(request: SetVirtualValueRequest): VirtualDeviceSnapshot {
     return this.bus.setValue(request);
+  }
+
+  /** Lets the app's master talk to the virtual devices in memory, with no COM port. */
+  internalEndpoint(): InternalSlaveEndpoint {
+    return {
+      send: (request, reply) => {
+        this.processFrame(Uint8Array.from(request), {
+          channel: INTERNAL_SIMULATOR_PATH,
+          isActive: () => true,
+          write: reply,
+          pending: this.internalPending
+        });
+      }
+    };
   }
 
   private handleData(port: SlavePort, chunk: Buffer): void {
@@ -186,8 +232,14 @@ export class RtuSlaveSimulator {
 
     this.clearIdleTimer();
 
+    const sink = this.comSink;
+
+    if (!sink) {
+      return;
+    }
+
     for (const frame of this.framer.push(Uint8Array.from(chunk))) {
-      this.processFrame(port, frame);
+      this.processFrame(frame, sink);
     }
 
     if (this.framer.pendingBytes > 0) {
@@ -195,14 +247,14 @@ export class RtuSlaveSimulator {
         this.idleTimer = null;
         const rest = this.framer.flush();
 
-        if (rest && this.port === port) {
-          this.processFrame(port, rest);
+        if (rest && sink.isActive()) {
+          this.processFrame(rest, sink);
         }
       }, this.idleFlushMs);
     }
   }
 
-  private processFrame(port: SlavePort, frame: Uint8Array): void {
+  private processFrame(frame: Uint8Array, sink: ResponseSink): void {
     const result = this.bus.handleFrame(frame);
     const trafficResult = classify(result);
 
@@ -221,18 +273,19 @@ export class RtuSlaveSimulator {
 
       if (delayMs > 0) {
         const timer = setTimeout(() => {
-          this.delayedResponses.delete(timer);
-          if (this.port === port) this.writeResponse(port, response);
+          sink.pending.delete(timer);
+          if (sink.isActive()) sink.write(response);
         }, delayMs);
-        this.delayedResponses.add(timer);
+        sink.pending.add(timer);
       } else {
-        this.writeResponse(port, response);
+        sink.write(response);
       }
     }
 
     const entry: SlaveTrafficEntry = {
       id: this.nextTrafficId++,
       at: new Date().toISOString(),
+      channel: sink.channel,
       unitId: result.unitId,
       functionCode: result.functionCode,
       request: formatHex(frame),
@@ -242,6 +295,8 @@ export class RtuSlaveSimulator {
       fault: result.fault ? describeFault(result.fault) : null
     };
 
+    this.traffic.unshift(entry);
+    if (this.traffic.length > MAX_TRAFFIC_ENTRIES) this.traffic.length = MAX_TRAFFIC_ENTRIES;
     this.emit({ type: "traffic", entry });
 
     for (const unitId of result.changedUnitIds) {
@@ -273,8 +328,8 @@ export class RtuSlaveSimulator {
 
   private detachPort(): void {
     this.clearIdleTimer();
-    this.delayedResponses.forEach((timer) => clearTimeout(timer));
-    this.delayedResponses.clear();
+    this.comSink?.pending.forEach((timer) => clearTimeout(timer));
+    this.comSink = null;
     this.framer.flush();
     this.port = null;
   }

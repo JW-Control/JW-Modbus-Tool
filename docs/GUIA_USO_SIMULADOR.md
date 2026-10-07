@@ -5,26 +5,45 @@ virtuales). Sirve para probar un master (la propia JW Modbus Tool, un PLC, un
 HMI o un JWPLC) sin tener el equipo slave físico, y para provocar fallas a
 propósito: timeouts, errores de CRC y excepciones.
 
-Esta guía cubre lo que hacen las Fases 1 y 2. El detalle técnico está en
+Esta guía cubre lo que hacen las Fases 1, 2 y 3. El detalle técnico está en
 `SLAVE_SIMULATOR.md` y las pruebas paso a paso, en `PLAN_PRUEBAS_SIMULADOR.md`.
 
 ## ¿Necesito hardware?
 
-No. El simulador solo necesita un puerto COM con un master al otro lado, y ese
-puerto puede ser virtual.
+No. El master de la propia app puede hablar con el simulador en memoria, sin
+ningún puerto COM ni driver.
 
 | Forma de conectar | Qué necesitas | Cuándo usarla |
 | --- | --- | --- |
-| **Par COM virtual** (recomendada) | Un driver gratuito como com0com. Nada físico | Para trabajar en el día a día: el master de la app y el simulador se hablan dentro del mismo PC |
+| **Simulador interno** (recomendada) | Nada | Para el día a día, demos y pruebas con el master de la app |
+| Par COM virtual | Un driver gratuito como com0com | Para probar con otro programa master del mismo PC (por ejemplo un SCADA o un script) |
 | JWPLC por USB | El JWPLC con el sketch `Simulador_Master_USB.ino` | Para ver un equipo real actuando como master, sin conversor |
 | **Conversor USB-RS485** | Conversor, cable de par trenzado y un master real | Para probar en un bus RS-485 real. Ver [Más adelante: conversor USB-RS485](#más-adelante-conversor-usb-rs485) |
 
-La Fase 3 agregará un modo interno que no necesitará ni siquiera el par COM
-virtual.
+## Inicio rápido (simulador interno)
+
+1. Abre la app con `npm run dev:electron`.
+2. Vista **Simulador**: en "Dispositivos virtuales", deja la plantilla
+   **Genérico**, Unit ID `1`, y pulsa **Agregar**. No hace falta pulsar
+   "Iniciar simulador".
+3. Vista **Dispositivos**: en Puerto elige **Simulador interno (sin COM)** y
+   pulsa **Conectar** y luego **Escanear**. Debe aparecer el ID 1. La barra de
+   estado muestra "Conectado INTERNO".
+4. Vista **Registros**: lee FC03 desde 40000. Cambia un valor en el Simulador y
+   vuelve a leer: el master ve el valor nuevo.
+
+Con el master conectado al canal interno, la etiqueta de la vista Simulador
+dice "Canal interno activo". El formato serial (baudios, paridad) no tiene
+efecto en este modo.
+
+Escanear, Registros, Pruebas y los escenarios funcionan igual que con un puerto
+real, incluidas las fallas: "Sin respuesta" da timeout, "CRC corrupto" da error
+de CRC, y así con todas.
 
 ## Inicio rápido (par COM virtual)
 
-Instala el par COM virtual una sola vez (ver
+Úsalo cuando el master sea otro programa del PC. Instala el par COM virtual una
+sola vez (ver
 [Instalar el par COM virtual](#instalar-el-par-com-virtual)). En este ejemplo,
 el par es `COM10 <-> COM11`.
 
@@ -43,6 +62,46 @@ el par es `COM10 <-> COM11`.
 Listo: el master y el simulador funcionan en la misma ventana, cada uno en su
 puerto.
 
+## Ejemplo: red con varios slaves y dos masters
+
+El simulador atiende un puerto COM y el canal interno a la vez, así que puedes
+armar una red con varios slaves virtuales y dos masters: un equipo real por COM
+y el master de la app por memoria. Este montaje se probó con un JWPLC conectado
+por USB.
+
+```
+[JWPLC: Simulador_Master_USB.ino] --USB (COM3)--+
+                                                +--> [Simulador: slaves ID 1 a 5]
+[Master de la app: vista Dispositivos] --INTERNO-+
+```
+
+1. Carga `Codigos de Pruebas/Simulador_Master_USB/Simulador_Master_USB.ino` al
+   JWPLC y cierra el Monitor Serie del IDE de Arduino.
+2. Vista **Simulador**, agrega los slaves:
+   - ID 1 y ID 2 con la plantilla **Genérico**: son los que consulta el sketch.
+   - ID 3 con la plantilla **JWPLC Basic Remote I/O**.
+   - ID 4 y ID 5 Genéricos (por ejemplo "Variador" y "Medidor"), con algún valor
+     en sus registros.
+3. Puerto `COM3`, 9600 8N1, y **Iniciar simulador**.
+4. Vista **Dispositivos**: Puerto **Simulador interno (sin COM)**, **Conectar** y
+   **Escanear**. La etiqueta del Simulador debe decir "COM3 + interno".
+
+Qué deberías ver:
+
+- El escaneo de la app detecta los 5 slaves.
+- El tráfico muestra unas 10 peticiones por segundo del JWPLC (canal COM3), todas
+  "Respondida", mezcladas con las de la app (canal interno). Pasa el mouse sobre
+  una fila para ver su canal.
+- En el ID 1, el registro 40010 (ciclos del JWPLC) sube y el 40012 (errores) se
+  queda quieto. Si 40012 ya tenía un valor, son los errores de antes de iniciar
+  el simulador.
+- Si enciendes las coils 0 a 7 del ID 2 (desde la vista Simulador o con el
+  master de la app), se encienden las salidas Q0_0 a Q0_7 del JWPLC.
+- Si activas entradas físicas I0_x del JWPLC, cambia el registro 40000 del ID 2.
+
+Para agregar más slaves, repite el paso 2 con otros IDs (1 a 247). El JWPLC solo
+consulta los ID 1 y 2; el resto lo atiende el master de la app.
+
 ## La vista Simulador
 
 La pantalla tiene cuatro tarjetas.
@@ -51,8 +110,12 @@ La pantalla tiene cuatro tarjetas.
 
 - **Puerto y formato serial:** deben coincidir con los del master. Solo se
   pueden cambiar con el simulador detenido.
-- **Iniciar / Detener simulador.** El simulador no puede usar el puerto que el
+- **Iniciar / Detener simulador** abre o cierra el puerto COM. Para el canal
+  interno no hace falta iniciarlo. El simulador no puede usar el puerto que el
   master tiene abierto, ni al revés; la app avisa si lo intentas.
+- **Etiqueta de estado:** "Detenido", "Escuchando en COMx", "Canal interno
+  activo" (master conectado por memoria) o "Escuchando en COMx + interno" si
+  se usan los dos a la vez.
 - **Contadores:**
 
 | Contador | Qué cuenta |
@@ -97,8 +160,9 @@ direcciones siguen la misma convención que las vistas del master.
 ### Tráfico del simulador (abajo a la derecha)
 
 Cada fila es una trama recibida: hora, ID, función, petición y respuesta en
-hexadecimal, resultado y falla aplicada. Guarda las últimas 500; **Limpiar** la
-vacía.
+hexadecimal, resultado y falla aplicada. Al pasar el mouse sobre una fila se ve
+por qué canal llegó (COMx o canal interno). Guarda las últimas 500, aunque
+cambies de vista; **Limpiar** la vacía.
 
 | Resultado | Significado |
 | --- | --- |
@@ -247,6 +311,8 @@ prueba C1 de `PLAN_PRUEBAS_SIMULADOR.md`).
 
 | Síntoma | Causa probable | Qué hacer |
 | --- | --- | --- |
+| El master conectado a "Simulador interno" da timeout | No hay dispositivo con ese ID, o tiene la falla "Sin respuesta" | Revisa la lista de dispositivos y sus fallas en la vista Simulador |
+| "INTERNO es el canal interno" al iniciar el simulador | Se intentó abrir el canal interno como puerto COM | El canal interno no se inicia: conecta el master a él desde Dispositivos |
 | "El puerto está ocupado por el simulador" o "abierto como master" | Master y simulador en el mismo COM | Usa un puerto distinto para cada uno (los dos extremos del par virtual) |
 | El master da timeout y el tráfico del simulador está vacío | Simulador detenido, puertos que no son pareja o puertos cruzados | Comprueba "Escuchando en COMx" y que el master use el otro puerto del par |
 | El tráfico muestra la petición como "Ignorada" | No hay dispositivo con ese ID | Agrega el ID o corrige el slave del master |
@@ -261,4 +327,5 @@ prueba C1 de `PLAN_PRUEBAS_SIMULADOR.md`).
 - Solo Modbus RTU y las funciones FC01 a FC06, FC15 y FC16.
 - No emula el fail-safe del JWPLC (apagar salidas si pasa 1 s sin escrituras).
 - No suprime el eco de conversores RS-485 que lo tienen.
-- Aún no hay modo interno sin puerto COM (Fase 3).
+- El canal interno solo lo puede usar el master de la propia app; otro programa
+  necesita un par COM virtual.

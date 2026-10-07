@@ -8,6 +8,27 @@ virtuales, sin hardware y sin depender del USB del JWPLC. La **Prueba B** es
 opcional. La **Prueba C** valida el cableado RS-485 real y se hace cuando llegue
 el conversor USB-RS485.
 
+## Prueba 0: canal interno (sin nada instalado)
+
+Desde la Fase 3, el master de la app puede hablar con el simulador en memoria.
+Es la prueba más rápida y no necesita par COM virtual.
+
+1. Vista **Simulador**: agrega un dispositivo Genérico con ID 1 y pon `1234` en
+   40001. No inicies el simulador.
+2. Vista **Dispositivos**: Puerto **Simulador interno (sin COM)**, **Conectar** y
+   **Escanear**.
+3. Vista **Pruebas**: con el ID 1 como slave activo, ejecuta "Operación normal",
+   "Error CRC detectado", "Excepción Modbus" y "Timeout detectado".
+
+- [ ] La barra de estado muestra "Conectado INTERNO" y la vista Simulador, "Canal interno activo".
+- [ ] El escaneo detecta el ID 1 y Registros lee `1234` en 40001.
+- [ ] Los escenarios dan: 8 pasos aprobados, 8 "CRC Error", 6 "Excepcion" y 8 "Timeout".
+- [ ] Al volver a la vista Simulador, el tráfico muestra las peticiones.
+
+**Criterio de cierre de la Fase 3:** esta demo funciona en un PC sin
+adaptadores ni drivers, y los tests de extremo a extremo
+(`tests/e2e/masterSimulatorInternal.test.ts`, dentro de `npm test`) pasan.
+
 ## Montajes
 
 ```
@@ -204,9 +225,10 @@ Es el montaje que reemplaza a la Prueba B con cableado real.
 
 | Prueba | Fecha | Peticiones | Errores CRC | Timeouts | Resultado | Notas |
 | --- | --- | --- | --- | --- | --- | --- |
+| 0. Canal interno | | | | | Pendiente | |
 | A. Solo software | | | | | Pendiente | |
 | A2. Fase 2 | | | | | Pendiente | |
-| B. JWPLC por USB | | | | | Pendiente | |
+| B. JWPLC por USB | 2026-10-07 | 106 en ~10 s por COM3 | 0 | 0 | Aprobado | JWPLC por COM3 y master de la app por INTERNO a la vez, con 5 slaves virtuales |
 | C1. App lee al JWPLC | | | | | Pendiente | |
 | C2. JWPLC lee al simulador | | | | | Pendiente | |
 

@@ -19,10 +19,10 @@ All notable changes to JW Modbus Tool will be documented in this file.
 - Tests view scenarios apply their fault to the virtual devices the plan targets.
 - Virtual devices and simulator serial settings saved in and restored from session files.
 - Exception code 04 (Slave Device Failure) recognized by the master.
+- Internal simulator channel: the master connects to "INTERNO" and talks to the virtual devices in memory, with no COM port or driver.
+- Simulator traffic history (last 500 frames) kept in the main process, so it survives switching views.
+- End-to-end tests that run the real master code against the real simulator over the internal channel.
 
-### Fixed
-
-- Master reads now report a corrupted response CRC as a CRC error instead of failing to decode the frame.
 - Serial port listing, validation, and basic Electron IPC open/close flow.
 - Persistent serial format, timeout, and last-port settings.
 - Minimal serial diagnostics panel for development.
@@ -42,3 +42,7 @@ All notable changes to JW Modbus Tool will be documented in this file.
 - Documented final interface concept and deferred product scope.
 - JWPLC Basic Remote I/O preset data scaffold.
 - Base docs, build notes, and legal clean-room policy.
+
+### Fixed
+
+- Master reads now report a corrupted response CRC as a CRC error instead of failing to decode the frame.

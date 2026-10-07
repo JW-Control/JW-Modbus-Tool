@@ -96,6 +96,8 @@ export type SlaveTrafficResult =
 export interface SlaveTrafficEntry {
   id: number;
   at: string;
+  /** COM port the frame arrived on, or the internal channel. */
+  channel: string;
   unitId: number | null;
   functionCode: number | null;
   request: string;

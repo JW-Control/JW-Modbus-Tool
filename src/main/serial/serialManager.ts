@@ -1,12 +1,23 @@
 import { SerialPort } from "serialport";
 import { concatBytes } from "../../shared/modbus/byteUtils.js";
-import type {
-  NormalizedSerialPortConfig,
-  SerialConnectionState,
-  SerialPortConfig,
-  SerialPortDescriptor,
-  SerialOperationResult
+import {
+  INTERNAL_SIMULATOR_PATH,
+  type NormalizedSerialPortConfig,
+  type SerialConnectionState,
+  type SerialPortConfig,
+  type SerialPortDescriptor,
+  type SerialOperationResult
 } from "../../shared/serial/types.js";
+
+/** Answers master requests in memory; the slave simulator provides it. */
+export interface InternalSlaveEndpoint {
+  /** `reply` is called once with the response, or never when the slave stays silent. */
+  send(request: Uint8Array, reply: (response: Uint8Array) => void): void;
+}
+
+export function isInternalSimulatorPath(path: unknown): boolean {
+  return typeof path === "string" && path.trim().toUpperCase() === INTERNAL_SIMULATOR_PATH;
+}
 
 interface RawSerialPortDescriptor {
   path: string;
@@ -93,6 +104,8 @@ export async function listSerialPorts(lister: SerialPortLister = SerialPort): Pr
 
 export class SerialManager {
   private port: SerialPort | null = null;
+  private internalEndpoint: InternalSlaveEndpoint | null = null;
+  private internalOpen = false;
   private state: SerialConnectionState = {
     connected: false
   };
@@ -105,11 +118,29 @@ export class SerialManager {
     return { ...this.state };
   }
 
+  setInternalEndpoint(endpoint: InternalSlaveEndpoint | null): void {
+    this.internalEndpoint = endpoint;
+  }
+
   async open(config: SerialPortConfig): Promise<SerialConnectionState> {
     const normalizedConfig = validateSerialPortConfig(config);
 
-    if (this.port?.isOpen) {
+    if (this.port?.isOpen || this.internalOpen) {
       await this.close();
+    }
+
+    if (isInternalSimulatorPath(normalizedConfig.path)) {
+      if (!this.internalEndpoint) {
+        throw new Error("El simulador interno no está disponible");
+      }
+
+      this.internalOpen = true;
+      this.state = {
+        connected: true,
+        config: { ...normalizedConfig, path: INTERNAL_SIMULATOR_PATH },
+        openedAt: new Date().toISOString()
+      };
+      return this.getConnectionState();
     }
 
     const nextPort = new SerialPort({
@@ -151,6 +182,12 @@ export class SerialManager {
   }
 
   async close(): Promise<SerialConnectionState> {
+    if (this.internalOpen) {
+      this.internalOpen = false;
+      this.state = { connected: false };
+      return this.getConnectionState();
+    }
+
     const openPort = this.port;
 
     if (!openPort) {
@@ -175,6 +212,10 @@ export class SerialManager {
   }
 
   async transact(request: Uint8Array, options: SerialTransactionOptions): Promise<SerialTransactionResult> {
+    if (this.internalOpen && this.internalEndpoint) {
+      return this.transactInternal(this.internalEndpoint, request, options);
+    }
+
     const openPort = this.port;
 
     if (!openPort?.isOpen) {
@@ -246,6 +287,32 @@ export class SerialManager {
             }
           });
         });
+      });
+    });
+  }
+
+  private transactInternal(
+    endpoint: InternalSlaveEndpoint,
+    request: Uint8Array,
+    options: SerialTransactionOptions
+  ): Promise<SerialTransactionResult> {
+    const startedAt = performance.now();
+
+    return new Promise<SerialTransactionResult>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        settled = true;
+        reject(new Error(`Timed out waiting for RTU response after ${options.timeoutMs} ms`));
+      }, options.timeoutMs);
+
+      endpoint.send(Uint8Array.from(request), (response) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimeout(timer);
+        resolve({ request, response, elapsedMs: Math.round(performance.now() - startedAt) });
       });
     });
   }

@@ -1679,7 +1679,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
 
       <div className="testsSide">
         {state.managingScenarios ? <ScenarioManager state={state} setState={setState} savePlan={savePlanToScenario} defaultSlave={defaultSlave} /> : <ScenariosPanel state={state} selectScenario={selectScenario} setState={setState} />}
-        <ScenarioSimulatorLink scenarioId={state.selectedScenario} scenarioName={state.scenarios[state.selectedScenario]?.name ?? state.selectedScenario} planSlaves={state.steps.filter((step) => step.enabled && step.fn !== "delay").map((step) => Number(step.slave))} onMessage={onMessage} />
+        <ScenarioSimulatorLink scenarioId={state.selectedScenario} scenarioName={state.scenarios[state.selectedScenario]?.name ?? state.selectedScenario} planSlaves={state.steps.filter((step) => step.enabled && step.fn !== "delay").map((step) => Number(step.slave))} masterPort={port} onMessage={onMessage} />
       </div>
 
       <div className="testsKpis">

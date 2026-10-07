@@ -27,6 +27,119 @@ Rama: `nombre-de-rama`
 
 ---
 
+## 2026-10-07 · Prueba con el JWPLC real: dos masters y varios slaves
+
+Rama: `feature/slave-simulator`.
+
+### Qué se hizo
+
+- Se cargó `Codigos de Pruebas/Simulador_Master_USB/Simulador_Master_USB.ino`
+  al JWPLC por COM3 (placa JWPLC Basic, paquete 2.1.0-alpha.12), a pedido del
+  usuario.
+- Prueba en vivo con 5 slaves virtuales (ID 1, 2, 4 y 5 Genéricos, e ID 3 con
+  la plantilla JWPLC), con dos masters a la vez: el JWPLC por COM3 y el master
+  de la app por el canal interno.
+- La etiqueta del simulador, con los dos canales activos, pasó de "Escuchando
+  en COM3 + interno" a "COM3 + interno", porque empujaba el título a dos líneas.
+- Guía de uso: nueva sección "Ejemplo: red con varios slaves y dos masters".
+- Plan de pruebas: Prueba B anotada como aprobada.
+
+### Hallazgos
+
+- Antes de cargar el sketch, el JWPLC no tenía `Simulador_Master_USB.ino`.
+  Tenía un programa de OpenPLC con el HAL del JWPLC Basic, que imprime
+  diagnósticos `[RTU-TIMING]` por el USB a 115200 y consulta al ID 2 por RS-485.
+  Por eso, en la prueba de la Fase 1, el simulador solo veía tramas ilegibles en
+  COM3. Ese texto aparece en los proyectos `PruebaMultibit` y
+  `PruebasBlackplane`; para volver a ese firmware hay que cargarlo desde el
+  editor de OpenPLC.
+
+### Verificación
+
+- JWPLC por COM3: 106 peticiones en unos 10 s, todas respondidas, 0 errores de
+  CRC. En el ID 1, el registro de ciclos subió (de 15 a 21 en 5 s) y el de
+  errores no cambió.
+- Master de la app por INTERNO, al mismo tiempo: el escaneo detectó los 5
+  slaves y leyó 1750 en el ID 4 (holding) y 2304 en el ID 5 (input).
+- Las coils 0 y 2 del ID 2, escritas desde la app, llegaron al JWPLC por FC01
+  (respuesta `02 01 01 05`), así que sus salidas Q0_0 y Q0_2 debían encenderse.
+  Falta que el usuario lo confirme mirando el equipo.
+
+### Pendiente
+
+- Confirmar en el JWPLC que Q0_0 y Q0_2 se encendieron.
+- Masters virtuales dentro de la app: se propusieron, pero el usuario prefirió
+  por ahora solo más slaves.
+
+## 2026-10-07 · Fase 3 del simulador slave: canal interno
+
+Rama: `feature/slave-simulator`, sobre `672b4e4` (Fases 1 y 2 probadas por el
+usuario).
+
+### Qué se hizo
+
+- **Canal interno:** la lista de puertos de la vista Dispositivos termina con
+  "Simulador interno (sin COM)" (ruta `INTERNO`). Al conectar el master ahí,
+  `SerialManager` no abre ningún puerto: entrega cada petición al simulador en
+  memoria, que responde con el mismo motor, fallas, contadores y tráfico que
+  por un COM.
+- **Simulador con dos canales:** cada respuesta va a su canal (COM o interno),
+  y cada uno tiene sus propias respuestas con retardo pendientes. El simulador
+  no necesita estar iniciado para el canal interno y puede atender los dos a la
+  vez. Rechaza iniciarse con `INTERNO` como puerto COM.
+- **Historial de tráfico en el proceso principal** (últimas 500 tramas), con
+  los canales IPC `slave:getTraffic` y `slave:clearTraffic`. Cada trama indica
+  su canal.
+- **Interfaz:** la vista Simulador muestra "Canal interno activo" y explica
+  cuándo hace falta iniciar el simulador. La tarjeta de Pruebas muestra "Canal
+  interno" y ya no pide iniciar el simulador en ese caso.
+- **Tests de extremo a extremo** (`tests/e2e/masterSimulatorInternal.test.ts`):
+  el código real del master contra el simulador real, sin mocks. Cubren 1.000
+  peticiones con las 8 funciones y 2 slaves, la secuencia de validación JWPLC,
+  las cuatro fallas, IDs inexistentes, el registro del tráfico, la desconexión y
+  el rechazo de `INTERNO` como COM.
+
+### Por qué
+
+- Es la Fase 3 de `guia pasos.md`: hacer demos y pruebas en cualquier PC, sin
+  adaptadores ni drivers, y tener tests de punta a punta en `npm test`.
+
+### Problemas encontrados y corregidos
+
+- Al probar el canal interno, la tabla de tráfico del Simulador aparecía vacía:
+  solo guardaba lo que llegaba con esa vista abierta, y con el canal interno se
+  trabaja desde Dispositivos o Pruebas. Ahora el historial vive en el proceso
+  principal y la vista lo carga al abrirse.
+- En la Fase 2 la sección "Fixed" del `CHANGELOG.md` quedó insertada en medio
+  de la lista "Added", así que funciones antiguas aparecían como arreglos. Se
+  movió al final.
+
+### Verificación
+
+- `npm test`: 82 tests pasan (8 de extremo a extremo y 1 del historial de
+  tráfico, nuevos).
+- `npm run typecheck` y build sin errores.
+- Demo en la app sin hardware ni drivers: master en "Simulador interno",
+  escaneo con 3 slaves virtuales detectados, lectura de registros y plan de
+  Pruebas con los cuatro escenarios: 8 aprobados, 8 "CRC Error", 6 "Excepcion"
+  y 8 "Timeout". El tráfico se conserva al volver a la vista Simulador.
+- Con esto se cumple el criterio de cierre de la Fase 3.
+
+### Documentación
+
+- `docs/GUIA_USO_SIMULADOR.md`: el canal interno pasa a ser la forma
+  recomendada y el inicio rápido.
+- `docs/SLAVE_SIMULATOR.md`: sección "Canal interno".
+- `docs/PLAN_PRUEBAS_SIMULADOR.md`: nueva Prueba 0 (canal interno) con el
+  criterio de cierre de la Fase 3.
+- `CHANGELOG.md` y `README.md` actualizados.
+
+### Pendiente
+
+- Preparar `Simulador_Master_RS485.ino` para el montaje con conversor
+  USB-RS485.
+- Supresión del eco de conversores RS-485 y fail-safe de la plantilla JWPLC.
+
 ## 2026-10-07 · Guía de uso del simulador
 
 Rama: `feature/slave-simulator`.

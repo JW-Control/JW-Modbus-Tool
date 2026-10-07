@@ -40,6 +40,9 @@ import {
 import { SimulatorView } from "./SimulatorView.js";
 import { loadSimulatorSettings, normalizeSimulatorSettings, storeSimulatorSettings } from "./simulatorSettings.js";
 import type { SlaveSimulatorSessionConfig, VirtualDeviceSummary } from "../shared/slave/types.js";
+import { INTERNAL_SIMULATOR_PATH } from "../shared/serial/types.js";
+
+const INTERNAL_PORT_LABEL = "Simulador interno (sin COM)";
 
 function JwplcIcon({ size = 32, className = "", strokeWidth = 1.5 }: { size?: number, className?: string, strokeWidth?: number }) {
   return (
@@ -285,11 +288,13 @@ export function SimpleModeApp() {
       if (preferredPort && withMetadata.length === 0 && normalized.length > 1) visible = [preferredPort];
     }
     if (!preferred && withMetadata.length === 0 && normalized.length > 1) visible = [highestComPort(normalized)];
-    setPorts(visible);
+    // The internal simulator is always offered last, after the real ports.
+    const options = [...visible, { path: INTERNAL_SIMULATOR_PATH, label: INTERNAL_PORT_LABEL, hasMetadata: false }];
+    setPorts(options);
     setPort((current) => {
       const stored = loadStoredSerialPort();
-      const candidate = [preferred, current, stored].find((value) => value && visible.some((item) => item.path === value));
-      return candidate || visible[0]?.path || "";
+      const candidate = [preferred, current, stored].find((value) => value && options.some((item) => item.path === value));
+      return candidate || options[0].path;
     });
   }
 
@@ -315,7 +320,9 @@ export function SimpleModeApp() {
       return;
     }
     setConnected(Boolean(result.value.connected));
-    setMessage(`Conectado a ${port}. Escanea para detectar slaves reales.`);
+    setMessage(port === INTERNAL_SIMULATOR_PATH
+      ? "Conectado al simulador interno, sin puerto COM. Escanea para ver los slaves virtuales de la vista Simulador."
+      : `Conectado a ${port}. Escanea para detectar slaves reales.`);
   }
 
   async function disconnect() {
@@ -1115,7 +1122,7 @@ function Field({ label, value, suffix, select }: { label: string; value: string;
 }
 function NumberField({ label, value, suffix, onChange }: { label: string; value: number; suffix?: string; onChange: (value: number) => void }) { return <label className="field"><span>{label}</span><input type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />{suffix ? <small>{suffix}</small> : null}</label>; }
 function SelectField({ label, value, onChange, options, labels, empty = "Sin opciones" }: { label: string; value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string>; empty?: string }) { const choices = options.length > 0 ? options : [""]; return <label className="field"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{choices.map((option) => <option key={option || empty} value={option}>{option ? labels?.[option] ?? option : empty}</option>)}</select></label>; }
-function PortSelectRow({ ports, port, setPort, refreshPorts }: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void }) { const options = ports.length > 0 ? ports.map((item) => item.path) : [""]; return <div className="field" style={{ gridTemplateColumns: "1fr 38px 1.15fr", alignItems: "center" }}><span>Puerto</span><button className="ghost" onClick={refreshPorts} title="Recargar puertos" style={{ minWidth: 38, height: 34, padding: 0 }}><RefreshCw size={15} /></button><select value={port} onChange={(event) => setPort(event.target.value)}>{options.map((option) => <option key={option || "empty"} value={option}>{option || "Sin puertos"}</option>)}</select></div>; }
+function PortSelectRow({ ports, port, setPort, refreshPorts }: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void }) { const options = ports.length > 0 ? ports.map((item) => item.path) : [""]; return <div className="field" style={{ gridTemplateColumns: "1fr 38px 1.15fr", alignItems: "center" }}><span>Puerto</span><button className="ghost" onClick={refreshPorts} title="Recargar puertos" style={{ minWidth: 38, height: 34, padding: 0 }}><RefreshCw size={15} /></button><select value={port} onChange={(event) => setPort(event.target.value)}>{options.map((option) => <option key={option || "empty"} value={option}>{option === INTERNAL_SIMULATOR_PATH ? INTERNAL_PORT_LABEL : option || "Sin puertos"}</option>)}</select></div>; }
 function Tool({ icon: Icon, label, tone, onClick }: { icon: LucideIcon; label: string; tone?: "ok" | "danger"; onClick?: () => void }) { return <button className={tone ?? ""} onClick={onClick}><Icon size={18} />{label}</button>; }
 function Dot() { return <span className="dot" />; }
 function Kpi({ icon, label, value, tone }: { icon: ReactNode; label: string; value: string; tone?: string }) { return <article className={`kpi ${tone ?? ""}`}><b>{icon}</b><span>{label}</span><strong>{value}</strong></article>; }

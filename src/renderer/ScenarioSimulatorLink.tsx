@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { INTERNAL_SIMULATOR_PATH } from "../shared/serial/types.js";
 import type { SlaveSimulatorState, VirtualDeviceFaults } from "../shared/slave/types.js";
 
 const LINK_STORAGE_KEY = "jw-modbus-tool.tests.simulator-link.v1";
@@ -15,10 +16,11 @@ const scenarioFaults: Record<string, { faults: Partial<VirtualDeviceFaults>; lab
  * Card in the Tests view that ties the selected scenario to the slave
  * simulator: the virtual devices the plan talks to get the scenario's fault.
  */
-export function ScenarioSimulatorLink({ scenarioId, scenarioName, planSlaves, onMessage }: {
+export function ScenarioSimulatorLink({ scenarioId, scenarioName, planSlaves, masterPort, onMessage }: {
   scenarioId: string;
   scenarioName: string;
   planSlaves: number[];
+  masterPort: string;
   onMessage: (message: string) => void;
 }) {
   const slave = window.jwModbus?.slave;
@@ -70,13 +72,16 @@ export function ScenarioSimulatorLink({ scenarioId, scenarioName, planSlaves, on
     return <section className="card testsSimulatorCard"><h2>Simulador slave <small>(PC como slave)</small></h2><p className="testsInfo">Abre la app en Electron para usar el simulador.</p></section>;
   }
 
-  const status = state?.running ? `Escuchando en ${state.config?.path}` : "Detenido";
+  const internal = masterPort === INTERNAL_SIMULATOR_PATH;
+  const status = state?.running
+    ? `Escuchando en ${state.config?.path}${internal ? " + interno" : ""}`
+    : internal ? "Canal interno" : "Detenido";
 
   return (
     <section className="card testsSimulatorCard">
       <h2>Simulador slave <small>(PC como slave)</small></h2>
       <dl className="testsSimFacts">
-        <dt>Estado</dt><dd className={state?.running ? "oktext" : "muted"}>{status}</dd>
+        <dt>Estado</dt><dd className={state?.running || internal ? "oktext" : "muted"}>{status}</dd>
         <dt>Slaves virtuales</dt><dd>{state?.devices.length ? state.devices.map((device) => `ID ${device.unitId}`).join(", ") : "Ninguno"}</dd>
         <dt>El plan usa</dt><dd>{uniqueSlaves.length ? uniqueSlaves.map((id) => `ID ${id}${virtualIds.has(id) ? " (virtual)" : ""}`).join(", ") : "—"}</dd>
       </dl>
@@ -94,7 +99,7 @@ export function ScenarioSimulatorLink({ scenarioId, scenarioName, planSlaves, on
               : `"${scenarioName}" aplica a ID ${targets.join(", ")}: ${mapping.label}.`}
         {linked && realSlaves.length > 0 && scenarioId === "timeout" && ` ID ${realSlaves.join(", ")} no existe en el simulador: el master no recibirá respuesta.`}
       </p>
-      {!state?.running && <p className="testsInfo">Inicia el simulador en la vista Simulador para que responda al plan.</p>}
+      {!state?.running && !internal && <p className="testsInfo">Para que responda al plan, inicia el simulador en un puerto COM o conecta el master a «Simulador interno (sin COM)».</p>}
     </section>
   );
 }

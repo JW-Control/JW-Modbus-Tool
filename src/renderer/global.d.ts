@@ -30,6 +30,7 @@ import type {
   SetVirtualValueRequest,
   SlaveSimulatorEvent,
   SlaveSimulatorState,
+  SlaveTrafficEntry,
   VirtualDeviceConfig,
   VirtualDeviceSnapshot
 } from "../shared/slave/types.js";
@@ -99,6 +100,8 @@ declare global {
         setValue: (request: SetVirtualValueRequest) => Promise<SerialOperationResult<VirtualDeviceSnapshot>>;
         setFaults: (request: SetVirtualFaultsRequest) => Promise<SerialOperationResult<SlaveSimulatorState>>;
         exportDevices: () => Promise<SerialOperationResult<VirtualDeviceConfig[]>>;
+        getTraffic: () => Promise<SerialOperationResult<SlaveTrafficEntry[]>>;
+        clearTraffic: () => Promise<SerialOperationResult<void>>;
         importDevices: (devices: VirtualDeviceConfig[]) => Promise<SerialOperationResult<SlaveSimulatorState>>;
         onEvent: (listener: (event: SlaveSimulatorEvent) => void) => () => void;
       };

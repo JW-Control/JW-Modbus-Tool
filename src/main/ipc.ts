@@ -76,6 +76,7 @@ export function registerIpcHandlers(): void {
     })
   );
   ipcMain.handle("serial:close", async () => toSerialResult(() => serialManager.close()));
+  serialManager.setInternalEndpoint(slaveSimulator.internalEndpoint());
   slaveSimulator.onEvent((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("slave:event", event);
@@ -107,6 +108,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("slave:setFaults", async (_event, request: SetVirtualFaultsRequest) =>
     toSerialResult(async () => slaveSimulator.setFaults(request))
   );
+  ipcMain.handle("slave:getTraffic", async () => toSerialResult(async () => slaveSimulator.getTraffic()));
+  ipcMain.handle("slave:clearTraffic", async () => toSerialResult(async () => slaveSimulator.clearTraffic()));
   ipcMain.handle("slave:exportDevices", async () => toSerialResult(async () => slaveSimulator.exportDevices()));
   ipcMain.handle("slave:importDevices", async (_event, devices: VirtualDeviceConfig[]) =>
     toSerialResult(async () => slaveSimulator.importDevices(devices))

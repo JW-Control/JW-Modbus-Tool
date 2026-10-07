@@ -4,7 +4,7 @@ La vista Simulador permite que el PC actúe como uno o varios slaves Modbus RTU
 (dispositivos virtuales) en su propio puerto COM. Así se pueden probar masters,
 HMIs y PLCs sin tener el equipo físico.
 
-## Funcionamiento actual (Fases 1 y 2)
+## Funcionamiento actual (Fases 1, 2 y 3)
 
 - Abre un puerto COM propio, independiente de la conexión del master. El master
   y el simulador no pueden usar el mismo puerto a la vez; la app lo rechaza en
@@ -25,6 +25,26 @@ HMIs y PLCs sin tener el equipo físico.
   aplicada, y mantiene contadores en vivo de peticiones, respuestas,
   excepciones, tramas ignoradas, errores de CRC y fallas.
 - Recuerda la última configuración serial del simulador.
+- Conserva las últimas 500 tramas en el proceso principal, así que el tráfico
+  no se pierde al cambiar de vista.
+
+## Canal interno (Fase 3)
+
+El master de la app puede hablar con los dispositivos virtuales en memoria, sin
+puerto COM ni driver. En la vista Dispositivos, la lista de puertos termina con
+**Simulador interno (sin COM)**, cuya ruta es `INTERNO`.
+
+- Al conectar el master a `INTERNO`, `SerialManager` no abre ningún puerto:
+  cada petición se entrega al simulador, que la procesa igual que una trama del
+  COM (mismo motor, fallas, contadores, tráfico y eventos) y devuelve la
+  respuesta.
+- No hace falta iniciar el simulador. Puede estar escuchando en un COM al mismo
+  tiempo; el tráfico de cada canal se distingue por el campo `channel`.
+- El formato serial se acepta pero no tiene efecto. El timeout del master sí se
+  aplica: "Sin respuesta", un ID inexistente o un retardo mayor que el timeout
+  terminan en timeout.
+- El simulador rechaza iniciarse en `INTERNO`, porque ese canal no es un
+  puerto COM.
 
 ## Plantillas
 
@@ -107,15 +127,18 @@ bytes entrante en peticiones:
 | Dispositivos virtuales, enrutamiento, fallas, exportar e importar | `src/shared/modbus/virtualSlaveBus.ts` |
 | Plantillas | `src/shared/slave/templates.ts` |
 | Motor de respuestas (FC1 a FC16) | `src/shared/modbus/slaveResponses.ts` |
-| Puerto serial, retardos, contadores y eventos | `src/main/modbus/rtuSlaveSimulator.ts` |
+| Puerto serial, canal interno, retardos, contadores, historial y eventos | `src/main/modbus/rtuSlaveSimulator.ts` |
+| Conexión del master al canal interno | `src/main/serial/serialManager.ts` (`INTERNAL_SIMULATOR_PATH` en `src/shared/serial/types.ts`) |
 | Canales IPC `slave:*` y `slave:event` | `src/main/ipc.ts`, `src/preload/preload.ts`, `src/preload/preload.cjs` |
 | Vista Simulador | `src/renderer/SimulatorView.tsx`, `src/renderer/simulator.css`, `src/renderer/simulatorSettings.ts` |
 | Tarjeta de la vista Pruebas | `src/renderer/ScenarioSimulatorLink.tsx` |
-| Guardado en la sesión | `src/renderer/SimpleModeApp.tsx` |
+| Guardado en la sesión y opción "Simulador interno" del master | `src/renderer/SimpleModeApp.tsx` |
+| Tests de extremo a extremo master ↔ simulador | `tests/e2e/masterSimulatorInternal.test.ts` |
 
 ## Pruebas sin hardware
 
-Instala un par de puertos COM virtuales, por ejemplo con com0com (`COM10` y
+La forma más simple es el canal interno: no necesita nada instalado. Para que
+el master sea otro programa del PC, instala un par de puertos COM virtuales, por ejemplo con com0com (`COM10` y
 `COM11`). Inicia el simulador en un puerto (vista Simulador) y conecta el
 master de la propia app al otro (vista Dispositivos). Los dos roles funcionan
 en la misma ventana con puertos distintos, así que Escanear, Registros y
@@ -131,6 +154,5 @@ todas las pruebas, en `PLAN_PRUEBAS_SIMULADOR.md`.
 
 ## Pendiente
 
-- Modo interno master a slave en memoria, sin puerto COM (Fase 3).
 - Supresión del eco en adaptadores RS-485 que devuelven su propia transmisión.
 - Fail-safe de salidas en la plantilla JWPLC.

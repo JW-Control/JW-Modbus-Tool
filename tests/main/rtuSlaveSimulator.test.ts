@@ -102,6 +102,25 @@ describe("RtuSlaveSimulator", () => {
     expect(simulator.getState().counters).toMatchObject({ requests: 2, responses: 2, exceptions: 0 });
   });
 
+  it("keeps the last 500 traffic entries, newest first, until cleared", async () => {
+    const { simulator, ports } = createSimulator();
+    simulator.addDevice({ unitId: 1 });
+    await simulator.start({ path: "COM10", baudRate: 115200 });
+
+    for (let address = 0; address < 502; address += 1) {
+      ports[0].receive(encodeWriteSingleRegisterRequest({ unitId: 1, address: address % 64, value: address }));
+    }
+
+    const traffic = simulator.getTraffic();
+    expect(traffic).toHaveLength(500);
+    expect(traffic[0].id).toBeGreaterThan(traffic[1].id);
+    expect(traffic[0]).toMatchObject({ channel: "COM10", result: "response" });
+
+    simulator.clearTraffic();
+    expect(simulator.getTraffic()).toEqual([]);
+    await simulator.stop();
+  });
+
   it("stays silent for other unit ids and counts them as ignored", async () => {
     const { simulator, ports } = createSimulator();
     simulator.addDevice({ unitId: 1 });
