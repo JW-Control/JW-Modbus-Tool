@@ -6,32 +6,115 @@ qué y cómo se verificó. Las entradas más recientes van primero.
 El `CHANGELOG.md` resume las funciones de cada versión; esta bitácora cuenta el
 proceso.
 
-**Plantilla para nuevas entradas**
+### Plantilla para nuevas entradas
 
 ```
 ## AAAA-MM-DD · Título corto
 Rama: `nombre-de-rama`
 
-**Qué se hizo**
+### Qué se hizo
 - ...
 
-**Por qué**
+### Por qué
 - ...
 
-**Verificación**
+### Verificación
 - ...
 
-**Pendiente**
+### Pendiente
 - ...
 ```
 
 ---
 
+## 2026-10-07 · Fase 2 del simulador slave
+
+Rama: `feature/slave-simulator`, sobre la Fase 1 publicada (`af342ea`).
+
+### Qué se hizo
+
+- **Plantilla "JWPLC Basic Remote I/O"** (`src/shared/slave/templates.ts`):
+  ID 2, 115200 8N1, 8 coils (Q0_0 a Q0_7) y 8 entradas (I0_0 a I0_7), sin
+  registros. Copia el mapa del firmware `JWPLC_RemoteIO_Slave_RTU` y sale del
+  preset que ya usa el master. Para imitar al equipo, las tablas ahora pueden
+  tener tamaño 0 y responden con la excepción 02.
+- **Fallas por dispositivo**: sin respuesta, CRC corrupto, excepción forzada
+  (01 a 04) y retardo de 0 a 60000 ms. Se configuran en la vista Simulador, se
+  muestran en la lista de dispositivos y en la columna "Falla" del tráfico, y
+  tienen su propio contador.
+- **Escenarios de la vista Pruebas**: el panel maqueta "Simulador slave" se
+  reemplazó por `src/renderer/ScenarioSimulatorLink.tsx`. Muestra el estado
+  real del simulador y, con la casilla activada, aplica la falla del escenario
+  (Normal: ninguna, Timeout: sin respuesta, CRC: CRC corrupto, Excepción:
+  excepción 02) a los slaves virtuales que usa el plan.
+- **Sesión**: los dispositivos virtuales (nombres, plantilla, señales, fallas y
+  valores) y el formato serial del simulador se guardan en la sección
+  `simulator` del archivo `.jwmodbus-session` y se restauran al abrirlo. Los
+  cambios de dispositivos y fallas marcan la sesión como "Modificada".
+- Nuevos canales IPC: `slave:setFaults`, `slave:exportDevices` y
+  `slave:importDevices`.
+- La configuración serial del simulador pasó a
+  `src/renderer/simulatorSettings.ts`, para compartirla con la sesión.
+- 15 tests nuevos (73 en total).
+
+### Por qué
+
+- Es la Fase 2 de `guia pasos.md`: probar el manejo de errores del master
+  (timeouts, CRC, excepciones) sin depender de un equipo que falle de verdad.
+
+### Problemas encontrados y corregidos
+
+- Las lecturas del master (FC01 a FC04) que recibían una respuesta con CRC
+  incorrecto fallaban con "Frame is not a valid ... response", y la vista
+  Pruebas las marcaba como "Error". Ahora devuelven `crcOk: false` y se ven como
+  "CRC Error" (`src/main/modbus/rtuMasterActions.ts`).
+- El código de excepción 04 (Slave Device Failure) no existía en el enum del
+  proyecto; se agregó (`src/shared/modbus/exceptions.ts`).
+- Una sesión con solo slaves virtuales aparecía como "Limpia"; ahora cuenta
+  como sesión con contenido.
+
+### Decisiones
+
+- "Nuevo" no borra los slaves virtuales, y una sesión sin sección `simulator`
+  tampoco los toca: el simulador es una herramienta en vivo y borrarlo sin
+  aviso sería destructivo.
+- Con la casilla de escenarios activada, el escenario manda sobre las fallas
+  configuradas a mano para los dispositivos del plan. Al dejar de estar en el
+  plan, un dispositivo vuelve a "Ninguna", no a su falla manual anterior.
+- Los cambios de valores no marcan la sesión como modificada, igual que antes
+  pasaba con las lecturas; sí se guardan al guardar.
+
+### Verificación
+
+- `npm test`: 73 tests pasan. Entre ellos, `tests/main/jwplcVirtualValidation.test.ts`
+  ejecuta la secuencia de validación JWPLC real del master contra el JWPLC
+  virtual y da PASS (primera parte del criterio de cierre de la Fase 2).
+- `npm run typecheck` y build sin errores.
+- En la app: plantilla JWPLC (ID 2 propuesto, nombres de señales, aviso de
+  115200 8N1, pestañas sin registros); panel de fallas; los cuatro escenarios
+  aplican y retiran la falla correcta; una sesión guardada restaura
+  dispositivos, valores, fallas y formato serial, y el estado pasa por
+  "Guardada", "Modificada" y "Guardada".
+- Falta verificar las fallas contra un master real por puerto: necesita el par
+  COM virtual (Prueba A2 de `docs/PLAN_PRUEBAS_SIMULADOR.md`).
+
+### Documentación
+
+- `docs/SLAVE_SIMULATOR.md`: plantillas, fallas, escenarios y sesión.
+- `docs/PLAN_PRUEBAS_SIMULADOR.md`: nueva Prueba A2 para la Fase 2.
+- `CHANGELOG.md` actualizado.
+
+### Pendiente
+
+- Ejecutar las Pruebas A y A2 con un par COM virtual.
+- Preparar `Simulador_Master_RS485.ino` para la prueba C2.
+- Fase 3: modo interno sin hardware.
+
 ## 2026-10-07 · Fase 1 del simulador slave
 
 Rama: `feature/slave-simulator`, creada desde `Revision-29/08` (commit `8ddc8a1`).
 
-**Qué se hizo**
+### Qué se hizo
 
 - Nueva vista **Simulador** en el menú lateral. El PC responde como uno o varios
   slaves Modbus RTU virtuales en su propio puerto COM. Permite editar coils y
@@ -52,7 +135,7 @@ Rama: `feature/slave-simulator`, creada desde `Revision-29/08` (commit `8ddc8a1`
   JWPLC actúa como master Modbus usando el USB como bus, para probar el
   simulador sin conversor RS-485.
 
-**Por qué**
+### Por qué
 
 - Pedido de jefatura: emular slaves (dispositivos virtuales) para probar
   masters, HMIs y PLCs sin el equipo físico. El plan completo en 3 fases está en
@@ -61,7 +144,7 @@ Rama: `feature/slave-simulator`, creada desde `Revision-29/08` (commit `8ddc8a1`
   al puerto serie ni a la interfaz; el panel "Simulador slave" de la vista
   Pruebas era solo una maqueta.
 
-**Problemas encontrados al probar la app y corregidos**
+### Problemas encontrados al probar la app y corregidos
 
 - Los contadores del simulador no se actualizaban mientras llegaba tráfico:
   el estado solo se emitía al iniciar o detener. Ahora se emite como máximo
@@ -72,7 +155,7 @@ Rama: `feature/slave-simulator`, creada desde `Revision-29/08` (commit `8ddc8a1`
 - Ajustes visuales: el contador "Excepciones" heredaba el fondo morado de la
   clase global `.purple`, y las columnas ID y Función del tráfico se cortaban.
 
-**Verificación**
+### Verificación
 
 - `npm test`: 58 tests pasan (39 anteriores y 19 nuevos).
 - `npm run typecheck` y build del proceso principal y del renderer sin errores.
@@ -85,27 +168,28 @@ Rama: `feature/slave-simulator`, creada desde `Revision-29/08` (commit `8ddc8a1`
 - Aún no se probó contra un master real: no había par COM virtual ni conversor
   RS-485 disponibles.
 
-**Documentación**
+### Documentación
 
 - `docs/SLAVE_SIMULATOR.md`: funcionamiento y arquitectura del simulador.
 - `docs/PLAN_PRUEBAS_SIMULADOR.md`: pruebas A (solo software), B (JWPLC por
   USB) y C (con conversor USB-RS485).
 - Actualizados `README.md`, `CHANGELOG.md` y `docs/SERIAL_LAYER.md`.
 
-**Pendiente**
+### Pendiente
 
 - Ejecutar las pruebas del plan y anotar los resultados. El criterio de cierre
   de la Fase 1 son 1.000 peticiones sin errores contra 2 slaves virtuales.
 - Preparar `Simulador_Master_RS485.ino` para la prueba C2.
 - Fase 2: plantilla JWPLC, inyección de fallas, conectar la tarjeta
   "Escenarios" de Pruebas y guardar los dispositivos virtuales en la sesión.
-- Commit de la Fase 1 (los cambios aún no están confirmados en git).
+
+Publicado en `origin/feature/slave-simulator` (commits `f7886e8` y `af342ea`).
 
 ## 2026-10-07 · Arranque de la app en desarrollo
 
 Rama: `Revision-29/08` (el cambio pasó sin commit a `feature/slave-simulator`).
 
-**Qué se hizo**
+### Qué se hizo
 
 - Se descargó el binario de Electron, que faltaba en `node_modules`. No cambia
   ningún archivo del repo; si vuelve a pasar, ejecutar
@@ -113,7 +197,7 @@ Rama: `Revision-29/08` (el cambio pasó sin commit a `feature/slave-simulator`).
 - `scripts/dev-runner.mjs` elimina la variable `ELECTRON_RUN_AS_NODE` antes de
   lanzar Electron.
 
-**Por qué**
+### Por qué
 
 - `npm run dev:electron` fallaba con `spawn ... electron.exe ENOENT`, porque la
   descarga del binario en la instalación no se completó.
@@ -121,6 +205,6 @@ Rama: `Revision-29/08` (el cambio pasó sin commit a `feature/slave-simulator`).
   esa variable, Electron arranca como Node y se cierra sin abrir ventana ni
   mostrar error.
 
-**Verificación**
+### Verificación
 
 - `npm run dev:electron` abre la ventana "JW Modbus Tool".

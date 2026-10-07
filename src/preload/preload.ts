@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld("jwModbus", {
     removeDevice: (unitId: unknown) => ipcRenderer.invoke("slave:removeDevice", unitId),
     getDevice: (unitId: unknown) => ipcRenderer.invoke("slave:getDevice", unitId),
     setValue: (request: unknown) => ipcRenderer.invoke("slave:setValue", request),
+    setFaults: (request: unknown) => ipcRenderer.invoke("slave:setFaults", request),
+    exportDevices: () => ipcRenderer.invoke("slave:exportDevices"),
+    importDevices: (devices: unknown) => ipcRenderer.invoke("slave:importDevices", devices),
     onEvent: (listener: (event: unknown) => void) => {
       const handler = (_event: unknown, payload: unknown) => listener(payload);
       ipcRenderer.on("slave:event", handler);

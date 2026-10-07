@@ -49,6 +49,10 @@ export async function readCoils(command: ReadCoilsCommand): Promise<RtuMasterAct
     });
   }
 
+  if (!parsed.crcOk) {
+    return buildBaseResult(command.unitId, transaction, "CRC error in response", undefined, parsed.functionCode);
+  }
+
   const decoded = decodeBitReadResponse(transaction.response, command.quantity);
   return buildBaseResult(
     command.unitId,
@@ -77,6 +81,10 @@ export async function readDiscreteInputs(
       exceptionCode: exception.exceptionCode,
       exceptionName: exception.exceptionName
     });
+  }
+
+  if (!parsed.crcOk) {
+    return buildBaseResult(command.unitId, transaction, "CRC error in response", undefined, parsed.functionCode);
   }
 
   const decoded = decodeBitReadResponse(transaction.response, command.quantity);
@@ -109,6 +117,10 @@ export async function readHoldingRegisters(
     });
   }
 
+  if (!parsed.crcOk) {
+    return buildBaseResult(command.unitId, transaction, "CRC error in response", undefined, parsed.functionCode);
+  }
+
   const decoded = decodeRegisterReadResponse(transaction.response);
   return buildBaseResult(
     command.unitId,
@@ -138,6 +150,10 @@ export async function readInputRegisters(
       exceptionCode: exception.exceptionCode,
       exceptionName: exception.exceptionName
     });
+  }
+
+  if (!parsed.crcOk) {
+    return buildBaseResult(command.unitId, transaction, "CRC error in response", undefined, parsed.functionCode);
   }
 
   const decoded = decodeRegisterReadResponse(transaction.response);

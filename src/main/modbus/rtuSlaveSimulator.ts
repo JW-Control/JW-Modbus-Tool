@@ -7,12 +7,15 @@ import { VirtualSlaveBus, type VirtualBusFrameResult } from "../../shared/modbus
 import type { NormalizedSerialPortConfig, SerialPortConfig } from "../../shared/serial/types.js";
 import type {
   AddVirtualDeviceRequest,
+  SetVirtualFaultsRequest,
   SetVirtualValueRequest,
   SlaveSimulatorCounters,
   SlaveSimulatorEvent,
   SlaveSimulatorState,
   SlaveTrafficEntry,
   SlaveTrafficResult,
+  VirtualDeviceConfig,
+  VirtualDeviceFaults,
   VirtualDeviceSnapshot
 } from "../../shared/slave/types.js";
 import { validateSerialPortConfig } from "../serial/serialManager.js";
@@ -59,6 +62,7 @@ export class RtuSlaveSimulator {
   private idleFlushMs = MIN_IDLE_FLUSH_MS;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private stateTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly delayedResponses = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(private readonly portFactory: SlavePortFactory = defaultPortFactory) {}
 
@@ -137,7 +141,23 @@ export class RtuSlaveSimulator {
   }
 
   addDevice(request: AddVirtualDeviceRequest): SlaveSimulatorState {
-    this.bus.addDevice(request.unitId, request.name, request.sizes);
+    this.bus.addDevice(request.unitId, request.name, request.sizes, request.template);
+    this.emitState();
+    return this.getState();
+  }
+
+  setFaults(request: SetVirtualFaultsRequest): SlaveSimulatorState {
+    this.bus.setFaults(request.unitId, request.faults ?? {});
+    this.emitState();
+    return this.getState();
+  }
+
+  exportDevices(): VirtualDeviceConfig[] {
+    return this.bus.exportDevices();
+  }
+
+  importDevices(devices: VirtualDeviceConfig[]): SlaveSimulatorState {
+    this.bus.replaceDevices(devices);
     this.emitState();
     return this.getState();
   }
@@ -192,16 +212,22 @@ export class RtuSlaveSimulator {
     if (trafficResult === "exception") this.counters.exceptions += 1;
     if (trafficResult === "crc-error") this.counters.crcErrors += 1;
     if (trafficResult === "ignored" || trafficResult === "frame-error") this.counters.ignored += 1;
+    if (result.fault) this.counters.faults += 1;
 
     const response = result.kind === "response" ? result.response : null;
 
     if (response) {
-      port.write(Buffer.from(response), (error) => {
-        if (error) {
-          this.lastError = error.message;
-          this.emitState();
-        }
-      });
+      const delayMs = result.fault?.delayMs ?? 0;
+
+      if (delayMs > 0) {
+        const timer = setTimeout(() => {
+          this.delayedResponses.delete(timer);
+          if (this.port === port) this.writeResponse(port, response);
+        }, delayMs);
+        this.delayedResponses.add(timer);
+      } else {
+        this.writeResponse(port, response);
+      }
     }
 
     const entry: SlaveTrafficEntry = {
@@ -212,7 +238,8 @@ export class RtuSlaveSimulator {
       request: formatHex(frame),
       response: response ? formatHex(response) : null,
       result: trafficResult,
-      summary: result.summary
+      summary: result.summary,
+      fault: result.fault ? describeFault(result.fault) : null
     };
 
     this.emit({ type: "traffic", entry });
@@ -235,8 +262,19 @@ export class RtuSlaveSimulator {
     }, STATE_EMIT_INTERVAL_MS);
   }
 
+  private writeResponse(port: SlavePort, response: Uint8Array): void {
+    port.write(Buffer.from(response), (error) => {
+      if (error) {
+        this.lastError = error.message;
+        this.emitState();
+      }
+    });
+  }
+
   private detachPort(): void {
     this.clearIdleTimer();
+    this.delayedResponses.forEach((timer) => clearTimeout(timer));
+    this.delayedResponses.clear();
     this.framer.flush();
     this.port = null;
   }
@@ -268,6 +306,8 @@ function classify(result: VirtualBusFrameResult): SlaveTrafficResult {
       return isExceptionFunctionCode(result.response[1]) ? "exception" : "response";
     case "broadcast":
       return "broadcast";
+    case "silenced":
+      return "silenced";
     case "ignored":
       if (result.reason === "crc-error") return "crc-error";
       if (result.reason === "frame-error") return "frame-error";
@@ -275,8 +315,19 @@ function classify(result: VirtualBusFrameResult): SlaveTrafficResult {
   }
 }
 
+function describeFault(faults: VirtualDeviceFaults): string {
+  const parts: string[] = [];
+
+  if (faults.mode === "no-response") parts.push("Sin respuesta");
+  if (faults.mode === "bad-crc") parts.push("CRC corrupto");
+  if (faults.mode === "exception") parts.push(`Excepción ${String(faults.exceptionCode).padStart(2, "0")}`);
+  if (faults.delayMs > 0 && faults.mode !== "no-response") parts.push(`Retardo ${faults.delayMs} ms`);
+
+  return parts.join(" · ") || "Sin falla";
+}
+
 function emptyCounters(): SlaveSimulatorCounters {
-  return { requests: 0, responses: 0, exceptions: 0, ignored: 0, crcErrors: 0 };
+  return { requests: 0, responses: 0, exceptions: 0, ignored: 0, crcErrors: 0, faults: 0 };
 }
 
 export const slaveSimulator = new RtuSlaveSimulator();

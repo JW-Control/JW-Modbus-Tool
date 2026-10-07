@@ -14,6 +14,15 @@ All notable changes to JW Modbus Tool will be documented in this file.
 - Slave simulator response core for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
 - Serial-backed slave simulator with several virtual devices per COM port, live value editing, traffic log, and counters.
 - RTU request framer that recovers from misaligned streams and foreign responses on a shared bus.
+- JWPLC Basic Remote I/O template for virtual devices, matching the real firmware map.
+- Per-device simulator faults: no response, corrupted CRC, forced exception (01 to 04), and response delay.
+- Tests view scenarios apply their fault to the virtual devices the plan targets.
+- Virtual devices and simulator serial settings saved in and restored from session files.
+- Exception code 04 (Slave Device Failure) recognized by the master.
+
+### Fixed
+
+- Master reads now report a corrupted response CRC as a CRC error instead of failing to decode the frame.
 - Serial port listing, validation, and basic Electron IPC open/close flow.
 - Persistent serial format, timeout, and last-port settings.
 - Minimal serial diagnostics panel for development.

@@ -32,7 +32,12 @@ import type {
   SaveMarkdownReportResult
 } from "../shared/report/types.js";
 import type { SerialPortConfig } from "../shared/serial/types.js";
-import type { AddVirtualDeviceRequest, SetVirtualValueRequest } from "../shared/slave/types.js";
+import type {
+  AddVirtualDeviceRequest,
+  SetVirtualFaultsRequest,
+  SetVirtualValueRequest,
+  VirtualDeviceConfig
+} from "../shared/slave/types.js";
 import type {
   OpenSessionFileRequest,
   OpenSessionFileResult,
@@ -98,6 +103,13 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("slave:setValue", async (_event, request: SetVirtualValueRequest) =>
     toSerialResult(async () => slaveSimulator.setValue(request))
+  );
+  ipcMain.handle("slave:setFaults", async (_event, request: SetVirtualFaultsRequest) =>
+    toSerialResult(async () => slaveSimulator.setFaults(request))
+  );
+  ipcMain.handle("slave:exportDevices", async () => toSerialResult(async () => slaveSimulator.exportDevices()));
+  ipcMain.handle("slave:importDevices", async (_event, devices: VirtualDeviceConfig[]) =>
+    toSerialResult(async () => slaveSimulator.importDevices(devices))
   );
   ipcMain.handle("modbus:readDiscreteInputs", async (_event, command: ReadDiscreteInputsCommand) =>
     toSerialResult(() => readDiscreteInputs(command))

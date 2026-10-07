@@ -68,7 +68,7 @@ describe("VirtualSlaveBus", () => {
 
     expect(() => bus.addDevice(1)).toThrow(/Ya existe/);
     expect(() => bus.addDevice(0)).toThrow(/entre 1 y 247/);
-    expect(() => bus.addDevice(2, undefined, { coils: 0 })).toThrow(/tamaño/);
+    expect(() => bus.addDevice(2, undefined, { coils: -1 })).toThrow(/tamaño/);
     expect(() => bus.setValue({ unitId: 1, table: "holdingRegisters", address: 10, value: 1 })).toThrow(/fuera/);
     expect(() => bus.setValue({ unitId: 1, table: "holdingRegisters", address: 0, value: 70000 })).toThrow(/65535/);
     expect(bus.getDevice(1)).toMatchObject({ name: "Slave virtual 1", sizes: { holdingRegisters: 10, coils: 64 } });

@@ -38,6 +38,8 @@ import {
   type TestsRuntimeState
 } from "./simple-tests-consolidated.js";
 import { SimulatorView } from "./SimulatorView.js";
+import { loadSimulatorSettings, normalizeSimulatorSettings, storeSimulatorSettings } from "./simulatorSettings.js";
+import type { SlaveSimulatorSessionConfig, VirtualDeviceSummary } from "../shared/slave/types.js";
 
 function JwplcIcon({ size = 32, className = "", strokeWidth = 1.5 }: { size?: number, className?: string, strokeWidth?: number }) {
   return (
@@ -117,6 +119,7 @@ interface SessionDocument {
   testsExecutionHistoryUpdatedAt?: string | null;
   registerMaps: unknown[];
   templates: unknown[];
+  simulator?: SlaveSimulatorSessionConfig | null;
 }
 interface RecentSession { id: string; name: string; savedAt: string; filePath: string; devices: number; registers: number; tests: string; errors: number; status: SessionState }
 
@@ -196,20 +199,28 @@ export function SimpleModeApp() {
   const [lastSavedSignature, setLastSavedSignature] = useState<string | null>(null);
   const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
   const [notes, setNotes] = useState("");
+  const [simulatorDevices, setSimulatorDevices] = useState<VirtualDeviceSummary[]>([]);
 
   const activeDevice = useMemo(
     () => (activeId === null ? null : devices.find((device) => device.id === activeId) ?? null),
     [activeId, devices]
   );
-  const currentSignature = useMemo(() => signatureFromState({ sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes }), [sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes]);
+  const currentSignature = useMemo(() => signatureFromState({ sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices }), [sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices]);
   const sessionState = useMemo<SessionState>(() => {
-    const isClean = devices.length === 0 && activity.length === 0 && stats.requests === 0 && testsExecutionHistory.length === 0 && notes.trim().length === 0;
+    const isClean = devices.length === 0 && activity.length === 0 && stats.requests === 0 && testsExecutionHistory.length === 0 && notes.trim().length === 0 && simulatorDevices.length === 0;
     if (isClean) return "Limpia";
     if (!sessionFilePath) return "Activa sin guardar";
     return lastSavedSignature === currentSignature ? "Guardada" : "Modificada";
-  }, [activity.length, currentSignature, devices.length, lastSavedSignature, notes, sessionFilePath, stats.requests, testsExecutionHistory.length]);
+  }, [activity.length, currentSignature, devices.length, lastSavedSignature, notes, sessionFilePath, stats.requests, testsExecutionHistory.length, simulatorDevices.length]);
 
   useEffect(() => { void initBackend(); }, []);
+  useEffect(() => {
+    if (!bridge?.slave) return;
+    void bridge.slave.getState().then((result) => { if (result.ok) setSimulatorDevices(result.value.devices); });
+    return bridge.slave.onEvent((event) => {
+      if (event.type === "state") setSimulatorDevices((current) => sameSimulatorDevices(current, event.state.devices) ? current : event.state.devices);
+    });
+  }, []);
   useEffect(() => { setRecentSessions(loadStoredRecentSessions()); }, []);
   useEffect(() => {
     const syncHistory = (event: Event) => {
@@ -347,8 +358,9 @@ export function SimpleModeApp() {
   async function saveSessionToFile(forceDialog: boolean) {
     if (!bridge?.sessions) return setMessage("Backend de sesiones no disponible.");
     const id = sessionId ?? `session-${Date.now()}`;
-    const document = createSessionDocument(id, sessionState);
     setBusy(true);
+    const simulator = await exportSimulatorConfig();
+    const document = createSessionDocument(id, sessionState, simulator);
     const result = await bridge.sessions.saveFile({ filePath: forceDialog ? null : sessionFilePath, defaultFileName: `${document.session.name}.jwmodbus-session`, data: document });
     setBusy(false);
     if (!result.ok) return setMessage(result.error);
@@ -373,7 +385,21 @@ export function SimpleModeApp() {
     upsertRecent(document, result.value.filePath, "Guardada");
   }
 
-  function createSessionDocument(id: string, status: SessionState): SessionDocument {
+  async function exportSimulatorConfig(): Promise<SlaveSimulatorSessionConfig | null> {
+    if (!bridge?.slave) return null;
+    const result = await bridge.slave.exportDevices();
+    if (!result.ok || result.value.length === 0) return null;
+    return { settings: loadSimulatorSettings(), devices: result.value };
+  }
+
+  async function restoreSimulatorConfig(config: SlaveSimulatorSessionConfig) {
+    if (!bridge?.slave) return;
+    const result = await bridge.slave.importDevices(config.devices);
+    if (!result.ok) return setMessage(`La sesión se abrió, pero no se pudieron cargar los slaves virtuales: ${result.error}`);
+    if (config.settings) storeSimulatorSettings(config.settings, true);
+  }
+
+  function createSessionDocument(id: string, status: SessionState, simulator: SlaveSimulatorSessionConfig | null): SessionDocument {
     const now = new Date().toISOString();
     const history = loadStoredTestsExecutionHistory();
     return {
@@ -393,7 +419,8 @@ export function SimpleModeApp() {
       testsExecutionHistory: history,
       testsExecutionHistoryUpdatedAt: history.length ? now : null,
       registerMaps: [],
-      templates: []
+      templates: [],
+      simulator
     };
   }
 
@@ -424,6 +451,8 @@ export function SimpleModeApp() {
     setTestsResetKey((value) => value + 1);
     setLastSavedSignature(signatureFromDocument(document));
     setMessage(`Sesión abierta: ${document.session.name}.`);
+    // Sessions without simulator data leave the current virtual devices as they are.
+    if (document.simulator) void restoreSimulatorConfig(document.simulator);
     setView("sessions");
   }
 
@@ -1144,6 +1173,7 @@ function signatureFromState(input: {
   testsRuntime: TestsRuntimeState | null;
   testsExecutionHistory: TestExecutionHistoryEntry[];
   notes: string;
+  simulatorDevices: VirtualDeviceSummary[];
 }) {
   return JSON.stringify({
     name: input.sessionName.trim() || "Nueva_sesion_Modbus",
@@ -1165,7 +1195,8 @@ function signatureFromState(input: {
     tests: input.tests,
     testsRuntime: input.testsRuntime,
     testsExecutionHistory: input.testsExecutionHistory,
-    notes: input.notes
+    notes: input.notes,
+    simulator: simulatorSignature(input.simulatorDevices)
   });
 }
 function signatureFromDocument(document: SessionDocument) {
@@ -1189,7 +1220,8 @@ function signatureFromDocument(document: SessionDocument) {
     tests: document.tests,
     testsRuntime: document.testsRuntime ?? null,
     testsExecutionHistory: document.testsExecutionHistory ?? [],
-    notes: document.session.notes
+    notes: document.session.notes,
+    simulator: simulatorSignature(document.simulator?.devices ?? [])
   });
 }
 function normalizeSessionDocument(data: unknown): SessionDocument | null {
@@ -1232,8 +1264,22 @@ function normalizeSessionDocument(data: unknown): SessionDocument | null {
     testsExecutionHistory: history,
     testsExecutionHistoryUpdatedAt: doc.testsExecutionHistoryUpdatedAt ?? null,
     registerMaps: doc.registerMaps ?? [],
-    templates: doc.templates ?? []
+    templates: doc.templates ?? [],
+    simulator: normalizeSimulatorSessionConfig(doc.simulator)
   };
+}
+// Only what the session file keeps; request counters change constantly and are not saved.
+function simulatorSignature(devices: Array<Pick<VirtualDeviceSummary, "unitId" | "name" | "template" | "faults">>) {
+  return devices.map(({ unitId, name, template, faults }) => ({ unitId, name, template, faults }));
+}
+function sameSimulatorDevices(left: VirtualDeviceSummary[], right: VirtualDeviceSummary[]) {
+  return JSON.stringify(simulatorSignature(left)) === JSON.stringify(simulatorSignature(right));
+}
+function normalizeSimulatorSessionConfig(data: unknown): SlaveSimulatorSessionConfig | null {
+  if (!data || typeof data !== "object") return null;
+  const config = data as Partial<SlaveSimulatorSessionConfig>;
+  if (!Array.isArray(config.devices) || config.devices.length === 0) return null;
+  return { settings: config.settings ? normalizeSimulatorSettings(config.settings) : null, devices: config.devices };
 }
 function createRecentSession(document: SessionDocument, filePath: string, status: SessionState): RecentSession { const testSummary = sessionTestSummary(document.testsRuntime ?? null, document.tests); return { id: document.session.id, name: document.session.name, savedAt: document.session.updatedAt, filePath, devices: document.devices.length, registers: storedRegisterReads(document.activity), tests: `${testSummary.passed}/${testSummary.total}`, errors: document.stats.errors + testSummary.failed, status }; }
 function normalizeTestsExecutionHistory(data: unknown): TestExecutionHistoryEntry[] {

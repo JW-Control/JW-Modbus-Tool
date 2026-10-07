@@ -147,6 +147,37 @@ describe("RtuSlaveSimulator", () => {
     expect(states[0].type === "state" && states[0].state.devices[0].requests).toBe(2);
   });
 
+  it("delays responses by the device's configured fault delay", async () => {
+    vi.useFakeTimers();
+    const { simulator, ports, events } = createSimulator();
+    simulator.addDevice({ unitId: 1 });
+    simulator.setFaults({ unitId: 1, faults: { delayMs: 300 } });
+    await simulator.start({ path: "COM10", baudRate: 9600 });
+
+    ports[0].receive(encodeReadCoilsRequest({ unitId: 1, startAddress: 0, quantity: 8 }));
+    vi.advanceTimersByTime(299);
+    expect(ports[0].written).toHaveLength(0);
+
+    vi.advanceTimersByTime(1);
+    expect(ports[0].written).toHaveLength(1);
+    expect(events.find((event) => event.type === "traffic")).toMatchObject({ entry: { result: "response", fault: "Retardo 300 ms" } });
+    expect(simulator.getState().counters.faults).toBe(1);
+  });
+
+  it("drops pending delayed responses when stopped", async () => {
+    vi.useFakeTimers();
+    const { simulator, ports } = createSimulator();
+    simulator.addDevice({ unitId: 1 });
+    simulator.setFaults({ unitId: 1, faults: { delayMs: 300 } });
+    await simulator.start({ path: "COM10", baudRate: 9600 });
+
+    ports[0].receive(encodeReadCoilsRequest({ unitId: 1, startAddress: 0, quantity: 8 }));
+    await simulator.stop();
+    vi.advanceTimersByTime(500);
+
+    expect(ports[0].written).toHaveLength(0);
+  });
+
   it("closes the port on stop and reports an unexpected close", async () => {
     const { simulator, ports } = createSimulator();
     await simulator.start({ path: "COM10", baudRate: 9600 });
@@ -235,7 +266,7 @@ describe("RtuSlaveSimulator", () => {
       check(response);
     }
 
-    expect(simulator.getState().counters).toEqual({ requests: 1000, responses: 1000, exceptions: 0, ignored: 0, crcErrors: 0 });
+    expect(simulator.getState().counters).toEqual({ requests: 1000, responses: 1000, exceptions: 0, ignored: 0, crcErrors: 0, faults: 0 });
     await simulator.stop();
   });
 });

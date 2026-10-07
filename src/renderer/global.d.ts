@@ -26,9 +26,11 @@ import type {
 } from "../shared/serial/types.js";
 import type {
   AddVirtualDeviceRequest,
+  SetVirtualFaultsRequest,
   SetVirtualValueRequest,
   SlaveSimulatorEvent,
   SlaveSimulatorState,
+  VirtualDeviceConfig,
   VirtualDeviceSnapshot
 } from "../shared/slave/types.js";
 import type {
@@ -95,6 +97,9 @@ declare global {
         removeDevice: (unitId: number) => Promise<SerialOperationResult<SlaveSimulatorState>>;
         getDevice: (unitId: number) => Promise<SerialOperationResult<VirtualDeviceSnapshot>>;
         setValue: (request: SetVirtualValueRequest) => Promise<SerialOperationResult<VirtualDeviceSnapshot>>;
+        setFaults: (request: SetVirtualFaultsRequest) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        exportDevices: () => Promise<SerialOperationResult<VirtualDeviceConfig[]>>;
+        importDevices: (devices: VirtualDeviceConfig[]) => Promise<SerialOperationResult<SlaveSimulatorState>>;
         onEvent: (listener: (event: SlaveSimulatorEvent) => void) => () => void;
       };
       sessions: {

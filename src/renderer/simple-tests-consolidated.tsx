@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, Activity, AlertTriangle, ListOrdered } from "lucide-react";
+import { ScenarioSimulatorLink } from "./ScenarioSimulatorLink.js";
 
 export type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc5" | "fc6" | "fc15" | "fc16" | "delay";
 export type Result = "Pendiente" | "Ejecutando" | "Aprobado" | "Timeout" | "CRC Error" | "Excepcion" | "Validacion fallida" | "Error";
@@ -1678,7 +1679,7 @@ export function TestsView({ activeSlaveId, port, baud, runtimeState, resetKey, o
 
       <div className="testsSide">
         {state.managingScenarios ? <ScenarioManager state={state} setState={setState} savePlan={savePlanToScenario} defaultSlave={defaultSlave} /> : <ScenariosPanel state={state} selectScenario={selectScenario} setState={setState} />}
-        <SimulatorPanel state={state} setState={setState} port={port} baud={baud} />
+        <ScenarioSimulatorLink scenarioId={state.selectedScenario} scenarioName={state.scenarios[state.selectedScenario]?.name ?? state.selectedScenario} planSlaves={state.steps.filter((step) => step.enabled && step.fn !== "delay").map((step) => Number(step.slave))} onMessage={onMessage} />
       </div>
 
       <div className="testsKpis">
@@ -2546,10 +2547,6 @@ function ScenarioManager({ state, setState, savePlan, defaultSlave }: { state: T
       <button className="primary" onClick={() => setState((current) => ({ ...current, managingScenarios: false }))}>Guardar y volver</button>
     </section>
   );
-}
-
-function SimulatorPanel({ state, setState, port, baud }: { state: TestsState; setState: Dispatch<SetStateAction<TestsState>>; port: string; baud: number }) {
-  return <section className="card testsSimulatorCard"><h2>Simulador slave <small>(PC como slave)</small></h2><label>Estado<input disabled value={state.simulatorState} /></label><label>Direccion slave<input inputMode="numeric" defaultValue="1" /></label><label>Puerto<input disabled value={port || "Sin puerto"} /></label><label>Baud Rate<input disabled value={String(baud)} /></label><button className="purple" onClick={() => setState((current) => ({ ...current, simulatorState: current.simulatorState === "Detenido" ? "Preparado" : "Detenido" }))}>{state.simulatorState === "Detenido" ? "Preparar" : "Detener"} simulador slave</button><button disabled>Configurar</button></section>;
 }
 
 function KpiRingCard({ title, value, sub, tone, percent }: { title: string; value: string; sub: string; tone: "success" | "steps"; percent: number }) {

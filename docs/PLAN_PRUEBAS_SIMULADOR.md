@@ -77,6 +77,63 @@ del lado de la app.
 Simulador, "Respondidas" debe ser igual a las peticiones del ID 2, con 0 errores
 de CRC. En Dispositivos, ninguna lectura debe terminar en timeout.
 
+## Prueba A2: Fase 2 (plantilla, fallas, escenarios y sesión)
+
+Usa el mismo montaje de la Prueba A (par COM virtual, master en `COM11`,
+simulador en `COM10`).
+
+### Plantilla JWPLC
+
+1. Vista **Simulador**: elimina los dispositivos, elige la plantilla
+   "JWPLC Basic Remote I/O" y pulsa **Agregar**. Debe proponer el ID 2 y avisar
+   que el equipo real usa 115200 8N1; pulsa **Usar ese formato**.
+2. Con el simulador detenido, ajusta también el master (vista Dispositivos) a
+   115200 8N1. Inicia el simulador, conecta el master y escanea.
+
+- [ ] El escaneo detecta el ID 2 (responde con excepción 02, porque no tiene registros, igual que el equipo real).
+- [ ] La tabla de coils muestra los nombres Q0_0 a Q0_7, y la de entradas, I0_0 a I0_7.
+- [ ] En Registros, FC01 desde 0 con cantidad 8 lee las coils; al encender Q0_3 en el Simulador se ve en la siguiente lectura.
+- [ ] Las pestañas Holding e Input registers avisan que el dispositivo no tiene registros.
+
+### Fallas (vista Simulador)
+
+Agrega un dispositivo Genérico con ID 1 y, desde Registros, lee FC03 en 40000
+del ID 1 tras cada cambio:
+
+- [ ] Modo "Sin respuesta": la lectura termina en timeout y el tráfico del simulador muestra "Sin respuesta".
+- [ ] Modo "CRC corrupto": la lectura termina en "CRC Error".
+- [ ] Modo "Excepción forzada" con código 04: la lectura muestra la excepción "Slave Device Failure".
+- [ ] Retardo de 500 ms con modo "Ninguna": la lectura responde con unos 500 ms más de tiempo.
+- [ ] Retardo de 1500 ms con timeout del master de 1000 ms: la lectura termina en timeout.
+- [ ] El contador "Fallas" sube con cada respuesta alterada.
+
+### Escenarios (vista Pruebas)
+
+Usa el ID 1 Genérico como slave activo, para que el plan por defecto tenga
+registros disponibles. Con la casilla "Aplicar el escenario a los slaves
+virtuales" activada:
+
+- [ ] "Operación normal": los 8 pasos quedan aprobados.
+- [ ] "Error CRC detectado": la tarjeta indica "CRC corrupto" y los pasos terminan en "CRC Error".
+- [ ] "Excepción Modbus": la tarjeta indica "Excepción 02 forzada" y los pasos terminan en "Excepcion".
+- [ ] "Timeout detectado": el plan apunta a otro ID; si no existe en el simulador, o si existe y queda "Sin respuesta", los pasos terminan en "Timeout".
+- [ ] Al volver a "Operación normal" o desactivar la casilla, los dispositivos quedan sin falla.
+
+### Sesión
+
+1. Con dispositivos, valores y alguna falla configurados, guarda la sesión.
+2. Cambia algo (por ejemplo, borra un dispositivo): la barra de estado debe
+   pasar a "Modificada".
+3. Abre otra vez la sesión guardada.
+
+- [ ] Vuelven los mismos dispositivos, con sus nombres, plantilla, valores y fallas.
+- [ ] El formato serial del simulador vuelve al que tenía al guardar.
+
+**Criterio de cierre de la Fase 2:** la secuencia de validación JWPLC de la app
+da PASS contra el JWPLC virtual (verificado por test automático:
+`tests/main/jwplcVirtualValidation.test.ts`), y cada falla produce el resultado
+esperado en las comprobaciones de arriba.
+
 ## Prueba B: JWPLC como master por USB (hoy, opcional)
 
 El sketch convierte al JWPLC en master Modbus y usa el USB (COM3) como bus. No
@@ -88,8 +145,9 @@ imprime nada por `Serial`, porque `Serial` es el bus.
    JWPLC (placa JWPLC Basic).
 2. Cierra el Monitor Serie del IDE de Arduino, porque bloquea el COM3.
 3. En la app, si **Dispositivos** está conectado a COM3, desconéctalo.
-4. Vista **Simulador**: puerto `COM3`, 9600 8N1, agrega ID 1 e ID 2 y pulsa
-   **Iniciar simulador**.
+4. Vista **Simulador**: puerto `COM3`, 9600 8N1, agrega ID 1 e ID 2 con la
+   plantilla Genérico y pulsa **Iniciar simulador**. No uses la plantilla
+   JWPLC aquí: el sketch también lee y escribe registros.
 
 **Resultados esperados**
 
@@ -147,6 +205,7 @@ Es el montaje que reemplaza a la Prueba B con cableado real.
 | Prueba | Fecha | Peticiones | Errores CRC | Timeouts | Resultado | Notas |
 | --- | --- | --- | --- | --- | --- | --- |
 | A. Solo software | | | | | Pendiente | |
+| A2. Fase 2 | | | | | Pendiente | |
 | B. JWPLC por USB | | | | | Pendiente | |
 | C1. App lee al JWPLC | | | | | Pendiente | |
 | C2. JWPLC lee al simulador | | | | | Pendiente | |
