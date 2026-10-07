@@ -25,6 +25,13 @@ import type {
   SerialPortDescriptor
 } from "../shared/serial/types.js";
 import type {
+  AddVirtualDeviceRequest,
+  SetVirtualValueRequest,
+  SlaveSimulatorEvent,
+  SlaveSimulatorState,
+  VirtualDeviceSnapshot
+} from "../shared/slave/types.js";
+import type {
   OpenSessionFileRequest,
   OpenSessionFileResult,
   SaveSessionFileRequest,
@@ -79,6 +86,16 @@ declare global {
         runJwplcValidation: (
           command: ValidationSequenceCommand
         ) => Promise<SerialOperationResult<ValidationSequenceResult>>;
+      };
+      slave: {
+        getState: () => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        start: (config: SerialPortConfig) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        stop: () => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        addDevice: (request: AddVirtualDeviceRequest) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        removeDevice: (unitId: number) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        getDevice: (unitId: number) => Promise<SerialOperationResult<VirtualDeviceSnapshot>>;
+        setValue: (request: SetVirtualValueRequest) => Promise<SerialOperationResult<VirtualDeviceSnapshot>>;
+        onEvent: (listener: (event: SlaveSimulatorEvent) => void) => () => void;
       };
       sessions: {
         saveFile: (

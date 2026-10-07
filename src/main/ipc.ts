@@ -13,6 +13,7 @@ import {
   writeSingleCoil,
   writeSingleRegister
 } from "./modbus/rtuMasterActions.js";
+import { slaveSimulator } from "./modbus/rtuSlaveSimulator.js";
 import { serialManager, toSerialResult } from "./serial/serialManager.js";
 import type {
   ReadCoilsCommand,
@@ -31,6 +32,7 @@ import type {
   SaveMarkdownReportResult
 } from "../shared/report/types.js";
 import type { SerialPortConfig } from "../shared/serial/types.js";
+import type { AddVirtualDeviceRequest, SetVirtualValueRequest } from "../shared/slave/types.js";
 import type {
   OpenSessionFileRequest,
   OpenSessionFileResult,
@@ -60,9 +62,43 @@ export function registerIpcHandlers(): void {
     toSerialResult(async () => serialManager.getConnectionState())
   );
   ipcMain.handle("serial:open", async (_event, config: SerialPortConfig) =>
-    toSerialResult(() => serialManager.open(config))
+    toSerialResult(async () => {
+      const simulatorPath = slaveSimulator.getState().config?.path;
+      if (simulatorPath && samePortPath(simulatorPath, config?.path)) {
+        throw new Error(`${simulatorPath} está ocupado por el simulador slave. Usa otro puerto para el master.`);
+      }
+      return serialManager.open(config);
+    })
   );
   ipcMain.handle("serial:close", async () => toSerialResult(() => serialManager.close()));
+  slaveSimulator.onEvent((event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("slave:event", event);
+    }
+  });
+  ipcMain.handle("slave:getState", async () => toSerialResult(async () => slaveSimulator.getState()));
+  ipcMain.handle("slave:start", async (_event, config: SerialPortConfig) =>
+    toSerialResult(async () => {
+      const master = serialManager.getConnectionState();
+      if (master.connected && master.config && samePortPath(master.config.path, config?.path)) {
+        throw new Error(`${master.config.path} está abierto como master. Desconéctalo o elige otro puerto para el simulador.`);
+      }
+      return slaveSimulator.start(config);
+    })
+  );
+  ipcMain.handle("slave:stop", async () => toSerialResult(() => slaveSimulator.stop()));
+  ipcMain.handle("slave:addDevice", async (_event, request: AddVirtualDeviceRequest) =>
+    toSerialResult(async () => slaveSimulator.addDevice(request))
+  );
+  ipcMain.handle("slave:removeDevice", async (_event, unitId: number) =>
+    toSerialResult(async () => slaveSimulator.removeDevice(unitId))
+  );
+  ipcMain.handle("slave:getDevice", async (_event, unitId: number) =>
+    toSerialResult(async () => slaveSimulator.getDevice(unitId))
+  );
+  ipcMain.handle("slave:setValue", async (_event, request: SetVirtualValueRequest) =>
+    toSerialResult(async () => slaveSimulator.setValue(request))
+  );
   ipcMain.handle("modbus:readDiscreteInputs", async (_event, command: ReadDiscreteInputsCommand) =>
     toSerialResult(() => readDiscreteInputs(command))
   );
@@ -184,6 +220,10 @@ export function registerIpcHandlers(): void {
       };
     })
   );
+}
+
+function samePortPath(left: string, right: unknown): boolean {
+  return typeof right === "string" && left.trim().toUpperCase() === right.trim().toUpperCase();
 }
 
 function assertMarkdown(markdown: unknown): asserts markdown is string {

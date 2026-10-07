@@ -29,6 +29,22 @@ contextBridge.exposeInMainWorld("jwModbus", {
     writeMultipleRegisters: (command: unknown) => ipcRenderer.invoke("modbus:writeMultipleRegisters", command),
     runJwplcValidation: (command: unknown) => ipcRenderer.invoke("modbus:runJwplcValidation", command)
   },
+  slave: {
+    getState: () => ipcRenderer.invoke("slave:getState"),
+    start: (config: unknown) => ipcRenderer.invoke("slave:start", config),
+    stop: () => ipcRenderer.invoke("slave:stop"),
+    addDevice: (request: unknown) => ipcRenderer.invoke("slave:addDevice", request),
+    removeDevice: (unitId: unknown) => ipcRenderer.invoke("slave:removeDevice", unitId),
+    getDevice: (unitId: unknown) => ipcRenderer.invoke("slave:getDevice", unitId),
+    setValue: (request: unknown) => ipcRenderer.invoke("slave:setValue", request),
+    onEvent: (listener: (event: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => listener(payload);
+      ipcRenderer.on("slave:event", handler);
+      return () => {
+        ipcRenderer.removeListener("slave:event", handler);
+      };
+    }
+  },
   sessions: {
     saveFile: (request: unknown) => ipcRenderer.invoke("session:saveFile", request),
     openFile: (request?: unknown) => ipcRenderer.invoke("session:openFile", request)

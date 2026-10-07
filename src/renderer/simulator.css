@@ -1,0 +1,215 @@
+/* Vista Simulador slave */
+.simulator.grid {
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.simulator .card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.simulator .card > header small {
+  color: var(--muted);
+}
+
+.simConfig { grid-column: 1; grid-row: 1; }
+.simDevices { grid-column: 1; grid-row: 2; overflow: auto; }
+.simMemory { grid-column: 2; grid-row: 1; max-height: 520px; }
+.simTraffic { grid-column: 2; grid-row: 2; }
+
+.simConfig h2 { color: #dd85ff; }
+
+.simBadge {
+  border: 1px solid #8aa0ad70;
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: var(--muted);
+  font-size: .78rem;
+  white-space: nowrap;
+}
+
+.simBadge.on {
+  border-color: #58e56a99;
+  background: #40d84d2b;
+  color: #8fff98;
+}
+
+.simFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+
+.simFields label,
+.simAddForm label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: .8rem;
+}
+
+.simFields label:first-child { grid-column: 1 / 3; }
+
+.simPortRow {
+  display: grid;
+  grid-template-columns: 1fr 38px;
+  gap: 6px;
+}
+
+.simPortRow button { padding: 0; }
+
+.simConfig > button {
+  margin-top: 12px;
+  min-height: 40px;
+}
+
+.simStop {
+  border-color: #ff525299;
+  background: #ff52521f;
+  color: #ffb3b3;
+}
+
+.simWarn {
+  border-color: #ffab2555 !important;
+  background: #ffab2512 !important;
+  color: var(--orange) !important;
+}
+
+.simCounters {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.simCounter {
+  display: grid;
+  gap: 2px;
+  border: 1px solid #2d5c75;
+  border-radius: 7px;
+  padding: 6px;
+  background: #071d30;
+  text-align: center;
+}
+
+.simCounter span { color: var(--muted); font-size: .66rem; }
+.simCounter strong { font-size: 1.1rem; color: var(--cyan); }
+.simCounter.tone-ok strong { color: var(--green); }
+.simCounter.tone-bad strong { color: var(--red); }
+.simCounter.tone-purple strong { color: var(--purple); }
+
+.simDeviceList {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.simDeviceList article {
+  display: grid;
+  grid-template-columns: 56px 1fr 32px;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #2d5c75;
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: #ffffff04;
+  cursor: pointer;
+}
+
+.simDeviceList article.active {
+  border-color: var(--cyan);
+  background: #00bfff12;
+}
+
+.simDeviceList b { color: var(--cyan); }
+.simDeviceList span { display: grid; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.iconOnly {
+  min-height: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.iconOnly:hover { color: var(--red); }
+
+.simAddForm {
+  display: grid;
+  grid-template-columns: 64px 1fr 64px;
+  gap: 8px;
+  align-items: end;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #2d5c7580;
+}
+
+.simAddForm button { grid-column: 1 / 4; }
+
+.simTabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border: 1px solid #2d5c75;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.simTabs button {
+  flex-direction: column;
+  gap: 2px;
+  min-height: 48px;
+  border: 0;
+  border-right: 1px solid #2d5c75;
+  border-radius: 0;
+  background: transparent;
+}
+
+.simTabs button:last-child { border-right: 0; }
+.simTabs button.active { background: #00bfff1c; color: var(--cyan); }
+.simTabs small { font-weight: 500; }
+
+.simValues,
+.simTrafficTable {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #2d5c75;
+  border-radius: 8px;
+}
+
+.simValues .head,
+.simTrafficTable .head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #0b2740;
+}
+
+.simRow { grid-template-columns: 1fr .7fr 1fr .8fr; }
+.simRow .bitChip { min-height: 24px; }
+
+.simRegInput {
+  min-height: 28px;
+  max-width: 120px;
+}
+
+.simTrafficRow { grid-template-columns: 110px 52px 76px 1.3fr 1.3fr 110px; }
+
+.mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: .8rem;
+}
+
+.simResult.response { color: var(--green); }
+.simResult.exception { color: var(--purple); }
+.simResult.broadcast { color: var(--cyan); }
+.simResult.ignored { color: var(--muted); }
+.simResult.crc-error,
+.simResult.frame-error { color: var(--orange); }
+
+.simulator .note svg { flex-shrink: 0; }
