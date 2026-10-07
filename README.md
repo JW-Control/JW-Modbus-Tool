@@ -16,8 +16,9 @@ This repository is in the first implementation step. It currently includes:
 - Master request encoders for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
 - Slave simulator response core for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
 - Simulator view: the PC answers as one or more virtual RTU slaves on its own
-  COM port, with live value editing and a traffic log. See
-  `docs/SLAVE_SIMULATOR.md`.
+  COM port, with live value editing, a traffic log, a JWPLC device template,
+  and configurable faults. User guide (Spanish): `docs/GUIA_USO_SIMULADOR.md`;
+  technical notes: `docs/SLAVE_SIMULATOR.md`.
 - Serial port listing and basic connect/disconnect IPC through Electron main.
 - Persistent serial settings for baudrate, data bits, parity, stop bits,
   response timeout, and last selected COM port.

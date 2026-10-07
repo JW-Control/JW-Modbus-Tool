@@ -126,7 +126,8 @@ este proyecto.
 Con dos adaptadores USB-RS485, une A con A y B con B, y usa un adaptador para
 cada rol.
 
-El paso a paso de todas las pruebas está en `PLAN_PRUEBAS_SIMULADOR.md`.
+La guía para usuarios está en `GUIA_USO_SIMULADOR.md`, y el paso a paso de
+todas las pruebas, en `PLAN_PRUEBAS_SIMULADOR.md`.
 
 ## Pendiente
 

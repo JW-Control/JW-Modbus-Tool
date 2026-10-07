@@ -27,6 +27,33 @@ Rama: `nombre-de-rama`
 
 ---
 
+## 2026-10-07 · Guía de uso del simulador
+
+Rama: `feature/slave-simulator`.
+
+### Qué se hizo
+
+- Nueva guía `docs/GUIA_USO_SIMULADOR.md`: qué hace el simulador, si hace falta
+  hardware, inicio rápido con un par COM virtual, cada parte de la vista
+  Simulador, plantilla JWPLC, fallas, escenarios de Pruebas, guardado en la
+  sesión y problemas comunes.
+- La guía incluye, como paso para más adelante, cómo usar un conversor
+  USB-RS485: driver, cableado A/B, configuración, bus mixto y el problema del
+  eco de algunos conversores.
+- Enlaces a la guía desde `README.md` y `docs/SLAVE_SIMULATOR.md`.
+
+### Por qué
+
+- Hacía falta una guía para usar el simulador, no solo la documentación técnica
+  y el plan de pruebas.
+- Queda claro que las Fases 1 y 2 no necesitan hardware: basta un par COM
+  virtual. El conversor USB-RS485 solo hace falta para probar un bus real.
+
+### Pendiente
+
+- Probar la guía siguiendo el inicio rápido con un par COM virtual.
+- Preparar `Simulador_Master_RS485.ino` para el montaje con conversor.
+
 ## 2026-10-07 · Fase 2 del simulador slave
 
 Rama: `feature/slave-simulator`, sobre la Fase 1 publicada (`af342ea`).
