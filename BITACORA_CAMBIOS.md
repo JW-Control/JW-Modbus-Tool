@@ -27,6 +27,49 @@ Rama: `nombre-de-rama`
 
 ---
 
+## 2026-11-12 · Eco del conversor USB-RS485 y pruebas con JWPLC Sim
+
+Rama: `feature/eco-conversor-jwplc-sim`, sobre `feature/slave-simulator` (`86e7a1b`).
+
+### Qué se hizo
+
+- Ajuste "Eco del conversor" (Automático por defecto, Sin eco, Con eco) en
+  Dispositivos (master) y en el Simulador; se guarda en la sesión y en los
+  ajustes del simulador. Lógica en `src/shared/serial/echoFilter.ts`.
+- Master: descarta el eco antes de leer la respuesta. FC5 y FC6, cuya
+  respuesta es igual a la petición, usan lo aprendido de las otras funciones o
+  esperan 120 ms de silencio si aún no se sabe.
+- Simulador slave: descarta el eco de su propia respuesta (contador "Ecos
+  descartados") y espera hasta 150 ms el resto de una petición incompleta.
+- Prueba contra JWPLC Sim: `scripts/sim/` (puente pty ↔ bus del Sim con eco
+  opcional, master y slave del Tool) y los sketches `Slave_JWSim_8FC` y
+  `Master_JWSim_8FC`. Guía y resultados en `docs/PRUEBAS_JWPLC_SIM.md`.
+
+### Por qué
+
+- Con un conversor con eco, el master tomaba el eco como respuesta: lecturas
+  con CRC inválido y FC5/FC6 aprobadas sin respuesta real. El simulador se
+  contestaba a sí mismo y llenaba el bus (12.023 "peticiones" en 20 s).
+- El bus del Sim (y algunos adaptadores USB) entrega una trama en dos partes
+  separadas por unos 40 ms; el simulador la descartaba a los 20 ms.
+
+### Verificación
+
+- `npm test`: 100 tests pasan (82 anteriores y 18 nuevos). `npm run build` sin errores.
+- Master del Tool contra JWPLC Sim, 8 funciones × 50 vueltas: 400/400 sin eco
+  y 400/400 con eco (antes, con eco: 100/400).
+- JWPLC Sim como master contra el simulador del Tool, 30 s: 803/803 sin eco y
+  815/815 con eco, 0 errores.
+- El selector se vio en la vista Dispositivos (vista previa del navegador).
+  La vista Simulador solo carga dentro de Electron y no se abrió en esta prueba.
+
+### Pendiente
+
+- Prueba corta en el taller con el conversor real (ZK-U485) para los tiempos
+  USB de Windows y el cableado.
+- Repetir con el equipo "Conversor USB a RS-485 (PC)" de JWPLC Sim (jwplc-sim
+  PR #29, opción `--eco` de `jwsim-bus`) cuando se fusione.
+
 ## 2026-10-07 · Prueba con el JWPLC real: dos masters y varios slaves
 
 Rama: `feature/slave-simulator`.

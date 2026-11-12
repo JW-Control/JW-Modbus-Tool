@@ -1,3 +1,4 @@
+import type { EchoMode } from "../serial/echoFilter.js";
 import type { NormalizedSerialPortConfig, SerialDataBits, SerialParity, SerialStopBits } from "../serial/types.js";
 
 export type SlaveTable = "coils" | "discreteInputs" | "holdingRegisters" | "inputRegisters";
@@ -59,6 +60,7 @@ export interface SlaveSimulatorSettings {
   dataBits: SerialDataBits;
   parity: SerialParity;
   stopBits: SerialStopBits;
+  echo: EchoMode;
 }
 
 export interface SlaveSimulatorSessionConfig {
@@ -73,6 +75,8 @@ export interface SlaveSimulatorCounters {
   ignored: number;
   crcErrors: number;
   faults: number;
+  /** Echoes of our own responses dropped (USB-RS485 converter with echo). */
+  echoesDiscarded: number;
 }
 
 export interface SlaveSimulatorState {
@@ -82,6 +86,8 @@ export interface SlaveSimulatorState {
   devices: VirtualDeviceSummary[];
   counters: SlaveSimulatorCounters;
   lastError?: string;
+  /** What `auto` echo mode learned about the converter; undefined = not yet known. */
+  echoDetected?: boolean;
 }
 
 export type SlaveTrafficResult =

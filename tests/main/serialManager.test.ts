@@ -49,7 +49,8 @@ describe("serialManager", () => {
       dataBits: 8,
       parity: "none",
       stopBits: 1,
-      lock: true
+      lock: true,
+      echo: "auto"
     });
   });
 

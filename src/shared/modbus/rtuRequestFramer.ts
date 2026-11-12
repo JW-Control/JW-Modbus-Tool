@@ -55,6 +55,30 @@ export class RtuRequestFramer {
     return this.buffer.length;
   }
 
+  /**
+   * True when the pending bytes are the start of a request with a known
+   * function code that is still missing bytes. The owner can then wait longer
+   * before `flush()`: USB adapters and virtual ports may pause in mid-frame.
+   */
+  get awaitingRestOfFrame(): boolean {
+    if (this.buffer.length < 2) {
+      return this.buffer.length === 1;
+    }
+
+    const functionCode = this.buffer[1];
+    const known =
+      functionCode === FunctionCode.WriteMultipleCoils ||
+      functionCode === FunctionCode.WriteMultipleRegisters ||
+      expectedRtuRequestLength(this.buffer) !== null;
+
+    if (!known) {
+      return false;
+    }
+
+    const expectedLength = expectedRtuRequestLength(this.buffer);
+    return expectedLength === null || this.buffer.length < expectedLength;
+  }
+
   push(chunk: Uint8Array): Uint8Array[] {
     this.buffer = concatBytes(this.buffer, chunk);
     const frames: Uint8Array[] = [];

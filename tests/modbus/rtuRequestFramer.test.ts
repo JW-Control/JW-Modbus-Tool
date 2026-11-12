@@ -79,3 +79,18 @@ describe("RtuRequestFramer", () => {
     expect(framer.flush()).toBeNull();
   });
 });
+
+describe("RtuRequestFramer.awaitingRestOfFrame", () => {
+  it("is true only for an incomplete request with a known function code", () => {
+    const framer = new RtuRequestFramer();
+    expect(framer.awaitingRestOfFrame).toBe(false);
+    framer.push(Uint8Array.from([0x02, 0x10, 0x00, 0x02, 0x00, 0x03, 0x06, 0x00]));
+    expect(framer.awaitingRestOfFrame).toBe(true);
+    framer.flush();
+    framer.push(Uint8Array.from([0x02, 0x10, 0x00]));
+    expect(framer.awaitingRestOfFrame).toBe(true);
+    framer.flush();
+    framer.push(Uint8Array.from([0xff, 0x9c, 0xb6]));
+    expect(framer.awaitingRestOfFrame).toBe(false);
+  });
+});

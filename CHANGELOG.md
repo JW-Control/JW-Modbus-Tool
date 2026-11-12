@@ -6,6 +6,8 @@ All notable changes to JW Modbus Tool will be documented in this file.
 
 ### Added
 
+- USB-RS485 converter echo handling ("Eco del conversor": Automático, Sin eco, Con eco) in the master and in the slave simulator; the simulator counts discarded echoes.
+- JWPLC Sim integration: pty bridge with optional echo, master and slave test scripts, and the `Slave_JWSim_8FC` / `Master_JWSim_8FC` sketches (docs/PRUEBAS_JWPLC_SIM.md).
 - Initial Electron, TypeScript, React, and Vite project skeleton.
 - Clean-room Modbus RTU shared engine foundation.
 - CRC16/Modbus implementation.
@@ -45,4 +47,5 @@ All notable changes to JW Modbus Tool will be documented in this file.
 
 ### Fixed
 
+- The slave simulator waits up to 150 ms for the rest of a request that pauses in mid-frame instead of dropping it after 20 ms.
 - Master reads now report a corrupted response CRC as a CRC error instead of failing to decode the frame.

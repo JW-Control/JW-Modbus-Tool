@@ -138,13 +138,34 @@ describe("RtuSlaveSimulator", () => {
     simulator.addDevice({ unitId: 1 });
     await simulator.start({ path: "COM10", baudRate: 9600 });
 
-    ports[0].receive(Uint8Array.of(0x01, 0x03, 0x00));
-    expect(simulator.getState().counters.requests).toBe(0);
-
+    // Not a request: released after the short idle time.
+    ports[0].receive(Uint8Array.of(0xff, 0x9c, 0xb6));
     vi.advanceTimersByTime(25);
-
     expect(simulator.getState().counters).toMatchObject({ requests: 1, ignored: 1 });
+
+    // The start of an FC3 request: given more time before it is dropped.
+    ports[0].receive(Uint8Array.of(0x01, 0x03, 0x00));
+    vi.advanceTimersByTime(25);
+    expect(simulator.getState().counters.requests).toBe(1);
+
+    vi.advanceTimersByTime(150);
+
+    expect(simulator.getState().counters).toMatchObject({ requests: 2, ignored: 2 });
     expect(ports[0].written).toEqual([]);
+  });
+
+  it("completes a request whose bytes pause in mid-frame", async () => {
+    vi.useFakeTimers();
+    const { simulator, ports } = createSimulator();
+    simulator.addDevice({ unitId: 1 });
+    await simulator.start({ path: "COM10", baudRate: 115200 });
+    const request = encodeReadCoilsRequest({ unitId: 1, startAddress: 0, quantity: 8 });
+
+    ports[0].receive(request.slice(0, 6));
+    vi.advanceTimersByTime(40);
+    ports[0].receive(request.slice(6));
+
+    expect(simulator.getState().counters).toMatchObject({ requests: 1, responses: 1, ignored: 0, crcErrors: 0 });
   });
 
   it("publishes updated counters while traffic flows", async () => {
@@ -285,7 +306,65 @@ describe("RtuSlaveSimulator", () => {
       check(response);
     }
 
-    expect(simulator.getState().counters).toEqual({ requests: 1000, responses: 1000, exceptions: 0, ignored: 0, crcErrors: 0, faults: 0 });
+    expect(simulator.getState().counters).toEqual({ requests: 1000, responses: 1000, exceptions: 0, ignored: 0, crcErrors: 0, faults: 0, echoesDiscarded: 0 });
     await simulator.stop();
+  });
+  describe("with an echoing USB-RS485 converter", () => {
+    function echoing(port: FakePort) {
+      const write = port.write.bind(port);
+      port.write = (data, callback) => {
+        const result = write(data, callback);
+        port.receive(Uint8Array.from(data));
+        return result;
+      };
+    }
+
+    it("drops the echo of its own responses instead of answering them", async () => {
+      const { simulator, ports } = createSimulator();
+      simulator.addDevice({ unitId: 2 });
+      await simulator.start({ path: "COM10", baudRate: 115200 });
+      echoing(ports[0]);
+
+      ports[0].receive(encodeReadHoldingRegistersRequest({ unitId: 2, startAddress: 0, quantity: 4 }));
+      ports[0].receive(encodeWriteSingleRegisterRequest({ unitId: 2, address: 1, value: 4242 }));
+      ports[0].receive(encodeReadHoldingRegistersRequest({ unitId: 2, startAddress: 1, quantity: 1 }));
+
+      expect(ports[0].written).toHaveLength(3);
+      expect(decodeRegisterReadResponse(ports[0].written[2]).values).toEqual([4242]);
+      expect(simulator.getState()).toMatchObject({
+        echoDetected: true,
+        counters: { requests: 3, responses: 3, echoesDiscarded: 3, ignored: 0 }
+      });
+    });
+
+    it("off mode answers the echo, which is why auto is the default", async () => {
+      const { simulator, ports } = createSimulator();
+      simulator.addDevice({ unitId: 2 });
+      await simulator.start({ path: "COM10", baudRate: 115200, echo: "off" });
+      echoing(ports[0]);
+      let calls = 0;
+      const write = ports[0].write;
+      ports[0].write = (data, callback) => {
+        calls += 1;
+        // Stop the feedback loop the echo would otherwise cause.
+        return calls > 5 ? true : write(data, callback);
+      };
+
+      ports[0].receive(encodeWriteSingleRegisterRequest({ unitId: 2, address: 1, value: 7 }));
+      expect(calls).toBeGreaterThan(5);
+    });
+  });
+
+  it("learns from a read that the converter does not echo, then accepts fast repeated writes", async () => {
+    const { simulator, ports } = createSimulator();
+    simulator.addDevice({ unitId: 2 });
+    await simulator.start({ path: "COM10", baudRate: 115200 });
+
+    ports[0].receive(encodeReadHoldingRegistersRequest({ unitId: 2, startAddress: 0, quantity: 1 }));
+    ports[0].receive(encodeWriteSingleRegisterRequest({ unitId: 2, address: 1, value: 5 }));
+    ports[0].receive(encodeWriteSingleRegisterRequest({ unitId: 2, address: 1, value: 5 }));
+
+    expect(ports[0].written).toHaveLength(3);
+    expect(simulator.getState()).toMatchObject({ echoDetected: false, counters: { echoesDiscarded: 0 } });
   });
 });
