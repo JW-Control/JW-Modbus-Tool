@@ -42,6 +42,9 @@ import type {
 } from "../shared/session/types.js";
 
 declare global {
+  /** Version from package.json, injected by Vite. */
+  const __APP_VERSION__: string;
+
   interface Window {
     jwModbus?: {
       appName: string;

@@ -27,6 +27,27 @@ Rama: `nombre-de-rama`
 
 ---
 
+## 2026-11-12 · Limpieza del repositorio antes de la 0.1.0
+
+Rama: `chore/limpieza-repo`, sobre `feature/eco-conversor-jwplc-sim`.
+
+### Qué se hizo
+
+- Se borraron 41 scripts `patch*.cjs` de la raíz (ediciones de un solo uso
+  ya aplicadas al código), `ollama_bridge.py` y las sesiones de `out/`.
+  `.gitignore` ahora ignora `out/`, `patch*.cjs` y `*.zip`.
+- `guia pasos.md` pasó a `docs/HOJA_DE_RUTA_SIMULADOR.md` y las sesiones de
+  `Sesiones de Prueba/` a `docs/sesiones-de-prueba/`. Las entradas anteriores
+  de esta bitácora que citan `guia pasos.md` se refieren a ese archivo.
+- La barra lateral decía "Licencia: Profesional · Versión 1.3.0": ahora dice
+  "Licencia MIT" y la versión sale de `package.json` (`__APP_VERSION__`).
+- README: la sección de estado describe las seis vistas actuales.
+
+### Verificación
+
+- Ningún script ni código importaba los archivos borrados.
+- `npm test` (100 tests), `npm run typecheck` y `npm run build` sin errores.
+
 ## 2026-11-12 · Eco del conversor USB-RS485 y pruebas con JWPLC Sim
 
 Rama: `feature/eco-conversor-jwplc-sim`, sobre `feature/slave-simulator` (`86e7a1b`).

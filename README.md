@@ -4,46 +4,32 @@ JW Modbus Tool is a clean-room, MIT-licensed desktop tool by JW Control for
 Modbus RTU testing, diagnostics, and demonstrations on Windows. The first target
 hardware profile is JWPLC Basic Remote I/O over Modbus RTU.
 
-## MVP 0.1 status
+## Estado: 0.1.0 (sin publicar)
 
-This repository is in the first implementation step. It currently includes:
+La app abre en "Modo sencillo", con seis vistas:
 
-- Electron, TypeScript, React, and Vite project skeleton.
-- Secure Electron defaults: `contextIsolation: true` and `nodeIntegration: false`.
-- Shared Modbus RTU engine foundations.
-- CRC16/Modbus implementation.
-- RTU frame build/parse utilities.
-- Master request encoders for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
-- Slave simulator response core for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
-- Simulator view: the PC answers as one or more virtual RTU slaves on its own
-  COM port, with live value editing, a traffic log, a JWPLC device template,
-  and configurable faults. The app's master can also reach it in memory through
-  the "Simulador interno (sin COM)" port, with no hardware or driver. User
-  guide (Spanish): `docs/GUIA_USO_SIMULADOR.md`;
-  technical notes: `docs/SLAVE_SIMULATOR.md`.
-- USB-RS485 converter echo handling ("Eco del conversor": automatic, off, on)
-  in the master and in the slave simulator.
-- Integration tests against a simulated JWPLC Basic in JWPLC Sim, with and
-  without converter echo: `docs/PRUEBAS_JWPLC_SIM.md`.
-- Serial port listing and basic connect/disconnect IPC through Electron main.
-- Persistent serial settings for baudrate, data bits, parity, stop bits,
-  response timeout, and last selected COM port.
-- Base application views: Dashboard, JWPLC Preset, Generic Master, Bus Monitor,
-  and Settings.
-- Minimal Master RTU probe for JWPLC Basic: FC1, FC2, FC5, and FC15 with
-  TX/RX monitor output.
-- JWPLC validation sequence with PASS/FAIL summary.
-- Clipboard copy and Markdown save for validation reports.
-- Generic RTU Master for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
-- Locally persisted Generic Master request presets.
-- Clipboard copy and Markdown save for Bus Monitor captures.
-- Minimal tests for CRC, frame construction, exception responses, and slave behavior.
-- Base documentation and third-party policy.
+- **Dispositivos**: conexión RTU (puerto, formato serial, timeout, eco del
+  conversor), escaneo de IDs y lectura rápida de registros.
+- **Sesiones**: guardar y abrir sesiones `.jwmodbus-session` (conexión,
+  dispositivos, historial de pruebas, notas y dispositivos virtuales).
+- **Pruebas**: plan de pruebas por pasos con escenarios de falla.
+- **Registros**: lectura y escritura de las 8 funciones (FC1 a FC6, FC15 y
+  FC16), con lectura automática.
+- **Tráfico Modbus**: monitor TX/RX.
+- **Simulador**: el PC responde como uno o varios slaves RTU virtuales en un
+  COM, con plantilla JWPLC Basic Remote I/O y fallas configurables. El master
+  de la app también lo alcanza en memoria por el puerto "Simulador interno
+  (sin COM)". Guía: `docs/GUIA_USO_SIMULADOR.md`; notas técnicas:
+  `docs/SLAVE_SIMULATOR.md`; hoja de ruta: `docs/HOJA_DE_RUTA_SIMULADOR.md`.
 
-RTU request execution over serial, the JWPLC validation preset, register
-operations, and report export are now wired. Persistence, advanced data
-formats, and Windows packaging validation remain deferred until the RTU
-workflows stay stable on hardware.
+Motor compartido: CRC16, armado y lectura de tramas RTU, codificadores del
+master y respuestas del slave para las 8 funciones, separador de tramas
+tolerante a pausas y manejo del eco de conversores USB-RS485 ("Eco del
+conversor": automático, sin eco, con eco).
+
+Pruebas: `npm test` (unitarias y de extremo a extremo en memoria) y la
+integración contra un JWPLC Basic simulado en JWPLC Sim, con y sin eco:
+`docs/PRUEBAS_JWPLC_SIM.md`. Bitácora del proceso: `BITACORA_CAMBIOS.md`.
 
 ## Install dependencies
 
@@ -128,7 +114,7 @@ binding. Installer signing remains deferred.
 
 ## Current limitations
 
-- The UI is still an MVP surface, not the final full workspace.
+- Modbus RTU only: the TCP tab is disabled until 0.2.
 - Register values are currently displayed as unsigned 16-bit decimal and
   hexadecimal values only.
 - No file-based JSON preset import/export yet.
