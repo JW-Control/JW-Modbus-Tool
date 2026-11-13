@@ -1,4 +1,5 @@
 import { SerialPort } from "serialport";
+import type { Framing } from "../../shared/modbus/adu.js";
 import { concatBytes } from "../../shared/modbus/byteUtils.js";
 import { decideEcho, defaultEchoMode, isEchoMode } from "../../shared/serial/echoFilter.js";
 import {
@@ -13,7 +14,7 @@ import {
 /** Answers master requests in memory; the slave simulator provides it. */
 export interface InternalSlaveEndpoint {
   /** `reply` is called once with the response, or never when the slave stays silent. */
-  send(request: Uint8Array, reply: (response: Uint8Array) => void): void;
+  send(request: Uint8Array, reply: (response: Uint8Array) => void, framing?: Framing): void;
 }
 
 export function isInternalSimulatorPath(path: unknown): boolean {
@@ -37,6 +38,12 @@ interface SerialPortLister {
 export interface SerialTransactionOptions {
   timeoutMs: number;
   expectedResponseLength: (bytes: Uint8Array) => number | null;
+  /**
+   * When the length cannot be known (a raw frame typed by the user), the
+   * response ends after this much silence. Without it, such a reply waits
+   * for the timeout.
+   */
+  idleCompleteMs?: number;
 }
 
 export interface SerialTransactionResult {
@@ -104,6 +111,16 @@ export function validateSerialPortConfig(config: SerialPortConfig): NormalizedSe
     throw new Error("Echo must be off, auto, or on");
   }
 
+  const framing = config.framing ?? "rtu";
+
+  if (framing !== "rtu" && framing !== "ascii") {
+    throw new Error("Serial framing must be rtu or ascii");
+  }
+
+  if (framing === "ascii" && dataBits !== 7 && dataBits !== 8) {
+    throw new Error("Data bits must be 7 or 8");
+  }
+
   return {
     path,
     baudRate: config.baudRate,
@@ -111,7 +128,9 @@ export function validateSerialPortConfig(config: SerialPortConfig): NormalizedSe
     parity,
     stopBits,
     lock: config.lock ?? true,
-    echo
+    echo,
+    transport: "serial",
+    framing
   };
 }
 
@@ -246,7 +265,7 @@ export class SerialManager {
       let settled = false;
       const timer = setTimeout(() => {
         cleanup();
-        reject(new Error(`Timed out waiting for RTU response after ${options.timeoutMs} ms`));
+        reject(new Error(`Timed out waiting for response after ${options.timeoutMs} ms`));
       }, options.timeoutMs);
 
       const cleanup = () => {
@@ -307,6 +326,15 @@ export class SerialManager {
 
         const expectedLength = options.expectedResponseLength(decision.payload);
 
+        if (expectedLength === null && options.idleCompleteMs && decision.payload.length > 0) {
+          const payload = decision.payload;
+          graceTimer = setTimeout(() => {
+            graceTimer = null;
+            finish(payload, decision.echoSeen);
+          }, options.idleCompleteMs);
+          return;
+        }
+
         if (expectedLength !== null && decision.payload.length >= expectedLength) {
           if (echoMode === "auto") {
             this.state = { ...this.state, echoDetected: decision.echoSeen };
@@ -355,7 +383,7 @@ export class SerialManager {
       let settled = false;
       const timer = setTimeout(() => {
         settled = true;
-        reject(new Error(`Timed out waiting for RTU response after ${options.timeoutMs} ms`));
+        reject(new Error(`Timed out waiting for response after ${options.timeoutMs} ms`));
       }, options.timeoutMs);
 
       endpoint.send(Uint8Array.from(request), (response) => {
@@ -366,7 +394,7 @@ export class SerialManager {
         settled = true;
         clearTimeout(timer);
         resolve({ request, response, elapsedMs: Math.round(performance.now() - startedAt) });
-      });
+      }, this.state.config?.framing ?? "rtu");
     });
   }
 }

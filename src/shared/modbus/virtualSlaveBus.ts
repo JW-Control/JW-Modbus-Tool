@@ -1,12 +1,17 @@
+import { buildAsciiAdu, buildMbapAdu, parseAsciiAdu, parseMbapAdu, type Framing } from "./adu.js";
 import { hasValidCrc } from "./crc16.js";
 import { isExceptionFunctionCode } from "./exceptions.js";
 import { FunctionCode } from "./functionCodes.js";
-import { buildExceptionFrame } from "./rtuFrame.js";
+import { buildRtuFrame } from "./rtuFrame.js";
 import {
   createSlaveDataModel,
-  handleRtuSlaveRequest,
+  defaultSlaveIdentity,
+  exceptionPdu,
+  handleSlavePdu,
   type SlaveDataModel,
-  type SlaveFrameResult
+  type SlaveFrameResult,
+  type SlaveIdentity,
+  type SlavePduResult
 } from "./slaveResponses.js";
 import { findVirtualDeviceTemplate } from "../slave/templates.js";
 import type {
@@ -26,6 +31,8 @@ export const MAX_VIRTUAL_TABLE_SIZE = 9999;
 const slaveTables: readonly SlaveTable[] = ["coils", "discreteInputs", "holdingRegisters", "inputRegisters"];
 
 const writeFunctionCodes = new Set<number>([
+  FunctionCode.MaskWriteRegister,
+  FunctionCode.ReadWriteMultipleRegisters,
   FunctionCode.WriteSingleCoil,
   FunctionCode.WriteSingleRegister,
   FunctionCode.WriteMultipleCoils,
@@ -46,13 +53,33 @@ interface VirtualSlaveDevice {
   requests: number;
 }
 
-export type VirtualBusFrameResult = (SlaveFrameResult | { kind: "silenced"; summary: string }) & {
+export type VirtualBusFrameResult = (
+  | (Extract<SlaveFrameResult, { kind: "response" }> & { responsePdu?: Uint8Array })
+  | Exclude<SlaveFrameResult, { kind: "response" }>
+  | { kind: "silenced"; summary: string }
+) & {
   unitId: number | null;
   functionCode: number | null;
   changedUnitIds: number[];
   /** Fault applied by the addressed device, if any. */
   fault: VirtualDeviceFaults | null;
 };
+
+type BusMeta = {
+  unitId: number | null;
+  functionCode: number | null;
+  changedUnitIds: number[];
+  /** Fault applied by the addressed device, if any. */
+  fault: VirtualDeviceFaults | null;
+};
+
+/** Result of `handleRequest`: a response PDU the transport wraps in its own ADU. */
+export type VirtualBusPduResult = (
+  | SlavePduResult
+  | { kind: "silenced"; summary: string }
+  | { kind: "ignored"; reason: "frame-error" | "unit-id-mismatch"; summary: string }
+) &
+  BusMeta & { corrupt?: boolean };
 
 /** Several virtual slaves sharing one RTU line, each answering its own unit id. */
 export class VirtualSlaveBus {
@@ -203,6 +230,59 @@ export class VirtualSlaveBus {
     next.forEach((device, unitId) => this.devices.set(unitId, device));
   }
 
+  /**
+   * Handles one whole request frame in the given framing and returns the
+   * response frame in the same framing.
+   */
+  handleAdu(framing: Framing, frame: Uint8Array): VirtualBusFrameResult {
+    if (framing === "rtu") return this.handleFrame(frame);
+
+    const parsed = framing === "ascii" ? parseAsciiAdu(frame) : parseMbapAdu(frame);
+    const unitId = parsed.pdu.length > 0 || parsed.checkOk ? parsed.unitId : null;
+    const functionCode = parsed.pdu.length > 0 ? parsed.pdu[0] : null;
+
+    if (!parsed.checkOk) {
+      const reason = parsed.checkError === "Error de LRC" ? "crc-error" : "frame-error";
+      return { kind: "ignored", reason, summary: parsed.checkError ?? "Trama inválida", unitId, functionCode, changedUnitIds: [], fault: null };
+    }
+
+    const result = this.handleRequest(parsed.unitId, parsed.pdu);
+
+    if (result.kind !== "response") {
+      const { corrupt: _corrupt, ...rest } = result;
+      return rest as VirtualBusFrameResult;
+    }
+
+    let response: Uint8Array;
+
+    if (framing === "ascii") {
+      response = buildAsciiAdu(parsed.unitId, result.pdu);
+      if (result.corrupt) {
+        // Damage the LRC characters (just before CR LF).
+        response[response.length - 3] = response[response.length - 3] === 0x30 ? 0x31 : 0x30;
+      }
+    } else {
+      response = buildMbapAdu(parsed.transactionId ?? 0, parsed.unitId, result.pdu);
+      if (result.corrupt) {
+        // No CRC on TCP: a wrong protocol id makes the reply just as invalid.
+        response[2] = 0xff;
+        response[3] = 0xff;
+      }
+    }
+
+    return {
+      kind: "response",
+      response,
+      responsePdu: result.pdu,
+      summary: result.summary,
+      unitId: result.unitId,
+      functionCode: result.functionCode,
+      changedUnitIds: result.changedUnitIds,
+      fault: result.fault
+    };
+  }
+
+  /** Handles a whole RTU frame (unit id + PDU + CRC). */
   handleFrame(frame: Uint8Array): VirtualBusFrameResult {
     if (frame.length < 4) {
       return {
@@ -223,8 +303,45 @@ export class VirtualSlaveBus {
       return { kind: "ignored", reason: "crc-error", summary: "Error de CRC", unitId, functionCode, changedUnitIds: [], fault: null };
     }
 
+    const result = this.handleRequest(unitId, frame.slice(1, -2));
+
+    if (result.kind !== "response") {
+      const { corrupt: _corrupt, ...rest } = result;
+      return rest as VirtualBusFrameResult;
+    }
+
+    const response = buildRtuFrame(unitId, result.pdu);
+
+    if (result.corrupt) {
+      response[response.length - 1] ^= 0xff;
+    }
+
+    return {
+      kind: "response",
+      response,
+      responsePdu: result.pdu,
+      summary: result.summary,
+      unitId: result.unitId,
+      functionCode: result.functionCode,
+      changedUnitIds: result.changedUnitIds,
+      fault: result.fault
+    };
+  }
+
+  /**
+   * Handles one request PDU for `unitId`, whatever the transport (RTU, ASCII
+   * or TCP). With the "bad-crc" fault the result is marked `corrupt` and the
+   * transport damages its own check (CRC, LRC or MBAP header).
+   */
+  handleRequest(unitId: number, pdu: Uint8Array): VirtualBusPduResult {
+    const functionCode = pdu.length > 0 ? pdu[0] : null;
+
+    if (pdu.length === 0) {
+      return { kind: "ignored", reason: "frame-error", summary: "PDU vacía", unitId, functionCode, changedUnitIds: [], fault: null };
+    }
+
     if (unitId === 0) {
-      return this.handleBroadcast(frame, functionCode);
+      return this.handleBroadcast(pdu);
     }
 
     const device = this.devices.get(unitId);
@@ -252,7 +369,7 @@ export class VirtualSlaveBus {
     if (faults.mode === "exception") {
       return {
         kind: "response",
-        response: buildExceptionFrame(unitId, functionCode, faults.exceptionCode),
+        pdu: exceptionPdu(pdu[0], faults.exceptionCode),
         summary: `Falla: excepción ${String(faults.exceptionCode).padStart(2, "0")} forzada`,
         unitId,
         functionCode,
@@ -261,23 +378,19 @@ export class VirtualSlaveBus {
       };
     }
 
-    const result = handleRtuSlaveRequest(frame, device.model, { unitId });
-    const wroteValues =
-      writeFunctionCodes.has(functionCode) &&
-      result.kind === "response" &&
-      !isExceptionFunctionCode(result.response[1]);
+    const result = handleSlavePdu(pdu, device.model, { unitId, isBroadcast: false, identity: identityOf(device) });
+    const wroteValues = writeFunctionCodes.has(pdu[0]) && result.kind === "response" && !isExceptionFunctionCode(result.pdu[0]);
     const changedUnitIds = wroteValues ? [unitId] : [];
 
     if (faults.mode === "bad-crc" && result.kind === "response") {
-      const corrupted = result.response.slice();
-      corrupted[corrupted.length - 1] ^= 0xff;
-      return { ...result, response: corrupted, summary: `${result.summary} (CRC corrupto)`, unitId, functionCode, changedUnitIds, fault };
+      return { ...result, summary: `${result.summary} (CRC corrupto)`, unitId, functionCode, changedUnitIds, fault, corrupt: true };
     }
 
     return { ...result, unitId, functionCode, changedUnitIds, fault };
   }
 
-  private handleBroadcast(frame: Uint8Array, functionCode: number): VirtualBusFrameResult {
+  private handleBroadcast(pdu: Uint8Array): VirtualBusPduResult {
+    const functionCode = pdu[0];
     const devices = this.sortedDevices();
 
     if (devices.length === 0) {
@@ -296,12 +409,12 @@ export class VirtualSlaveBus {
     const listening = devices.filter((device) => device.faults.mode !== "no-response");
     const results = listening.map((device) => {
       device.requests += 1;
-      return handleRtuSlaveRequest(frame, device.model, { unitId: device.unitId });
+      return handleSlavePdu(pdu, device.model, { unitId: device.unitId, isBroadcast: true, identity: identityOf(device) });
     });
     const changedUnitIds = writeFunctionCodes.has(functionCode) ? listening.map((device) => device.unitId) : [];
     const first = results[0] ?? { kind: "silenced" as const, summary: "Broadcast ignorado: todos los dispositivos están sin respuesta" };
 
-    return { ...first, unitId: 0, functionCode, changedUnitIds, fault: null };
+    return { ...first, unitId: 0, functionCode, changedUnitIds, fault: null } as VirtualBusPduResult;
   }
 
   private sortedDevices(): VirtualSlaveDevice[] {
@@ -387,6 +500,16 @@ function cloneLabels(labels: VirtualDeviceLabels): VirtualDeviceLabels {
       .filter(([table, names]) => slaveTables.includes(table as SlaveTable) && Array.isArray(names))
       .map(([table, names]) => [table, names.map(String)])
   );
+}
+
+function identityOf(device: VirtualSlaveDevice): SlaveIdentity {
+  const template = device.template ? findVirtualDeviceTemplate(device.template) : undefined;
+  return {
+    ...defaultSlaveIdentity,
+    productCode: device.template ?? defaultSlaveIdentity.productCode,
+    productName: device.name,
+    modelName: template?.name ?? "Genérico"
+  };
 }
 
 function summarize(device: VirtualSlaveDevice): VirtualDeviceSummary {

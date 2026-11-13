@@ -6,8 +6,15 @@ export enum FunctionCode {
   WriteSingleCoil = 0x05,
   WriteSingleRegister = 0x06,
   WriteMultipleCoils = 0x0f,
-  WriteMultipleRegisters = 0x10
+  WriteMultipleRegisters = 0x10,
+  ReportServerId = 0x11,
+  MaskWriteRegister = 0x16,
+  ReadWriteMultipleRegisters = 0x17,
+  EncapsulatedInterface = 0x2b
 }
+
+/** MEI type of FC43 used for Read Device Identification. */
+export const MEI_READ_DEVICE_ID = 0x0e;
 
 export const supportedFunctionCodes = new Set<number>([
   FunctionCode.ReadCoils,
@@ -17,7 +24,11 @@ export const supportedFunctionCodes = new Set<number>([
   FunctionCode.WriteSingleCoil,
   FunctionCode.WriteSingleRegister,
   FunctionCode.WriteMultipleCoils,
-  FunctionCode.WriteMultipleRegisters
+  FunctionCode.WriteMultipleRegisters,
+  FunctionCode.ReportServerId,
+  FunctionCode.MaskWriteRegister,
+  FunctionCode.ReadWriteMultipleRegisters,
+  FunctionCode.EncapsulatedInterface
 ]);
 
 export function functionCodeName(functionCode: number): string {
@@ -38,6 +49,14 @@ export function functionCodeName(functionCode: number): string {
       return "Write Multiple Coils";
     case FunctionCode.WriteMultipleRegisters:
       return "Write Multiple Registers";
+    case FunctionCode.ReportServerId:
+      return "Report Server ID";
+    case FunctionCode.MaskWriteRegister:
+      return "Mask Write Register";
+    case FunctionCode.ReadWriteMultipleRegisters:
+      return "Read/Write Multiple Registers";
+    case FunctionCode.EncapsulatedInterface:
+      return "Read Device Identification";
     default:
       return `Unknown Function 0x${functionCode.toString(16).padStart(2, "0")}`;
   }

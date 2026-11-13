@@ -1,4 +1,16 @@
+import type { Framing } from "../modbus/adu.js";
 import type { EchoMode } from "./echoFilter.js";
+
+/** How the master reaches the slaves: a serial port (or the internal channel) or a TCP socket. */
+export type MasterTransport = "serial" | "tcp";
+
+/** Framing on a serial port. */
+export type SerialFraming = "rtu" | "ascii";
+
+/** Framing on TCP: standard Modbus TCP (MBAP) or RTU frames over a TCP socket (serial gateways). */
+export type TcpFraming = "mbap" | "rtu";
+
+export const DEFAULT_TCP_PORT = 502;
 
 /**
  * Port path that connects the master to the slave simulator in memory, with
@@ -32,6 +44,16 @@ export interface SerialPortConfig {
   lock?: boolean;
   /** Echo of the USB-RS485 converter (see echoFilter.ts). Default: auto. */
   echo?: EchoMode;
+  /** Default: serial. */
+  transport?: MasterTransport;
+  /** Serial framing. Default: rtu. */
+  framing?: SerialFraming;
+  /** TCP only. */
+  host?: string;
+  /** TCP only. Default: 502. */
+  tcpPort?: number;
+  /** TCP only. Default: mbap. */
+  tcpFraming?: TcpFraming;
 }
 
 export interface NormalizedSerialPortConfig {
@@ -42,6 +64,11 @@ export interface NormalizedSerialPortConfig {
   stopBits: SerialStopBits;
   lock: boolean;
   echo: EchoMode;
+  transport: MasterTransport;
+  /** Frame format on the wire: rtu, ascii or tcp (MBAP). */
+  framing: Framing;
+  host?: string;
+  tcpPort?: number;
 }
 
 export interface SerialConnectionState {

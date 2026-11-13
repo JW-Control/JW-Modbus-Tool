@@ -1,29 +1,11 @@
-import { isExceptionFunctionCode } from "./exceptions.js";
-import { FunctionCode } from "./functionCodes.js";
+import { expectedResponsePduLength } from "./pdu.js";
 
+/** Length of a whole RTU response (unit id + PDU + CRC) from its first bytes, or null while unknown. */
 export function expectedRtuResponseLength(bytes: Uint8Array): number | null {
   if (bytes.length < 2) {
     return null;
   }
 
-  const functionCode = bytes[1];
-
-  if (isExceptionFunctionCode(functionCode)) {
-    return 5;
-  }
-
-  switch (functionCode) {
-    case FunctionCode.ReadCoils:
-    case FunctionCode.ReadDiscreteInputs:
-    case FunctionCode.ReadHoldingRegisters:
-    case FunctionCode.ReadInputRegisters:
-      return bytes.length >= 3 ? 3 + bytes[2] + 2 : null;
-    case FunctionCode.WriteSingleCoil:
-    case FunctionCode.WriteSingleRegister:
-    case FunctionCode.WriteMultipleCoils:
-    case FunctionCode.WriteMultipleRegisters:
-      return 8;
-    default:
-      return null;
-  }
+  const pduLength = expectedResponsePduLength(bytes.subarray(1));
+  return pduLength === null ? null : 1 + pduLength + 2;
 }

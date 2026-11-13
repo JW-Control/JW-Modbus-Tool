@@ -1,8 +1,11 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, app } from "electron";
 import type { OpenDialogOptions, SaveDialogOptions } from "electron";
-import { readFile, writeFile } from "node:fs/promises";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { masterConnection } from "./modbus/masterConnection.js";
 import {
+  executeModbusRequest,
+  sendRawFrame,
   readCoils,
   readDiscreteInputs,
   readHoldingRegisters,
@@ -16,6 +19,8 @@ import {
 import { slaveSimulator } from "./modbus/rtuSlaveSimulator.js";
 import { serialManager, toSerialResult } from "./serial/serialManager.js";
 import type {
+  ModbusCommand,
+  RawFrameCommand,
   ReadCoilsCommand,
   ReadDiscreteInputsCommand,
   ReadHoldingRegistersCommand,
@@ -36,8 +41,10 @@ import type {
   AddVirtualDeviceRequest,
   SetVirtualFaultsRequest,
   SetVirtualValueRequest,
+  SlaveTcpConfig,
   VirtualDeviceConfig
 } from "../shared/slave/types.js";
+import type { AppendTextFileRequest, SaveTextFileRequest, SaveTextFileResult } from "../shared/files/types.js";
 import type {
   OpenSessionFileRequest,
   OpenSessionFileResult,
@@ -45,7 +52,38 @@ import type {
   SaveSessionFileResult
 } from "../shared/session/types.js";
 
+/** Files the user picked with file:saveText; only these can be appended to. */
+const appendableFiles = new Set<string>();
+
 export function registerIpcHandlers(): void {
+  ipcMain.handle("file:saveText", async (event, request: SaveTextFileRequest) =>
+    toSerialResult<SaveTextFileResult>(async () => {
+      if (typeof request?.text !== "string") throw new Error("No hay texto para guardar");
+      const lastDir = await getLastDir();
+      const fileName = String(request.defaultFileName || "datos.txt").replace(/[<>:"/\\|?*\x00-\x1F]/g, "-");
+      const options: SaveDialogOptions = {
+        title: request.title ?? "Guardar archivo",
+        defaultPath: lastDir ? join(lastDir, fileName) : fileName,
+        filters: request.filters
+      };
+      const parentWindow = BrowserWindow.fromWebContents(event.sender);
+      const saveResult = parentWindow ? await dialog.showSaveDialog(parentWindow, options) : await dialog.showSaveDialog(options);
+      if (saveResult.canceled || !saveResult.filePath) return { canceled: true };
+      await setLastDir(saveResult.filePath);
+      await writeFile(saveResult.filePath, request.text, "utf8");
+      appendableFiles.add(saveResult.filePath);
+      return { canceled: false, filePath: saveResult.filePath, bytesWritten: Buffer.byteLength(request.text, "utf8") };
+    })
+  );
+  ipcMain.handle("file:appendText", async (_event, request: AppendTextFileRequest) =>
+    toSerialResult(async () => {
+      if (!request || !appendableFiles.has(request.filePath)) {
+        throw new Error("Ese archivo no se eligió en esta sesión de la app");
+      }
+      await appendFile(request.filePath, String(request.text), "utf8");
+      return { bytesWritten: Buffer.byteLength(String(request.text), "utf8") };
+    })
+  );
   ipcMain.handle("window:minimize", (event) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     window?.minimize();
@@ -64,18 +102,18 @@ export function registerIpcHandlers(): void {
   });
   ipcMain.handle("serial:listPorts", async () => toSerialResult(() => serialManager.listPorts()));
   ipcMain.handle("serial:getConnectionState", async () =>
-    toSerialResult(async () => serialManager.getConnectionState())
+    toSerialResult(async () => masterConnection.getState())
   );
   ipcMain.handle("serial:open", async (_event, config: SerialPortConfig) =>
     toSerialResult(async () => {
       const simulatorPath = slaveSimulator.getState().config?.path;
-      if (simulatorPath && samePortPath(simulatorPath, config?.path)) {
+      if (config?.transport !== "tcp" && simulatorPath && samePortPath(simulatorPath, config?.path)) {
         throw new Error(`${simulatorPath} está ocupado por el simulador slave. Usa otro puerto para el master.`);
       }
-      return serialManager.open(config);
+      return masterConnection.open(config);
     })
   );
-  ipcMain.handle("serial:close", async () => toSerialResult(() => serialManager.close()));
+  ipcMain.handle("serial:close", async () => toSerialResult(() => masterConnection.close()));
   serialManager.setInternalEndpoint(slaveSimulator.internalEndpoint());
   slaveSimulator.onEvent((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -85,14 +123,16 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("slave:getState", async () => toSerialResult(async () => slaveSimulator.getState()));
   ipcMain.handle("slave:start", async (_event, config: SerialPortConfig) =>
     toSerialResult(async () => {
-      const master = serialManager.getConnectionState();
-      if (master.connected && master.config && samePortPath(master.config.path, config?.path)) {
+      const master = masterConnection.getState();
+      if (master.connected && master.config?.transport !== "tcp" && master.config && samePortPath(master.config.path, config?.path)) {
         throw new Error(`${master.config.path} está abierto como master. Desconéctalo o elige otro puerto para el simulador.`);
       }
       return slaveSimulator.start(config);
     })
   );
   ipcMain.handle("slave:stop", async () => toSerialResult(() => slaveSimulator.stop()));
+  ipcMain.handle("slave:startTcp", async (_event, config: SlaveTcpConfig) => toSerialResult(() => slaveSimulator.startTcp(config)));
+  ipcMain.handle("slave:stopTcp", async () => toSerialResult(() => slaveSimulator.stopTcp()));
   ipcMain.handle("slave:addDevice", async (_event, request: AddVirtualDeviceRequest) =>
     toSerialResult(async () => slaveSimulator.addDevice(request))
   );
@@ -137,6 +177,12 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("modbus:writeMultipleRegisters", async (_event, command: WriteMultipleRegistersCommand) =>
     toSerialResult(() => writeMultipleRegisters(command))
+  );
+  ipcMain.handle("modbus:execute", async (_event, command: ModbusCommand) =>
+    toSerialResult(() => executeModbusRequest(command))
+  );
+  ipcMain.handle("modbus:sendRaw", async (_event, command: RawFrameCommand) =>
+    toSerialResult(() => sendRawFrame(command))
   );
   ipcMain.handle("modbus:runJwplcValidation", async (_event, command: ValidationSequenceCommand) =>
     toSerialResult(() => runJwplcValidationSequence(command))

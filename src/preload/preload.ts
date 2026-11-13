@@ -27,12 +27,16 @@ contextBridge.exposeInMainWorld("jwModbus", {
     writeMultipleCoils: (command: unknown) => ipcRenderer.invoke("modbus:writeMultipleCoils", command),
     writeSingleRegister: (command: unknown) => ipcRenderer.invoke("modbus:writeSingleRegister", command),
     writeMultipleRegisters: (command: unknown) => ipcRenderer.invoke("modbus:writeMultipleRegisters", command),
+    execute: (command: unknown) => ipcRenderer.invoke("modbus:execute", command),
+    sendRaw: (command: unknown) => ipcRenderer.invoke("modbus:sendRaw", command),
     runJwplcValidation: (command: unknown) => ipcRenderer.invoke("modbus:runJwplcValidation", command)
   },
   slave: {
     getState: () => ipcRenderer.invoke("slave:getState"),
     start: (config: unknown) => ipcRenderer.invoke("slave:start", config),
     stop: () => ipcRenderer.invoke("slave:stop"),
+    startTcp: (config: unknown) => ipcRenderer.invoke("slave:startTcp", config),
+    stopTcp: () => ipcRenderer.invoke("slave:stopTcp"),
     addDevice: (request: unknown) => ipcRenderer.invoke("slave:addDevice", request),
     removeDevice: (unitId: unknown) => ipcRenderer.invoke("slave:removeDevice", unitId),
     getDevice: (unitId: unknown) => ipcRenderer.invoke("slave:getDevice", unitId),
@@ -49,6 +53,10 @@ contextBridge.exposeInMainWorld("jwModbus", {
         ipcRenderer.removeListener("slave:event", handler);
       };
     }
+  },
+  files: {
+    saveText: (request: unknown) => ipcRenderer.invoke("file:saveText", request),
+    appendText: (request: unknown) => ipcRenderer.invoke("file:appendText", request)
   },
   sessions: {
     saveFile: (request: unknown) => ipcRenderer.invoke("session:saveFile", request),

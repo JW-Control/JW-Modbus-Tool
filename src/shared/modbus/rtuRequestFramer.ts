@@ -1,6 +1,6 @@
 import { concatBytes } from "./byteUtils.js";
 import { hasValidCrc } from "./crc16.js";
-import { FunctionCode } from "./functionCodes.js";
+import { expectedRequestPduLength, isKnownRequestFunction } from "./pdu.js";
 import type { NormalizedSerialPortConfig } from "../serial/types.js";
 
 const MIN_FRAME_LENGTH = 4;
@@ -10,20 +10,8 @@ export function expectedRtuRequestLength(bytes: Uint8Array): number | null {
     return null;
   }
 
-  switch (bytes[1]) {
-    case FunctionCode.ReadCoils:
-    case FunctionCode.ReadDiscreteInputs:
-    case FunctionCode.ReadHoldingRegisters:
-    case FunctionCode.ReadInputRegisters:
-    case FunctionCode.WriteSingleCoil:
-    case FunctionCode.WriteSingleRegister:
-      return 8;
-    case FunctionCode.WriteMultipleCoils:
-    case FunctionCode.WriteMultipleRegisters:
-      return bytes.length >= 7 ? 7 + bytes[6] + 2 : null;
-    default:
-      return null;
-  }
+  const pduLength = expectedRequestPduLength(bytes.subarray(1));
+  return pduLength === null ? null : 1 + pduLength + 2;
 }
 
 /**
@@ -66,10 +54,7 @@ export class RtuRequestFramer {
     }
 
     const functionCode = this.buffer[1];
-    const known =
-      functionCode === FunctionCode.WriteMultipleCoils ||
-      functionCode === FunctionCode.WriteMultipleRegisters ||
-      expectedRtuRequestLength(this.buffer) !== null;
+    const known = isKnownRequestFunction(functionCode);
 
     if (!known) {
       return false;

@@ -79,6 +79,25 @@ export interface SlaveSimulatorCounters {
   echoesDiscarded: number;
 }
 
+/** How to serve the virtual devices over TCP. */
+export interface SlaveTcpConfig {
+  /** Interface to listen on. Default 0.0.0.0 (all). */
+  host?: string;
+  /** Default 502. */
+  port?: number;
+  /** "tcp" = Modbus TCP (MBAP), "rtu" = RTU frames over TCP. Default "tcp". */
+  framing?: "tcp" | "rtu";
+}
+
+export interface SlaveTcpState {
+  host: string;
+  port: number;
+  framing: "tcp" | "rtu";
+  /** Masters connected right now. */
+  clients: number;
+  startedAt: string;
+}
+
 export interface SlaveSimulatorState {
   running: boolean;
   config?: NormalizedSerialPortConfig;
@@ -88,6 +107,8 @@ export interface SlaveSimulatorState {
   lastError?: string;
   /** What `auto` echo mode learned about the converter; undefined = not yet known. */
   echoDetected?: boolean;
+  /** Present while the TCP server runs. */
+  tcp?: SlaveTcpState;
 }
 
 export type SlaveTrafficResult =
