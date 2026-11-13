@@ -61,6 +61,12 @@ export interface SlaveSimulatorSettings {
   parity: SerialParity;
   stopBits: SerialStopBits;
   echo: EchoMode;
+  /** Framing on the COM port. Missing in sessions saved before 0.2 (= RTU). */
+  framing?: "rtu" | "ascii";
+  /** Modbus TCP server: interface, port and framing. */
+  tcpHost?: string;
+  tcpPort?: number;
+  tcpFraming?: "tcp" | "rtu";
 }
 
 export interface SlaveSimulatorSessionConfig {

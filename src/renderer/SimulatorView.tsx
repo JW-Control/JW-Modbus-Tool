@@ -192,13 +192,26 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
     setBusy(true);
     const result = state.running
       ? await slave.stop()
-      : await slave.start({ path: settings.port, baudRate: settings.baudRate, dataBits: settings.dataBits, parity: settings.parity, stopBits: settings.stopBits, echo: settings.echo });
+      : await slave.start({ path: settings.port, baudRate: settings.baudRate, dataBits: settings.dataBits, parity: settings.parity, stopBits: settings.stopBits, echo: settings.echo, framing: settings.framing ?? "rtu" });
     setBusy(false);
     if (!result.ok) return onMessage(result.error);
     setState(result.value);
     onMessage(result.value.running
-      ? `Simulador escuchando en ${settings.port}. Responde como ${result.value.devices.length} slave(s) virtual(es).`
+      ? `Simulador escuchando en ${settings.port} (${settings.framing === "ascii" ? "ASCII" : "RTU"}). Responde como ${result.value.devices.length} slave(s) virtual(es).`
       : "Simulador detenido.");
+  }
+
+  async function toggleTcp() {
+    setBusy(true);
+    const result = state.tcp
+      ? await slave.stopTcp()
+      : await slave.startTcp({ host: settings.tcpHost ?? "0.0.0.0", port: settings.tcpPort ?? 502, framing: settings.tcpFraming ?? "tcp" });
+    setBusy(false);
+    if (!result.ok) return onMessage(result.error);
+    setState(result.value);
+    onMessage(result.value.tcp
+      ? `Servidor ${result.value.tcp.framing === "tcp" ? "Modbus TCP" : "RTU sobre TCP"} escuchando en ${result.value.tcp.host}:${result.value.tcp.port}.`
+      : "Servidor TCP detenido.");
   }
 
   async function addDevice() {
@@ -261,6 +274,12 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
               <button className="ghost" title="Recargar puertos" disabled={state.running} onClick={() => void refreshPorts()}><RefreshCw size={15} /></button>
             </span>
           </label>
+          <label>Protocolo
+            <select value={settings.framing ?? "rtu"} disabled={state.running} onChange={(event) => setSettings({ ...settings, framing: event.target.value === "ascii" ? "ascii" : "rtu" })}>
+              <option value="rtu">Modbus RTU</option>
+              <option value="ascii">Modbus ASCII</option>
+            </select>
+          </label>
           <label>Baud rate
             <select value={settings.baudRate} disabled={state.running} onChange={(event) => setSettings({ ...settings, baudRate: Number(event.target.value) })}>
               {simulatorBaudRates.map((rate) => <option key={rate} value={rate}>{rate}</option>)}
@@ -300,6 +319,33 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
           ? "El master de la app está conectado por el canal interno: responde sin iniciar el simulador ni usar un puerto COM."
           : "Sin hardware: en Dispositivos, conecta el master a «Simulador interno (sin COM)». Iniciar el simulador solo hace falta para un puerto COM."}</p>
         {state.devices.length === 0 && <p className="note"><Info size={16} />Agrega al menos un dispositivo virtual; sin ellos el simulador no responde a ningún ID.</p>}
+        <div className="simTcp">
+          <header>
+            <h3>Servidor Modbus TCP</h3>
+            <span className={`simBadge ${state.tcp ? "on" : ""}`}>{state.tcp ? `${state.tcp.clients} ${state.tcp.clients === 1 ? "cliente" : "clientes"}` : "Detenido"}</span>
+          </header>
+          <div className="simFields">
+            <label>Escuchar en
+              <select value={settings.tcpHost ?? "0.0.0.0"} disabled={Boolean(state.tcp)} onChange={(event) => setSettings({ ...settings, tcpHost: event.target.value })}>
+                <option value="0.0.0.0">Toda la red (0.0.0.0)</option>
+                <option value="127.0.0.1">Solo esta PC (127.0.0.1)</option>
+              </select>
+            </label>
+            <label>Puerto TCP
+              <input type="number" min={1} max={65535} value={settings.tcpPort ?? 502} disabled={Boolean(state.tcp)} onChange={(event) => setSettings({ ...settings, tcpPort: Number(event.target.value) })} />
+            </label>
+            <label>Protocolo
+              <select value={settings.tcpFraming ?? "tcp"} disabled={Boolean(state.tcp)} onChange={(event) => setSettings({ ...settings, tcpFraming: event.target.value === "rtu" ? "rtu" : "tcp" })}>
+                <option value="tcp">Modbus TCP (MBAP)</option>
+                <option value="rtu">RTU sobre TCP</option>
+              </select>
+            </label>
+          </div>
+          <button className={state.tcp ? "simStop" : "purple"} disabled={busy} onClick={() => void toggleTcp()}>
+            {state.tcp ? <><Square size={15} />Detener servidor TCP</> : <><Play size={15} />Iniciar servidor TCP</>}
+          </button>
+          {state.tcp ? <p className="note"><Info size={16} />Conecta el master a {state.tcp.host === "0.0.0.0" ? "la IP de esta PC" : "127.0.0.1"}, puerto {state.tcp.port}. Los mismos dispositivos virtuales responden por serie y por TCP.</p> : null}
+        </div>
         <div className="simCounters">
           <Counter label="Peticiones" value={state.counters.requests} />
           <Counter label="Respondidas" value={state.counters.responses} tone="ok" />

@@ -47,6 +47,14 @@ describe("PDU de las funciones nuevas", () => {
     ]);
   });
 
+  it("FC43 lee texto UTF-8 y, si no lo es, Latin-1", () => {
+    // ModelName "Gené" en UTF-8 (C3 A9) y "Gené" en Latin-1 (E9).
+    const utf8 = bytes("2B 0E 02 01 00 00 01 05 05 47 65 6E C3 A9");
+    const latin1 = bytes("2B 0E 02 01 00 00 01 05 04 47 65 6E E9");
+    expect(decodeResponsePdu({ fc: 43, readDeviceIdCode: 2, objectId: 0 }, utf8).deviceId?.objects[0].value).toBe("Gené");
+    expect(decodeResponsePdu({ fc: 43, readDeviceIdCode: 2, objectId: 0 }, latin1).deviceId?.objects[0].value).toBe("Gené");
+  });
+
   it("rechaza una respuesta de otra función o con el byte count mal", () => {
     expect(() => decodeResponsePdu({ fc: 3, startAddress: 0, quantity: 2 }, bytes("04 04 00 01 00 02"))).toThrow("FC4");
     expect(() => decodeResponsePdu({ fc: 3, startAddress: 0, quantity: 2 }, bytes("03 02 00 01"))).toThrow("bytes de registros");

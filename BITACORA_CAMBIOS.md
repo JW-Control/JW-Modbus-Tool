@@ -27,6 +27,55 @@ Rama: `nombre-de-rama`
 
 ---
 
+## 2026-11-13 · Modbus completo: TCP, ASCII, formatos, ventanas de sondeo y funciones nuevas
+
+Rama: `feature/modbus-completo-0.2`, sobre `feature/plan-pruebas-0.1.0`.
+
+### Qué se hizo
+
+- Motor por PDU: el código de función y sus datos se arman una sola vez y
+  cada transporte agrega su envoltura (RTU, ASCII o MBAP). Master TCP con
+  número de transacción, RTU sobre TCP y ASCII serie.
+- Simulador: servidor Modbus TCP (MBAP o RTU sobre TCP) y COM en ASCII; la
+  falla «CRC corrupto» daña el CRC, el LRC o la cabecera MBAP según el caso.
+- FC17, FC22, FC23 y FC43/14 en el master y en el simulador.
+- Registros pasó a ventanas de sondeo (`src/renderer/pollEngine.ts`) que
+  viven fuera de React: siguen leyendo y registrando a CSV aunque se cambie
+  de vista. Formatos de 16, 32 y 64 bits con orden de bytes, escritura con
+  doble clic, alias, gráfica de varias direcciones.
+- Vista Funciones y selector de numeración de direcciones.
+- Se quitaron los nombres de ejemplo fijos (Velocidad_Ref y otros) de la
+  lectura rápida.
+
+### Por qué
+
+- Comparada con Modbus Poll y ModScan, a la 0.1 le faltaban formatos de
+  datos, escritura desde la tabla, varias lecturas a la vez, registro a CSV,
+  FC17/22/23/43, ASCII, base 0/1 y tramas a mano. Jeykco pidió los seis
+  puntos para RTU y TCP.
+
+### Verificación
+
+- `npm test`: 135 pruebas, entre ellas TCP y RTU sobre TCP con sockets
+  reales contra el simulador, ASCII por el canal interno y el motor de
+  ventanas con Float32, Int32 CDAB, coils, timeouts y CSV.
+- App de Electron (Playwright, en la nube): simulador TCP en 127.0.0.1,
+  conexión TCP, dos ventanas en paralelo, escritura Float32/Int16/coil,
+  gráfica, FC43/17/22/23 y trama manual; luego ASCII por el canal interno con
+  las mismas ventanas; CSV, guardar, Nuevo y Abrir sesión con RTU sobre TCP.
+- Contra JWPLC Sim (puente Modbus TCP en 127.0.0.1:5020, sketch
+  `g8_io_bridge`): escribir las bobinas I0.0 e I0.3 desde la app encendió
+  Q0.0 y Q0.3 en el PLC simulado; FC43 devolvió la excepción 01, que el
+  puente no soporta.
+- Se encontró y corrigió que `preload.cjs` no exponía los canales nuevos.
+
+### Pendiente
+
+- Probar Modbus TCP contra un equipo real (por ejemplo un JWPLC con W5500).
+- La memoria del simulador sigue mostrando la numeración 4xxxx.
+
+---
+
 ## 2026-11-12 · Plan de pruebas del simulador completo y tendencia real en Registros
 
 Rama: `feature/plan-pruebas-0.1.0`, sobre `chore/limpieza-repo`.

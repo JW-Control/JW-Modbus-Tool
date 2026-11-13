@@ -322,7 +322,7 @@ function decodeDeviceId(pdu: Uint8Array): DeviceIdentification {
   for (let index = 0; index < pdu[6]; index += 1) {
     const id = pdu[offset];
     const length = pdu[offset + 1];
-    const value = new TextDecoder("latin1").decode(pdu.slice(offset + 2, offset + 2 + length));
+    const value = decodeDeviceText(pdu.slice(offset + 2, offset + 2 + length));
     objects.push({ id, name: deviceIdObjectName(id), value });
     offset += 2 + length;
   }
@@ -370,3 +370,12 @@ function hex2(value: number): string {
 }
 
 export { FunctionCode };
+
+/** Device id strings: UTF-8 when the bytes are valid UTF-8, otherwise Latin-1 (older devices). */
+function decodeDeviceText(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("latin1").decode(bytes);
+  }
+}

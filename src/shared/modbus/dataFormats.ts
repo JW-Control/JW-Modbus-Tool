@@ -54,6 +54,21 @@ export const registerFormatLabels: Record<RegisterFormat, string> = {
   float64: "Float64 (double)"
 };
 
+/** Compact names for narrow places such as a table column. */
+export const registerFormatShortLabels: Record<RegisterFormat, string> = {
+  uint16: "UInt16",
+  int16: "Int16",
+  hex16: "Hex",
+  bin16: "Binario",
+  ascii16: "Texto",
+  uint32: "UInt32",
+  int32: "Int32",
+  float32: "Float32",
+  uint64: "UInt64",
+  int64: "Int64",
+  float64: "Float64"
+};
+
 export const byteOrders: ByteOrder[] = ["ABCD", "CDAB", "BADC", "DCBA"];
 
 export const byteOrderLabels: Record<ByteOrder, string> = {

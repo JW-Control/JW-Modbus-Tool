@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   Activity,
   AlertCircle,
@@ -25,6 +25,7 @@ import {
   Server,
   Settings,
   Star,
+  Terminal,
   XCircle,
   Square,
   Unplug,
@@ -42,7 +43,13 @@ import { loadSimulatorSettings, normalizeSimulatorSettings, storeSimulatorSettin
 import type { SlaveSimulatorSessionConfig, VirtualDeviceSummary } from "../shared/slave/types.js";
 import { INTERNAL_SIMULATOR_PATH } from "../shared/serial/types.js";
 import { defaultEchoMode, echoModeLabels, isEchoMode, type EchoMode } from "../shared/serial/echoFilter.js";
-import { appendTrend, trendKey, trendPolyline, trendStats, type TrendPoint } from "./registerTrend.js";
+import { PollView } from "./PollView.js";
+import { FunctionsView } from "./FunctionsView.js";
+import { pollEngine, type PollActionEvent, type PollDefinition, type PollStatus } from "./pollEngine.js";
+import { addressModeLabels, addressModes, isAddressMode, tableOf, toDisplayAddress, toProtocolAddress, type AddressMode } from "./addressing.js";
+import type { Framing } from "../shared/modbus/adu.js";
+import type { SerialOperationResult, MasterTransport, SerialFraming, TcpFraming } from "../shared/serial/types.js";
+import type { RtuMasterActionResult } from "../shared/modbus/masterActionTypes.js";
 
 const INTERNAL_PORT_LABEL = "Simulador interno (sin COM)";
 
@@ -85,7 +92,7 @@ function JwplcIcon({ size = 32, className = "", strokeWidth = 1.5 }: { size?: nu
   );
 }
 
-type View = "devices" | "sessions" | "tests" | "registers" | "traffic" | "simulator";
+type View = "devices" | "sessions" | "tests" | "registers" | "functions" | "traffic" | "simulator";
 type Status = "OK" | "Aprobado" | "Error" | "Timeout" | "CRC Error" | "Excepción" | "Pendiente";
 type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc6";
 type SessionState = "Limpia" | "Activa sin guardar" | "Guardada" | "Modificada";
@@ -110,7 +117,7 @@ interface SessionDocument {
   format: "jwmodbus-session";
   version: 1;
   session: { id: string; name: string; createdAt: string; updatedAt: string; status: SessionState; notes: string };
-  connection: { protocol: "RTU"; port: string; baudRate: number; dataBits: number; parity: string; stopBits: number; timeoutMs: number; echo?: EchoMode };
+  connection: ConnectionSettings;
   devices: Device[];
   activeSlaveId: number | null;
   stats: Stats;
@@ -125,6 +132,25 @@ interface SessionDocument {
   registerMaps: unknown[];
   templates: unknown[];
   simulator?: SlaveSimulatorSessionConfig | null;
+  /** Numbering shown in the app; frames always carry protocol addresses. */
+  addressMode?: AddressMode;
+  pollWindows?: PollDefinition[];
+}
+interface ConnectionSettings {
+  /** Shown in old sessions and reports: RTU, ASCII, TCP or RTU/TCP. */
+  protocol: string;
+  transport?: MasterTransport;
+  serialFraming?: SerialFraming;
+  host?: string;
+  tcpPort?: number;
+  tcpFraming?: TcpFraming;
+  port: string;
+  baudRate: number;
+  dataBits: number;
+  parity: string;
+  stopBits: number;
+  timeoutMs: number;
+  echo?: EchoMode;
 }
 interface RecentSession { id: string; name: string; savedAt: string; filePath: string; devices: number; registers: number; tests: string; errors: number; status: SessionState }
 
@@ -137,6 +163,7 @@ const nav: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "sessions", label: "Sesiones", icon: Clock3 },
   { id: "tests", label: "Pruebas", icon: FlaskConical },
   { id: "registers", label: "Registros", icon: Database },
+  { id: "functions", label: "Funciones", icon: Terminal },
   { id: "traffic", label: "Tráfico Modbus", icon: Activity },
   { id: "simulator", label: "Simulador", icon: Server }
 ];
@@ -149,16 +176,8 @@ const fnMap: Record<Fn, { short: string; label: string }> = {
   fc6: { short: "FC06", label: "FC06 Write Single Register" }
 };
 
-const registerMeta: Record<number, { name: string; type: string; access: string; unit?: string }> = {
-  0: { name: "Velocidad_Ref", type: "uint16", access: "R/W", unit: "RPM" },
-  1: { name: "Estado_Variador", type: "uint16", access: "R/W" },
-  2: { name: "Corriente_Salida", type: "uint16", access: "R/W", unit: "A" },
-  3: { name: "Tension_DC", type: "uint16", access: "R/W", unit: "V" },
-  4: { name: "Temp_Disipador", type: "uint16", access: "R/W", unit: "°C" },
-  5: { name: "Horas_Marcha", type: "uint16", access: "R/W", unit: "h" },
-  8: { name: "Frecuencia_Salida", type: "uint16", access: "R/W", unit: "Hz" },
-  9: { name: "Estado_Alarma", type: "uint16", access: "R/W" }
-};
+const LAST_TCP_HOST_STORAGE_KEY = "jw-modbus-tool.simple.last-tcp-host.v1";
+const ADDRESS_MODE_STORAGE_KEY = "jw-modbus-tool.simple.address-mode.v1";
 
 let rowId = 1;
 
@@ -183,15 +202,20 @@ export function SimpleModeApp() {
   const [qAddr, setQAddr] = useState(40000);
   const [qQty, setQQty] = useState(6);
   const [quick, setQuick] = useState<RegisterRow[]>([]);
-  const [rFn, setRFn] = useState<Fn>("fc3");
-  const [rAddr, setRAddr] = useState(40000);
-  const [rQty, setRQty] = useState(10);
-  const [rAutoRead, setRAutoRead] = useState(false);
-  const [rInterval, setRInterval] = useState(1000);
   const [regs, setRegs] = useState<RegisterRow[]>([]);
-  const trendHistory = useRef(new Map<string, TrendPoint[]>());
-  const [selectedRegister, setSelectedRegister] = useState<RegisterRow | null>(null);
-  const registerReadInFlight = useRef(false);
+  const [transport, setTransport] = useState<MasterTransport>("serial");
+  const [serialFraming, setSerialFraming] = useState<SerialFraming>("rtu");
+  const [host, setHost] = useState(() => loadStored(LAST_TCP_HOST_STORAGE_KEY) || "127.0.0.1");
+  const [tcpPort, setTcpPort] = useState(502);
+  const [tcpFraming, setTcpFraming] = useState<TcpFraming>("mbap");
+  const [addressMode, setAddressMode] = useState<AddressMode>(() => { const stored = loadStored(ADDRESS_MODE_STORAGE_KEY); return isAddressMode(stored) ? stored : "jw"; });
+  const addressModeRef = useRef(addressMode);
+  addressModeRef.current = addressMode;
+  const pollWindows = useSyncExternalStore(pollEngine.subscribe, pollEngine.getSnapshot);
+  const pollDefinitions = useMemo(() => pollWindows.map((window) => window.def), [pollWindows]);
+  const framing: Framing = transport === "tcp" ? (tcpFraming === "mbap" ? "tcp" : "rtu") : serialFraming;
+  const connectionLabel = transport === "tcp" ? `${host}:${tcpPort}` : port === INTERNAL_SIMULATOR_PATH ? INTERNAL_PORT_LABEL : port || "Sin puerto";
+  const protocolLabel = protocolName(transport, serialFraming, tcpFraming);
   const [activity, setActivity] = useState<ActivityRow[]>([]);
   const [traffic, setTraffic] = useState<TrafficRow[]>([]);
   const [stats, setStats] = useState<Stats>({ requests: 0, responses: 0, errors: 0, timeouts: 0 });
@@ -212,13 +236,14 @@ export function SimpleModeApp() {
     () => (activeId === null ? null : devices.find((device) => device.id === activeId) ?? null),
     [activeId, devices]
   );
-  const currentSignature = useMemo(() => signatureFromState({ sessionName, port, baud, dataBits, parity, stopBits, echo, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices }), [sessionName, port, baud, dataBits, parity, stopBits, echo, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices]);
+  const connectionSettings = useMemo<ConnectionSettings>(() => ({ protocol: protocolLabel, transport, serialFraming, host, tcpPort, tcpFraming, port, baudRate: baud, dataBits, parity, stopBits, timeoutMs: timeout, echo }), [protocolLabel, transport, serialFraming, host, tcpPort, tcpFraming, port, baud, dataBits, parity, stopBits, timeout, echo]);
+  const currentSignature = useMemo(() => signatureFromState({ sessionName, connection: connectionSettings, addressMode, pollWindows: pollDefinitions, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices }), [sessionName, connectionSettings, addressMode, pollDefinitions, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices]);
   const sessionState = useMemo<SessionState>(() => {
-    const isClean = devices.length === 0 && activity.length === 0 && stats.requests === 0 && testsExecutionHistory.length === 0 && notes.trim().length === 0 && simulatorDevices.length === 0;
+    const isClean = devices.length === 0 && activity.length === 0 && stats.requests === 0 && testsExecutionHistory.length === 0 && notes.trim().length === 0 && simulatorDevices.length === 0 && pollDefinitions.length === 0;
     if (isClean) return "Limpia";
     if (!sessionFilePath) return "Activa sin guardar";
     return lastSavedSignature === currentSignature ? "Guardada" : "Modificada";
-  }, [activity.length, currentSignature, devices.length, lastSavedSignature, notes, sessionFilePath, stats.requests, testsExecutionHistory.length, simulatorDevices.length]);
+  }, [activity.length, currentSignature, devices.length, lastSavedSignature, notes, sessionFilePath, stats.requests, testsExecutionHistory.length, simulatorDevices.length, pollDefinitions.length]);
 
   useEffect(() => { void initBackend(); }, []);
   useEffect(() => {
@@ -239,32 +264,16 @@ export function SimpleModeApp() {
     return () => window.removeEventListener("jw-simple-tests-history-updated", syncHistory);
   }, []);
   useEffect(() => { storeLastSerialPort(port); }, [port]);
-  useEffect(() => { if (!selectedRegister && regs.length > 0) setSelectedRegister(regs[0]); }, [regs, selectedRegister]);
+  useEffect(() => { storeValue(LAST_TCP_HOST_STORAGE_KEY, host.trim()); }, [host]);
+  useEffect(() => { storeValue(ADDRESS_MODE_STORAGE_KEY, addressMode); }, [addressMode]);
+  useEffect(() => { pollEngine.setAddressModeSource(() => addressModeRef.current); }, []);
+  useEffect(() => pollEngine.onAction(recordPollAction), [devices]);
 
   useEffect(() => {
     setQQty(qFn === "fc1" || qFn === "fc2" ? 8 : 6);
     setQuick([]);
   }, [qFn]);
-  useEffect(() => {
-    if (!rAutoRead || view !== "registers" || activeId === null || !connected) return;
-    let cancelled = false;
-    const tick = async () => {
-      if (registerReadInFlight.current) return;
-      registerReadInFlight.current = true;
-      try {
-        await registerRead(false);
-      } finally {
-        registerReadInFlight.current = false;
-      }
-    };
-    void tick();
-    const timer = window.setInterval(() => { if (!cancelled) void tick(); }, Math.max(250, rInterval));
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [rAutoRead, rInterval, view, connected, activeId, rFn, rAddr, rQty, timeout]);
-
+  useEffect(() => { setQAddr(toDisplayAddress(addressMode, fnTable(qFn), 0)); }, [qFn, addressMode]);
   async function initBackend() {
     if (!bridge) return;
     const [portResult, stateResult] = await Promise.all([bridge.serial.listPorts(), bridge.serial.getConnectionState()]);
@@ -279,6 +288,12 @@ export function SimpleModeApp() {
         setParity(state.config.parity);
         setStopBits(state.config.stopBits);
         if (isEchoMode(state.config.echo)) setEcho(state.config.echo);
+        if (state.config.transport === "tcp") {
+          setTransport("tcp");
+          if (state.config.host) setHost(state.config.host);
+          if (state.config.tcpPort) setTcpPort(state.config.tcpPort);
+          setTcpFraming(state.config.framing === "rtu" ? "rtu" : "mbap");
+        } else if (state.config.framing === "ascii" || state.config.framing === "rtu") setSerialFraming(state.config.framing);
       }
     }
     if (portResult.ok) setVisiblePorts(portResult.value as unknown as Array<Record<string, unknown>>, currentPath);
@@ -315,9 +330,13 @@ export function SimpleModeApp() {
 
   async function connect() {
     if (!bridge) return setMessage("Backend Electron no disponible.");
-    if (!port) return setMessage("No hay puerto seleccionado. Recarga la lista de puertos.");
+    if (transport === "serial" && !port) return setMessage("No hay puerto seleccionado. Recarga la lista de puertos.");
+    if (transport === "tcp" && !host.trim()) return setMessage("Escribe la IP o el nombre del equipo Modbus TCP.");
+    pollEngine.stopAll();
     setBusy(true);
-    const result = await bridge.serial.open({ path: port, baudRate: baud, dataBits: dataBits === 7 ? 7 : 8, parity: parity as "none" | "even" | "odd", stopBits: stopBits === 2 ? 2 : 1, echo });
+    const result = transport === "tcp"
+      ? await bridge.serial.open({ path: "", baudRate: 0, transport: "tcp", host: host.trim(), tcpPort, tcpFraming })
+      : await bridge.serial.open({ path: port, baudRate: baud, dataBits: dataBits === 7 ? 7 : 8, parity: parity as "none" | "even" | "odd", stopBits: stopBits === 2 ? 2 : 1, echo, transport: "serial", framing: serialFraming });
     setBusy(false);
     if (!result.ok) {
       setConnected(false);
@@ -325,13 +344,15 @@ export function SimpleModeApp() {
       return;
     }
     setConnected(Boolean(result.value.connected));
-    setMessage(port === INTERNAL_SIMULATOR_PATH
-      ? "Conectado al simulador interno, sin puerto COM. Escanea para ver los slaves virtuales de la vista Simulador."
-      : `Conectado a ${port}. Escanea para detectar slaves reales.`);
+    if (transport === "tcp") setMessage(`Conectado por ${protocolLabel} a ${host.trim()}:${tcpPort}. Escanea o crea una ventana en Registros.`);
+    else setMessage(port === INTERNAL_SIMULATOR_PATH
+      ? `Conectado al simulador interno (${protocolLabel}), sin puerto COM. Escanea para ver los slaves virtuales de la vista Simulador.`
+      : `Conectado a ${port} (${protocolLabel}). Escanea para detectar slaves reales.`);
   }
 
   async function disconnect() {
     if (!bridge) return;
+    pollEngine.stopAll();
     setBusy(true);
     const result = await bridge.serial.close();
     setBusy(false);
@@ -353,7 +374,7 @@ export function SimpleModeApp() {
     setLastScan(null);
     setQuick([]);
     setRegs([]);
-    setSelectedRegister(null);
+    pollEngine.load([]);
     setActivity([]);
     setTraffic([]);
     setStats({ requests: 0, responses: 0, errors: 0, timeouts: 0 });
@@ -418,7 +439,7 @@ export function SimpleModeApp() {
       format: "jwmodbus-session",
       version: 1,
       session: { id, name: sessionName.trim() || "Nueva_sesion_Modbus", createdAt: sessionCreatedAt, updatedAt: now, status, notes },
-      connection: { protocol: "RTU", port, baudRate: baud, dataBits, parity, stopBits, timeoutMs: timeout, echo },
+      connection: connectionSettings,
       devices,
       activeSlaveId: activeId,
       stats,
@@ -432,7 +453,9 @@ export function SimpleModeApp() {
       testsExecutionHistoryUpdatedAt: history.length ? now : null,
       registerMaps: [],
       templates: [],
-      simulator
+      simulator,
+      addressMode,
+      pollWindows: pollEngine.definitions()
     };
   }
 
@@ -449,12 +472,18 @@ export function SimpleModeApp() {
     setStopBits(document.connection.stopBits);
     setEcho(document.connection.echo ?? defaultEchoMode);
     setTimeoutMs(document.connection.timeoutMs);
+    setTransport(document.connection.transport === "tcp" ? "tcp" : "serial");
+    setSerialFraming(document.connection.serialFraming === "ascii" ? "ascii" : "rtu");
+    if (document.connection.host) setHost(document.connection.host);
+    setTcpPort(document.connection.tcpPort ?? 502);
+    setTcpFraming(document.connection.tcpFraming === "rtu" ? "rtu" : "mbap");
+    if (document.addressMode) setAddressMode(document.addressMode);
+    pollEngine.load(document.pollWindows ?? []);
     setDevices(document.devices ?? []);
     setActiveId(document.activeSlaveId ?? null);
     setStats(document.stats ?? { requests: 0, responses: 0, errors: 0, timeouts: 0 });
     setQuick(document.quickReads ?? []);
     setRegs(document.registerSnapshot ?? []);
-    setSelectedRegister(document.registerSnapshot?.[0] ?? null);
     setActivity((document.activity ?? []).map((item) => ({ ...item, at: new Date(item.at) })));
     setTraffic((document.traffic ?? []).map((item) => ({ ...item, at: new Date(item.at) })));
     setTests(document.tests ?? createCleanTests());
@@ -480,7 +509,7 @@ export function SimpleModeApp() {
 
   function requireReady() {
     if (!bridge) { setMessage("Abre la app en Electron para usar el backend serial."); return false; }
-    if (!connected) { setMessage("Conecta primero el puerto serial."); return false; }
+    if (!connected) { setMessage("Conecta primero (puerto serie o TCP)."); return false; }
     return true;
   }
 
@@ -497,8 +526,9 @@ export function SimpleModeApp() {
         found.push(device);
         const action = result.value as { registerValues?: Array<number | boolean> };
         const values = action.registerValues ?? [];
-        const rows = buildRegisterRows("fc3", 40000, values);
-        pushActivity({ ms: Date.now() - started, slave: id, device: device.name, fn: "FC03", fnKey: "fc3", label: "Escaneo detectó respuesta", address: 40000, range: "40000 / 1 reg", qty: 1, values: valuesPreview("fc3", 40000, values), rows, status: "OK" });
+        const rows = buildRegisterRows("fc3", 0, values, addressMode);
+        const first = toDisplayAddress(addressMode, 3, 0);
+        pushActivity({ ms: Date.now() - started, slave: id, device: device.name, fn: "FC03", fnKey: "fc3", label: "Escaneo detectó respuesta", address: first, range: `${first} / 1 reg`, qty: 1, values: valuesPreview("fc3", 0, values, addressMode), rows, status: "OK" });
       }
       
       // Añadir Turnaround Delay entre escaneos para evitar colisiones RS485
@@ -517,7 +547,13 @@ export function SimpleModeApp() {
   async function readRegisters(fn: Fn, unitId: number, displayAddress: number, quantity: number, timeoutMs = timeout) {
     if (!requireReady()) return null;
     const started = new Date();
-    const rawStart = rawAddress(fn, displayAddress);
+    let rawStart: number;
+    try {
+      rawStart = toProtocolAddress(addressMode, fnTable(fn), displayAddress);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Dirección no válida");
+      return null;
+    }
     const command = { unitId, startAddress: rawStart, quantity, timeoutMs };
     setStats((current) => ({ ...current, requests: current.requests + 1 }));
     let result;
@@ -535,10 +571,10 @@ export function SimpleModeApp() {
     const action = result.value as { exception?: unknown; crcOk?: boolean; registerValues?: Array<number | boolean>; values?: Array<number | boolean>; elapsedMs?: number; timestamp?: string; unitId: number };
     const status: Status = action.exception ? "Excepción" : action.crcOk !== false ? "OK" : "CRC Error";
     const values = action.registerValues ?? action.values ?? [];
-    const rows = buildRegisterRows(fn, displayAddress, values);
+    const rows = buildRegisterRows(fn, rawStart, values, addressMode);
     setStats((current) => ({ ...current, responses: current.responses + (status === "OK" ? 1 : 0), errors: current.errors + (status === "OK" ? 0 : 1) }));
     pushTrafficAction(action, fn, displayNameFor(unitId), displayAddress, quantity, status);
-    pushActivity({ ms: action.elapsedMs ?? Date.now() - started.getTime(), slave: unitId, device: displayNameFor(unitId), fn: fnMap[fn].short, fnKey: fn, label: fnMap[fn].label, address: displayAddress, range: `${displayAddress} / ${quantity} ${fn === "fc1" || fn === "fc2" ? "bits" : "regs"}`, qty: quantity, values: valuesPreview(fn, displayAddress, values), rows, status });
+    pushActivity({ ms: action.elapsedMs ?? Date.now() - started.getTime(), slave: unitId, device: displayNameFor(unitId), fn: fnMap[fn].short, fnKey: fn, label: fnMap[fn].label, address: displayAddress, range: `${displayAddress} / ${quantity} ${fn === "fc1" || fn === "fc2" ? "bits" : "regs"}`, qty: quantity, values: valuesPreview(fn, rawStart, values, addressMode), rows, status });
     return { values, rows, action };
   }
 
@@ -555,18 +591,6 @@ export function SimpleModeApp() {
     if (showBusy) setMessage(`${result.values.length} valor(es) leídos desde ${qAddr}.`);
   }
 
-  async function registerRead(showBusy = true) {
-    if (activeId === null) return setMessage("Primero escanea y selecciona un slave activo.");
-    if (showBusy) setBusy(true);
-    const result = await readRegisters(rFn, activeId, rAddr, rQty);
-    if (showBusy) setBusy(false);
-    if (!result) return;
-    appendTrend(trendHistory.current, result.rows, String(activeId), Date.now());
-    setRegs(result.rows);
-    setSelectedRegister((current) => result.rows.find((row) => row.address === current?.address) ?? result.rows[0] ?? null);
-    setMessage("Mapa de registros actualizado.");
-  }
-
   async function runTests() {
     if (activeId === null) return setMessage("Primero detecta un slave activo.");
     if (!requireReady()) return;
@@ -579,7 +603,7 @@ export function SimpleModeApp() {
       if (test.fn === "fc6") {
         const started = new Date();
         setStats((current) => ({ ...current, requests: current.requests + 1 }));
-        const result = await bridge!.modbus.writeSingleRegister({ unitId: test.slave, address: rawAddress(test.fn, test.address), value: test.amount, timeoutMs: test.timeout });
+        const result = await bridge!.modbus.writeSingleRegister({ unitId: test.slave, address: legacyRawAddress(test.fn, test.address), value: test.amount, timeoutMs: test.timeout });
         if (result.ok) {
           const action = result.value as { exception?: unknown; unitId: number; elapsedMs?: number; timestamp?: string };
           test.result = action.exception ? "Excepción" : "Aprobado";
@@ -637,32 +661,73 @@ export function SimpleModeApp() {
     const request: TrafficRow = { id: rowId++, dir: "up", at, route: `PC Master → ${device}`, slave: unitId, type: "Petición", fn: fnMap[fn].short, status, summary: error };
     setTraffic((current) => [request, ...current].slice(0, 80));
   }
+  function pushTrafficEvent(input: { at: Date; unitId: number; fn: string; summary: string; status: Status; ms?: number; reply?: string }) {
+    const device = displayNameFor(input.unitId);
+    const request: TrafficRow = { id: rowId++, dir: "up", at: input.at, route: `PC Master → ${device}`, slave: input.unitId, type: "Petición", fn: input.fn, status: input.status, summary: input.summary, ms: input.ms };
+    const rows = [request];
+    if (input.reply) rows.unshift({ id: rowId++, dir: "down", at: input.at, route: `${device} → PC Master`, slave: input.unitId, type: "Respuesta", fn: input.fn, status: input.status, summary: input.reply, ms: input.ms });
+    setTraffic((current) => [...rows, ...current].slice(0, 80));
+  }
+  function countRequest(status: Status) {
+    setStats((current) => ({
+      requests: current.requests + 1,
+      responses: current.responses + (status === "OK" ? 1 : 0),
+      errors: current.errors + (status === "OK" ? 0 : 1),
+      timeouts: current.timeouts + (status === "Timeout" ? 1 : 0)
+    }));
+  }
+  function recordPollAction(event: PollActionEvent) {
+    const status = pollStatusLabel(event.status);
+    const fc = event.request.fc;
+    const summary = "startAddress" in event.request
+      ? `${requestName(fc)} (${toDisplayAddress(addressModeRef.current, tableOf(fc), event.request.startAddress)}${"quantity" in event.request ? ` ×${event.request.quantity}` : ""})`
+      : "address" in event.request ? `${requestName(fc)} (${toDisplayAddress(addressModeRef.current, tableOf(fc), event.request.address)})` : requestName(fc);
+    countRequest(status);
+    pushTrafficEvent({ at: event.at, unitId: event.unitId, fn: `FC${String(fc).padStart(2, "0")}`, summary, status, ms: event.action?.elapsedMs, reply: event.action ? event.action.exception ? exceptionName(event.action.exception) : event.action.summary : event.error });
+  }
+  function recordFunctionResult(label: string, unitId: number, result: SerialOperationResult<RtuMasterActionResult>, at: Date) {
+    const status: Status = !result.ok ? (/timed\s*out|timeout/i.test(result.error) ? "Timeout" : "Error") : result.value.exception ? "Excepción" : result.value.crcOk ? "OK" : "CRC Error";
+    countRequest(status);
+    pushTrafficEvent({ at, unitId, fn: result.ok ? `FC${String(result.value.functionCode).padStart(2, "0")}` : label.split(" ")[0], summary: label, status, ms: result.ok ? result.value.elapsedMs : undefined, reply: result.ok ? result.value.summary : result.error });
+  }
   function displayNameFor(id: number) { return devices.find((device) => device.id === id)?.name ?? `Slave ID ${id}`; }
 
   function handleMinimize() { bridge?.window?.minimize?.(); }
   function handleMaximize() { bridge?.window?.maximize?.(); }
   function handleClose() { bridge?.window?.close?.(); }
 
-  return <main className="shell"><header className="toolbar" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>{busy && <span>Procesando…</span>}<button onClick={handleMinimize}><Minus size={18} strokeWidth={2} /></button><button onClick={handleMaximize}><Square size={14} strokeWidth={2.5} /></button><button className="close-btn" onClick={handleClose}><X size={18} strokeWidth={2} /></button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia MIT<br /><small>Versión {__APP_VERSION__}</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, echo, setEcho, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} onSaveSession={saveSession} isSessionSaved={!!sessionFilePath} />}{view === "registers" && <RegistersView {...{ activeDevice, rFn, setRFn, rAddr, setRAddr, rQty, setRQty, rAutoRead, setRAutoRead, rInterval, setRInterval, regs, selectedRegister, setSelectedRegister, registerRead, activity, trendHistory: trendHistory.current }} />}{view === "traffic" && <TrafficView traffic={traffic} />}{view === "simulator" && <SimulatorView masterPort={port} masterConnected={connected} onMessage={setMessage} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{port || "Sin puerto"}</span><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
+  return <main className="shell"><header className="toolbar" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>{busy && <span>Procesando…</span>}<button onClick={handleMinimize}><Minus size={18} strokeWidth={2} /></button><button onClick={handleMaximize}><Square size={14} strokeWidth={2.5} /></button><button className="close-btn" onClick={handleClose}><X size={18} strokeWidth={2} /></button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia MIT<br /><small>Versión {__APP_VERSION__}</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ transport, setTransport, serialFraming, setSerialFraming, host, setHost, tcpPort, setTcpPort, tcpFraming, setTcpFraming, addressMode, setAddressMode, protocolLabel, connectionLabel, ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, echo, setEcho, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ protocolLabel, connectionLabel, transport, sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} onSaveSession={saveSession} isSessionSaved={!!sessionFilePath} />}{view === "registers" && <PollView addressMode={addressMode} connected={connected} activeSlaveId={activeId} onMessage={setMessage} />}{view === "functions" && <FunctionsView addressMode={addressMode} connected={connected} framing={framing} defaultUnitId={activeId ?? 1} timeoutMs={timeout} onResult={recordFunctionResult} onMessage={setMessage} />}{view === "traffic" && <TrafficView traffic={traffic} protocolLabel={protocolLabel} />}{view === "simulator" && <SimulatorView masterPort={port} masterConnected={connected} onMessage={setMessage} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{protocolLabel}</span><span>{connectionLabel}</span>{transport === "serial" && port !== INTERNAL_SIMULATOR_PATH ? <><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span></> : null}<span>{pollWindows.filter((window) => window.rt.running).length} sondeando</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
 }
 
-function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void; baud: number; setBaud: (value: number) => void; dataBits: number; setDataBits: (value: number) => void; parity: string; setParity: (value: string) => void; stopBits: number; setStopBits: (value: number) => void; echo: EchoMode; setEcho: (value: EchoMode) => void; timeout: number; setTimeoutMs: (value: number) => void; connected: boolean; devices: Device[]; activeId: number | null; activeDevice: Device | null; selectDevice: (id: number) => void; scanDevices: () => void; lastScan: Date | null; stats: Stats; qFn: Fn; setQFn: (value: Fn) => void; qAddr: number; setQAddr: (value: number) => void; qQty: number; setQQty: (value: number) => void; quick: RegisterRow[]; quickRead: () => void; activity: ActivityRow[]; connect: () => void; disconnect: () => void; clearActivity: () => void }) {
+function DevicesView(props: { transport: MasterTransport; setTransport: (value: MasterTransport) => void; serialFraming: SerialFraming; setSerialFraming: (value: SerialFraming) => void; host: string; setHost: (value: string) => void; tcpPort: number; setTcpPort: (value: number) => void; tcpFraming: TcpFraming; setTcpFraming: (value: TcpFraming) => void; addressMode: AddressMode; setAddressMode: (value: AddressMode) => void; protocolLabel: string; connectionLabel: string; ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void; baud: number; setBaud: (value: number) => void; dataBits: number; setDataBits: (value: number) => void; parity: string; setParity: (value: string) => void; stopBits: number; setStopBits: (value: number) => void; echo: EchoMode; setEcho: (value: EchoMode) => void; timeout: number; setTimeoutMs: (value: number) => void; connected: boolean; devices: Device[]; activeId: number | null; activeDevice: Device | null; selectDevice: (id: number) => void; scanDevices: () => void; lastScan: Date | null; stats: Stats; qFn: Fn; setQFn: (value: Fn) => void; qAddr: number; setQAddr: (value: number) => void; qQty: number; setQQty: (value: number) => void; quick: RegisterRow[]; quickRead: () => void; activity: ActivityRow[]; connect: () => void; disconnect: () => void; clearActivity: () => void }) {
   const [activityDetail, setActivityDetail] = useState<ActivityRow | null>(null);
 
   return (
     <div className="devices grid">
       <Card title="Conectar" className="connect panel-fusion" action={<Info size={15} className="hint-icon" />}>
         <div className="segmented-control">
-          <button className="active">RTU</button>
-          <button className="disabled">TCP</button>
+          <button className={props.transport === "serial" ? "active" : ""} disabled={props.connected} onClick={() => props.setTransport("serial")}>Serie (RS485)</button>
+          <button className={props.transport === "tcp" ? "active" : ""} disabled={props.connected} onClick={() => props.setTransport("tcp")}>TCP / Ethernet</button>
         </div>
-        <PortSelectRow ports={props.ports} port={props.port} setPort={props.setPort} refreshPorts={props.refreshPorts} />
-        <SelectField label="Baud Rate" value={String(props.baud)} onChange={(value) => props.setBaud(Number(value))} options={["9600", "19200", "38400", "57600", "115200"]} />
-        <SelectField label="Bits de datos" value={String(props.dataBits)} onChange={(value) => props.setDataBits(Number(value))} options={["8", "7"]} />
-        <SelectField label="Paridad" value={props.parity} onChange={props.setParity} options={["none", "even", "odd"]} />
-        <SelectField label="Bits de parada" value={String(props.stopBits)} onChange={(value) => props.setStopBits(Number(value))} options={["1", "2"]} />
-        <SelectField label="Eco del conversor" value={props.echo} onChange={(value) => props.setEcho(isEchoMode(value) ? value : defaultEchoMode)} options={["auto", "off", "on"]} labels={echoModeLabels} />
+        {props.transport === "serial" ? (
+          <>
+            <PortSelectRow ports={props.ports} port={props.port} setPort={props.setPort} refreshPorts={props.refreshPorts} />
+            <SelectField label="Protocolo" value={props.serialFraming} onChange={(value) => props.setSerialFraming(value === "ascii" ? "ascii" : "rtu")} options={["rtu", "ascii"]} labels={{ rtu: "Modbus RTU", ascii: "Modbus ASCII" }} />
+            <SelectField label="Baud Rate" value={String(props.baud)} onChange={(value) => props.setBaud(Number(value))} options={["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"]} />
+            <SelectField label="Bits de datos" value={String(props.dataBits)} onChange={(value) => props.setDataBits(Number(value))} options={["8", "7"]} />
+            <SelectField label="Paridad" value={props.parity} onChange={props.setParity} options={["none", "even", "odd"]} labels={{ none: "Ninguna", even: "Par", odd: "Impar" }} />
+            <SelectField label="Bits de parada" value={String(props.stopBits)} onChange={(value) => props.setStopBits(Number(value))} options={["1", "2"]} />
+            <SelectField label="Eco del conversor" value={props.echo} onChange={(value) => props.setEcho(isEchoMode(value) ? value : defaultEchoMode)} options={["auto", "off", "on"]} labels={echoModeLabels} />
+          </>
+        ) : (
+          <>
+            <label className="field"><span>IP o equipo</span><input type="text" value={props.host} placeholder="192.168.1.10" onChange={(event) => props.setHost(event.target.value)} /></label>
+            <NumberField label="Puerto TCP" value={props.tcpPort} onChange={props.setTcpPort} />
+            <SelectField label="Protocolo" value={props.tcpFraming} onChange={(value) => props.setTcpFraming(value === "rtu" ? "rtu" : "mbap")} options={["mbap", "rtu"]} labels={{ mbap: "Modbus TCP (MBAP)", rtu: "RTU sobre TCP (pasarela)" }} />
+          </>
+        )}
         <NumberField label="Timeout (ms)" value={props.timeout} onChange={props.setTimeoutMs} />
+        <SelectField label="Direcciones" value={props.addressMode} onChange={(value) => props.setAddressMode(isAddressMode(value) ? value : "jw")} options={addressModes} labels={addressModeLabels} />
         {props.connected ? (
           <button className="primary block-btn danger-btn" style={{marginTop: '10px'}} onClick={props.disconnect}><Unplug size={18} /> Desconectar</button>
         ) : (
@@ -709,7 +774,7 @@ function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value
             <div className="dt-group-title">
               <ChevronDown size={16} />
               <Network size={18} color="#0ea5e9" />
-              <span>Red Modbus RTU ({props.port || "COM3"})</span>
+              <span>Red {props.protocolLabel} ({props.connectionLabel})</span>
             </div>
             <div className="dt-col-type"></div>
             <div className="dt-col-status">
@@ -807,13 +872,13 @@ function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value
 
 function ActivityDetail({ row, onClose }: { row: ActivityRow; onClose: () => void }) { return <div className="activityDetail"><div className="activityDetailHeader"><div><strong>Detalle de lectura</strong><small>{fmt(row.at)} · {row.device}</small></div><button className="infoButton" onClick={onClose} title="Cerrar detalle"><X size={15} /></button></div><div className="detailFacts"><Fact label="Función" value={row.label} /><Fact label="Slave ID" value={String(row.slave)} /><Fact label="Dirección inicial" value={String(row.address)} /><Fact label="Cantidad" value={String(row.qty)} /><Fact label="Duración" value={`${row.ms} ms`} /><Fact label="Resultado" value={row.status} /></div><div className="detailTable"><Table columns={["Dirección", "Nombre", "Valor", "Tipo", "Acceso", "Estado"]} rows={row.rows.map((item) => [item.address, withUnit(item), valueCell(item), item.type, item.access, <Status status={item.status} />])} /></div></div>; }
 
-function SessionsView(props: { sessionName: string; setSessionName: (value: string) => void; recentSessions: RecentSession[]; onNew: () => void; onSave: () => void; onSaveAs: () => void; onOpen: (filePath?: string) => void; activity: ActivityRow[]; devices: Device[]; stats: Stats; traffic: TrafficRow[]; tests: TestRow[]; testsRuntime: TestsRuntimeState | null; connected: boolean; port: string; baud: number; dataBits: number; parity: string; stopBits: number; activeId: number | null; sessionId: string | null; sessionFilePath: string | null; sessionState: SessionState; notes: string; setNotes: (value: string) => void; renameDevice: (id: number, name: string) => void; }) {
+function SessionsView(props: { protocolLabel: string; connectionLabel: string; transport: MasterTransport; sessionName: string; setSessionName: (value: string) => void; recentSessions: RecentSession[]; onNew: () => void; onSave: () => void; onSaveAs: () => void; onOpen: (filePath?: string) => void; activity: ActivityRow[]; devices: Device[]; stats: Stats; traffic: TrafficRow[]; tests: TestRow[]; testsRuntime: TestsRuntimeState | null; connected: boolean; port: string; baud: number; dataBits: number; parity: string; stopBits: number; activeId: number | null; sessionId: string | null; sessionFilePath: string | null; sessionState: SessionState; notes: string; setNotes: (value: string) => void; renameDevice: (id: number, name: string) => void; }) {
   const registerReads = props.activity.reduce((total, item) => total + item.rows.length, 0);
   const testSummary = sessionTestSummary(props.testsRuntime, props.tests);
   const failed = testSummary.failed;
   const testsProgress = `${testSummary.passed}/${testSummary.total}`;
   const currentName = props.sessionName.trim() || "Nueva_sesion_Modbus";
-  const connectionText = props.connected && props.port ? `${props.port} · ${props.baud} · ${props.dataBits}${props.parity === "none" ? "N" : props.parity[0].toUpperCase()}${props.stopBits}` : "Sin puerto activo";
+  const connectionText = !props.connected ? "Sin conexión activa" : props.transport === "tcp" || props.port === INTERNAL_SIMULATOR_PATH ? props.connectionLabel : `${props.port} · ${props.baud} · ${props.dataBits}${props.parity === "none" ? "N" : props.parity[0].toUpperCase()}${props.stopBits}`;
   const recent = props.recentSessions.filter((session) => session.filePath !== props.sessionFilePath);
   
   const [renameId, setRenameId] = useState<number | "">(props.devices.length > 0 ? props.devices[0].id : "");
@@ -829,7 +894,7 @@ function SessionsView(props: { sessionName: string; setSessionName: (value: stri
     </div>
     
     <div style={{ display: "flex", flexDirection: "column", gap: "14px", gridRow: "2 / 3" }}>
-      <Card title="Sesión actual" className="current" action={<span className="oktext">● {props.sessionState}</span>}><h1><input className="sessionNameInput" value={props.sessionName} onChange={(event) => props.setSessionName(event.target.value)} aria-label="Nombre de sesión" /> <Pencil size={15} /></h1><div className="facts"><Fact label="Rol" value="PC Master" /><Fact label="Protocolo" value="RTU" /><Fact label="Slave activo" value={props.activeId ? `${displayDeviceName(props.devices, props.activeId)} — ID ${props.activeId}` : "Sin seleccionar"} /><Fact label="Conexión" value={connectionText} /><Fact label="Última actividad" value={props.activity[0] ? time(props.activity[0].at) : "—"} /></div><button className="primary wide"><Play size={16} />Continuar sesión</button></Card>
+      <Card title="Sesión actual" className="current" action={<span className="oktext">● {props.sessionState}</span>}><h1><input className="sessionNameInput" value={props.sessionName} onChange={(event) => props.setSessionName(event.target.value)} aria-label="Nombre de sesión" /> <Pencil size={15} /></h1><div className="facts"><Fact label="Rol" value="PC Master" /><Fact label="Protocolo" value={props.protocolLabel} /><Fact label="Slave activo" value={props.activeId ? `${displayDeviceName(props.devices, props.activeId)} — ID ${props.activeId}` : "Sin seleccionar"} /><Fact label="Conexión" value={connectionText} /><Fact label="Última actividad" value={props.activity[0] ? time(props.activity[0].at) : "—"} /></div><button className="primary wide"><Play size={16} />Continuar sesión</button></Card>
       <Card title="Sesiones recientes" className="sessionlist"><div className="sessionRows"><SessionRow name={currentName} date={props.sessionFilePath ? shortPath(props.sessionFilePath) : "Actual"} devices={props.devices.length} registers={registerReads} tests={testsProgress} errors={props.stats.errors + failed} status={props.sessionState} action="En curso" /><>{recent.length === 0 ? <Empty text="Aún no hay sesiones guardadas. Presiona Guardar sesión para conservar la actual." /> : recent.map((session) => <SessionRow key={session.filePath} name={session.name} date={fmt(new Date(session.savedAt))} devices={session.devices} registers={session.registers} tests={session.tests} errors={session.errors} status={session.status} action="Abrir" onClick={() => props.onOpen(session.filePath)} />)}</></div></Card>
     </div>
     
@@ -895,100 +960,7 @@ function SessionsView(props: { sessionName: string; setSessionName: (value: stri
 function SessionRow({ name, date, devices, registers, tests, errors, status, action, onClick }: { name: string; date: string; devices: number; registers: number; tests: string; errors: number; status: string; action: string; onClick?: () => void }) { return <article className="sessionrow"><div><strong>{name}</strong><small>{date}</small></div><span>Dispositivos<b>{devices}</b></span><span>Registros<b>{registers}</b></span><span>Pruebas<b>{tests}</b></span><span>Errores<b>{errors}</b></span><button onClick={onClick} disabled={!onClick}>{action}</button><em>{status}</em></article>; }
 
 function TestsView({ tests, runTests, busy }: { tests: TestRow[]; runTests: () => void; busy: boolean }) { const passed = tests.filter((item) => item.result === "Aprobado").length; const failed = tests.filter((item) => !["Aprobado", "Pendiente"].includes(item.result)).length; return <div className="tests grid"><Card title="Plan de pruebas al slave" className="plan" action={<div><button className="primary" onClick={runTests}><Play size={15} />{busy ? "Ejecutando" : "Iniciar prueba"}</button><button><Square size={14} />Detener</button></div>}><p>PC como Master</p><div className="tableactions"><button>+ Agregar paso</button><button><Save size={15} />Guardar plan</button></div><Table columns={["Activo", "Paso", "Slave", "Función", "Dirección", "Cantidad/Valor", "Esperado", "Timeout", "Resultado"]} rows={tests.map((item) => [item.enabled ? "✓" : "", item.step, <SelectChip text={item.device} />, <SelectChip text={item.label} />, item.address, item.amount, item.expected, `${item.timeout} ms`, <Status status={item.result} />])} /><p className="note"><Info size={15} />El PC actuará como Master ejecutando esta secuencia de comandos hacia los slaves seleccionados.</p></Card><Card title="Escenarios" className="scenarios"><Scenario label="Operación normal" text="Verifica lectura y escritura correcta." ok /><Scenario label="Timeout detectado" text="Simula dispositivos no disponibles." warn /><Scenario label="Error CRC detectado" text="Introduce errores de CRC en la trama." warn /><Scenario label="Excepción Modbus" text="Forza códigos de excepción (01, 02, 03)." danger /><button className="ghost">Gestionar escenarios</button></Card><Card title="Simulador slave (PC como slave)" className="sim"><Field label="Estado" value="Detenido" /><Field label="Dirección slave" value="1" suffix="(1–247)" /><Field label="Puerto" value="COM3" select /><Field label="Baud Rate" value="115200" select /><button className="purple"><Play size={15} />Iniciar simulador slave</button><button><Settings size={15} /></button></Card><div className="testkpis"><Big label="Tasa de éxito" value={tests.length ? `${Math.round((passed / tests.length) * 100)}%` : "0%"} note="Última ejecución" /><Big label="Latencia promedio" value="—" note="Limpia" /><Big label="Errores" value={String(failed)} note="Última ejecución" danger /><Big label="Pasos completados" value={`${passed}/${tests.length}`} note="Última ejecución" /></div><Card title="Registro de ejecución" className="exec"><Table columns={["Hora", "Paso", "Slave", "Función", "Dirección", "Cantidad/Valor", "Resultado", "Tiempo", "Detalle"]} rows={tests.map((item) => ["—", item.step, item.device, item.label, item.address, item.amount, <Status status={item.result} />, "—", item.result === "Pendiente" ? "Pendiente de ejecución." : "Ejecutado."])} /></Card></div>; }
-function RegistersView(props: {
-  activeDevice: Device | null;
-  rFn: Fn;
-  setRFn: (value: Fn) => void;
-  rAddr: number;
-  setRAddr: (value: number) => void;
-  rQty: number;
-  setRQty: (value: number) => void;
-  rAutoRead: boolean;
-  setRAutoRead: (value: boolean) => void;
-  rInterval: number;
-  setRInterval: (value: number) => void;
-  regs: RegisterRow[];
-  selectedRegister: RegisterRow | null;
-  setSelectedRegister: (value: RegisterRow) => void;
-  registerRead: (showBusy?: boolean) => void | Promise<void>;
-  activity: ActivityRow[];
-  trendHistory: Map<string, TrendPoint[]>;
-}) {
-  const selected = props.selectedRegister;
-  const trendScope = String(props.activeDevice?.id ?? "—");
-  const selectedTrend = selected ? props.trendHistory.get(trendKey(trendScope, selected.address)) ?? [] : [];
-  const selectedStats = trendStats(selectedTrend);
-  return (
-    <div className="registers grid">
-      <header>
-        <Dot />
-        <h1>Slave activo: <span>{props.activeDevice ? `${props.activeDevice.name} — ID ${props.activeDevice.id}` : "Sin seleccionar"}</span></h1>
-        <p><Info size={15} />Los registros se muestran en formato decimal.</p>
-      </header>
-      <section className="tabs">
-        {["fc1", "fc2", "fc4", "fc3"].map((key) => (
-          <button key={key} className={props.rFn === key ? "active" : ""} onClick={() => props.setRFn(key as Fn)}>
-            {key === "fc1" ? "Coils (01)" : key === "fc2" ? "Discrete Inputs (02)" : key === "fc4" ? "Input Registers (04)" : "Holding Registers (03)"}
-            <small>{key === "fc1" || key === "fc3" ? "Lectura/Escritura" : "Solo lectura"}</small>
-          </button>
-        ))}
-      </section>
-      <section className="regcontrols">
-        <NumberField label="Dirección inicial" value={props.rAddr} onChange={props.setRAddr} />
-        <span>({hex(rawAddress(props.rFn, props.rAddr))})</span>
-        <NumberField label="Cantidad" value={props.rQty} onChange={props.setRQty} />
-        <button className="primary" onClick={() => void props.registerRead()} disabled={!props.activeDevice}>Leer</button>
-        <label className="inlineCheck">
-          <input type="checkbox" checked={props.rAutoRead} onChange={(event) => props.setRAutoRead(event.target.checked)} disabled={!props.activeDevice} />
-          Autolectura
-        </label>
-        <SelectField
-          label="Intervalo"
-          value={String(props.rInterval)}
-          onChange={(value) => props.setRInterval(Number(value))}
-          options={["500", "1000", "2000", "5000"]}
-          labels={{ "500": "0.5 s", "1000": "1 s", "2000": "2 s", "5000": "5 s" }}
-        />
-        <button onClick={() => props.setRAutoRead(false)} disabled={!props.rAutoRead}>Detener</button>
-      </section>
-      <Card title="Mapa de registros" className="regtable" action={<button className="ghost"><Pencil size={15} />Editar mapa</button>}>
-        {props.regs.length === 0 ? <Empty text="Sin registros leídos todavía." /> : (
-          <Table
-            columns={["Dirección", "Nombre", "Valor", "Tipo", "Acceso", "Estado"]}
-            rows={props.regs.map((row) => [
-              <button style={rowButtonStyle} onClick={() => props.setSelectedRegister(row)}><AddressCell row={row} /></button>,
-              row.name,
-              valueCell(row),
-              row.type,
-              <b className="oktext">{row.access}</b>,
-              <Status status={row.status} />,
-            ])}
-          />
-        )}
-        <p className="note"><Info size={15} />Nombre, Tipo, Unidad, Acceso y otros metadatos provienen del mapa de registros del slave activo y se guardan en la sesión.</p>
-      </Card>
-      <Card title="Registro seleccionado" className="selected">
-        <h1>{selected ? <><span className="selectedAddress">{selected.address} <small>({hex(Number(selected.address))})</small></span>{selected.name}</> : "Sin selección"}</h1>
-        <div className="vals">
-          <span>Valor actual<strong>{(selected && props.regs.find((row) => row.address === selected.address)?.value) ?? selected?.value ?? "—"}</strong></span>
-          <span>Tipo<strong>{selected?.type ?? "—"}</strong></span>
-          <span>Acceso<strong>{selected?.access ?? "—"}</strong></span>
-        </div>
-        <p>Tendencia (últimos 60 s)</p>
-        <div className="chart"><svg viewBox="0 0 400 120" preserveAspectRatio="none">{selectedTrend.length > 0 && <polyline points={trendPolyline(selectedTrend)} />}</svg></div>
-        <div className="stats"><span>Min: {selectedStats.min}</span><span>Máx: {selectedStats.max}</span><span>Prom: {selectedStats.avg}</span></div>
-      </Card>
-      <Card title="Actividad reciente" className="regactivity">
-        <Table
-          columns={["Inicio", "Fin", "Duración", "Slave ID", "Dispositivo", "Función", "Rango", "Cantidad", "Resultado", "Tiempo de respuesta"]}
-          rows={props.activity.slice(0, 3).map((item) => [fmt(item.at), fmt(item.at), `${item.ms} ms`, item.slave, item.device, item.label, item.range, item.qty, <Status status={item.status} />, item.ms ? `${item.ms} ms` : "—"])}
-        />
-      </Card>
-    </div>
-  );
-}
-
-function TrafficView({ traffic }: { traffic: TrafficRow[] }) {
+function TrafficView({ traffic, protocolLabel }: { traffic: TrafficRow[]; protocolLabel: string }) {
   const ok = traffic.filter((item) => item.status === "OK").length;
   const timeout = traffic.filter((item) => item.status === "Timeout").length;
   const crc = traffic.filter((item) => item.status === "CRC Error").length;
@@ -1033,7 +1005,7 @@ function TrafficView({ traffic }: { traffic: TrafficRow[] }) {
         <Card title="Tráfico Modbus" className="trafficmain" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <p>Visualice el historial de mensajes Modbus en tiempo real.</p>
         <div className="filters" style={{ display: "flex", flexWrap: "wrap", gap: "15px", alignItems: "center", marginBottom: "15px" }}>
-          <Field label="Protocolo" value="RTU" select />
+          <Field label="Protocolo" value={protocolLabel} select />
           <Field label="Dispositivo" value="Todos" select />
           <Field label="Slave ID" value="Todos" select />
           <Field label="Resultado" value="Todos" select />
@@ -1144,21 +1116,24 @@ function SelectChip({ text }: { text: string }) { return <span className="select
 function Scenario({ label, text, ok, warn, danger }: { label: string; text: string; ok?: boolean; warn?: boolean; danger?: boolean }) { return <article className={danger ? "danger" : warn ? "warn" : ok ? "ok" : ""}><CheckCircle2 size={20} /><div><strong>{label}</strong><span>{text}</span></div></article>; }
 function MetricRow({ icon: Icon, label, value, percent, ok, warn, danger, purple }: { label: string; value: string; percent: string; ok?: boolean; warn?: boolean; danger?: boolean; purple?: boolean; icon?: any }) { const getTheme = () => { if(ok) return "ok"; if(warn) return "warn"; if(danger) return "danger"; if(purple) return "purple"; return "neutral"; }; return <div className={`ml-row theme-${getTheme()}`}><div className="ml-icon"><Icon size={18} /></div><span className="ml-label">{label}</span><strong className="ml-value">{value}</strong><div className="ml-bar-track"><div className="ml-bar-fill" style={{ width: percent }} /></div><span className="ml-percent">{percent}</span></div>; }
 
-const rowButtonStyle = { border: 0, background: "transparent", minHeight: 0, padding: 0, justifyContent: "flex-start", color: "inherit" } as const;
 function normalizePorts(rawPorts: Array<Record<string, unknown>>): PortOption[] { const unique = new Map<string, PortOption>(); for (const raw of rawPorts) { const path = typeof raw.path === "string" ? raw.path : ""; if (!path) continue; const hasMetadata = Boolean(raw.vendorId || raw.productId || raw.manufacturer || raw.serialNumber || raw.pnpId); const label = String(raw.displayName || raw.friendlyName || raw.path); unique.set(path, { path, label, hasMetadata }); } return [...unique.values()].sort((left, right) => portNumber(left.path) - portNumber(right.path)); }
 function highestComPort(options: PortOption[]) { return [...options].sort((left, right) => portNumber(right.path) - portNumber(left.path))[0]; }
 function portNumber(path: string) { return Number(path.match(/COM(\d+)/i)?.[1] ?? 0); }
 function createDiscoveredDevice(id: number): Device { return { id, name: `Slave ID ${id}`, named: false, active: true }; }
-function rawAddress(fn: Fn, address: number) { if ((fn === "fc3" || fn === "fc6") && address >= 40000) return address - 40000; if (fn === "fc4" && address >= 30000) return address - 30000; if (fn === "fc2" && address >= 10000) return address - 10000; return address; }
-function displayAddress(fn: Fn, raw: number) { if (fn === "fc3") return 40000 + raw; if (fn === "fc4") return 30000 + raw; if (fn === "fc2") return 10000 + raw; return raw; }
-function defaultAddress(fn: Fn) { if (fn === "fc3") return 40000; if (fn === "fc4") return 30000; return 0; }
-function metaFor(fn: Fn, raw: number) { if (fn === "fc1") return { name: `Q0_${raw}`, type: "bool", access: "R/W" }; if (fn === "fc2") return { name: `I0_${raw}`, type: "bool", access: "R" }; return registerMeta[raw] ?? { name: `Reg_${displayAddress(fn, raw)}`, type: "uint16", access: fn === "fc3" ? "R/W" : "R" }; }
-function buildRegisterRows(fn: Fn, start: number, values: Array<number | boolean>): RegisterRow[] { const rawStart = rawAddress(fn, start); return values.map((value, index) => { const raw = rawStart + index; const meta = metaFor(fn, raw); return { raw, address: String(displayAddress(fn, raw)), name: meta.name, value: typeof value === "boolean" ? (value ? "ON" : "OFF") : String(value), type: meta.type, access: meta.access, status: "OK" }; }); }
-function withUnit(row: RegisterRow) { const meta = registerMeta[row.raw]; return meta?.unit ? `${row.name} (${meta.unit})` : row.name; }
-function AddressCell({ row }: { row: RegisterRow }) { const address = Number(row.address); return <span className="addrHex"><strong>{row.address}</strong><small>({Number.isFinite(address) ? hex(address) : "—"})</small></span>; }
+/** Old fixed scheme (40000 = register 0), kept only for the legacy test rows. */
+function legacyRawAddress(fn: Fn, address: number) { if ((fn === "fc3" || fn === "fc6") && address >= 40000) return address - 40000; if (fn === "fc4" && address >= 30000) return address - 30000; if (fn === "fc2" && address >= 10000) return address - 10000; return address; }
+function fnTable(fn: Fn) { return fn === "fc1" ? 1 : fn === "fc2" ? 2 : fn === "fc4" ? 4 : 3; }
+function metaFor(fn: Fn, display: number) { if (fn === "fc1") return { name: `Coil ${display}`, type: "bool", access: "R/W" }; if (fn === "fc2") return { name: `Entrada ${display}`, type: "bool", access: "R" }; return { name: `Registro ${display}`, type: "uint16", access: fn === "fc3" ? "R/W" : "R" }; }
+function buildRegisterRows(fn: Fn, rawStart: number, values: Array<number | boolean>, mode: AddressMode): RegisterRow[] { return values.map((value, index) => { const raw = rawStart + index; const display = toDisplayAddress(mode, fnTable(fn), raw); const meta = metaFor(fn, display); return { raw, address: String(display), name: meta.name, value: typeof value === "boolean" ? (value ? "ON" : "OFF") : String(value), type: meta.type, access: meta.access, status: "OK" }; }); }
+function withUnit(row: RegisterRow) { return row.name; }
 function valueCell(row: RegisterRow) { if (row.type === "bool" || row.value === "ON" || row.value === "OFF") return <span className={`bitChip ${row.value === "ON" ? "on" : "off"}`}>{row.value}</span>; return row.value; }
-function valuesPreview(fn: Fn, start: number, values: Array<number | boolean>) { if (values.length === 0) return "—"; const rawStart = rawAddress(fn, start); return values.slice(0, 6).map((value, index) => `${displayAddress(fn, rawStart + index)}=${typeof value === "boolean" ? (value ? "ON" : "OFF") : value}`).join(", ") + (values.length > 6 ? "…" : ""); }
+function valuesPreview(fn: Fn, rawStart: number, values: Array<number | boolean>, mode: AddressMode) { if (values.length === 0) return "—"; return values.slice(0, 6).map((value, index) => `${toDisplayAddress(mode, fnTable(fn), rawStart + index)}=${typeof value === "boolean" ? (value ? "ON" : "OFF") : value}`).join(", ") + (values.length > 6 ? "…" : ""); }
 function addressHelp(fn: Fn) { if (fn === "fc1") return "FC01 lee coils. El rango real depende del mapa del dispositivo o del template aplicado."; if (fn === "fc2") return "FC02 lee entradas discretas. El rango real depende del mapa del dispositivo o del template aplicado."; if (fn === "fc4") return "FC04 lee input registers. El rango real depende del mapa del dispositivo o del template aplicado."; return "FC03 lee holding registers. El rango real depende del mapa del dispositivo o del template aplicado."; }
+function protocolName(transport: MasterTransport, serialFraming: SerialFraming, tcpFraming: TcpFraming) { return transport === "tcp" ? (tcpFraming === "mbap" ? "Modbus TCP" : "RTU sobre TCP") : serialFraming === "ascii" ? "Modbus ASCII" : "Modbus RTU"; }
+function pollStatusLabel(status: PollStatus): Status { return status === "ok" ? "OK" : status === "timeout" ? "Timeout" : status === "crc" ? "CRC Error" : status === "exception" ? "Excepción" : "Error"; }
+function requestName(fc: number) { const names: Record<number, string> = { 1: "Read Coils", 2: "Read Discrete Inputs", 3: "Read Holding Registers", 4: "Read Input Registers", 5: "Write Single Coil", 6: "Write Single Register", 15: "Write Multiple Coils", 16: "Write Multiple Registers" }; return names[fc] ?? `FC${fc}`; }
+function loadStored(key: string) { try { return localStorage.getItem(key) || ""; } catch { return ""; } }
+function storeValue(key: string, value: string) { if (!value) return; try { localStorage.setItem(key, value); } catch { /* storage can be unavailable */ } }
 function hex(value: number) { return `0x${value.toString(16).toUpperCase().padStart(2, "0")}`; }
 function fmt(date: Date) { return new Intl.DateTimeFormat("es-PE", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date); }
 function time(date: Date) { return new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date); }
@@ -1172,13 +1147,9 @@ function sessionTestSummary(testsRuntime: TestsRuntimeState | null | undefined, 
 function storedRegisterReads(activity: StoredActivityRow[]) { return activity.reduce((total, item) => total + item.rows.length, 0); }
 function signatureFromState(input: {
   sessionName: string;
-  port: string;
-  baud: number;
-  dataBits: number;
-  parity: string;
-  stopBits: number;
-  echo: EchoMode;
-  timeout: number;
+  connection: ConnectionSettings;
+  addressMode: AddressMode;
+  pollWindows: PollDefinition[];
   devices: Device[];
   activeId: number | null;
   stats: Stats;
@@ -1194,15 +1165,9 @@ function signatureFromState(input: {
 }) {
   return JSON.stringify({
     name: input.sessionName.trim() || "Nueva_sesion_Modbus",
-    connection: {
-      port: input.port,
-      baud: input.baud,
-      dataBits: input.dataBits,
-      parity: input.parity,
-      stopBits: input.stopBits,
-      echo: input.echo,
-      timeout: input.timeout
-    },
+    connection: connectionSignature(input.connection),
+    addressMode: input.addressMode,
+    pollWindows: input.pollWindows,
     devices: input.devices,
     activeId: input.activeId,
     stats: input.stats,
@@ -1220,15 +1185,9 @@ function signatureFromState(input: {
 function signatureFromDocument(document: SessionDocument) {
   return JSON.stringify({
     name: document.session.name,
-    connection: {
-      port: document.connection.port,
-      baud: document.connection.baudRate,
-      dataBits: document.connection.dataBits,
-      parity: document.connection.parity,
-      stopBits: document.connection.stopBits,
-      echo: document.connection.echo ?? defaultEchoMode,
-      timeout: document.connection.timeoutMs
-    },
+    connection: connectionSignature(document.connection),
+    addressMode: document.addressMode ?? "jw",
+    pollWindows: document.pollWindows ?? [],
     devices: document.devices,
     activeId: document.activeSlaveId,
     stats: document.stats,
@@ -1242,6 +1201,22 @@ function signatureFromDocument(document: SessionDocument) {
     notes: document.session.notes,
     simulator: simulatorSignature(document.simulator?.devices ?? [])
   });
+}
+function connectionSignature(connection: ConnectionSettings) {
+  return {
+    transport: connection.transport ?? "serial",
+    serialFraming: connection.serialFraming ?? "rtu",
+    host: connection.host ?? "",
+    tcpPort: connection.tcpPort ?? 502,
+    tcpFraming: connection.tcpFraming ?? "mbap",
+    port: connection.port,
+    baud: connection.baudRate,
+    dataBits: connection.dataBits,
+    parity: connection.parity,
+    stopBits: connection.stopBits,
+    echo: connection.echo ?? defaultEchoMode,
+    timeout: connection.timeoutMs
+  };
 }
 function normalizeSessionDocument(data: unknown): SessionDocument | null {
   if (!data || typeof data !== "object") return null;
@@ -1263,7 +1238,12 @@ function normalizeSessionDocument(data: unknown): SessionDocument | null {
       notes: doc.session.notes ?? ""
     },
     connection: {
-      protocol: "RTU",
+      protocol: typeof doc.connection.protocol === "string" ? doc.connection.protocol : "Modbus RTU",
+      transport: doc.connection.transport === "tcp" ? "tcp" : "serial",
+      serialFraming: doc.connection.serialFraming === "ascii" ? "ascii" : "rtu",
+      host: typeof doc.connection.host === "string" ? doc.connection.host : "",
+      tcpPort: Number.isInteger(doc.connection.tcpPort) ? doc.connection.tcpPort : 502,
+      tcpFraming: doc.connection.tcpFraming === "rtu" ? "rtu" : "mbap",
       port: doc.connection.port ?? "",
       baudRate: doc.connection.baudRate ?? 115200,
       dataBits: doc.connection.dataBits ?? 8,
@@ -1285,7 +1265,9 @@ function normalizeSessionDocument(data: unknown): SessionDocument | null {
     testsExecutionHistoryUpdatedAt: doc.testsExecutionHistoryUpdatedAt ?? null,
     registerMaps: doc.registerMaps ?? [],
     templates: doc.templates ?? [],
-    simulator: normalizeSimulatorSessionConfig(doc.simulator)
+    simulator: normalizeSimulatorSessionConfig(doc.simulator),
+    addressMode: isAddressMode(doc.addressMode) ? doc.addressMode : "jw",
+    pollWindows: Array.isArray(doc.pollWindows) ? doc.pollWindows.filter((item): item is PollDefinition => Boolean(item && typeof item === "object" && typeof (item as PollDefinition).id === "string")) : []
   };
 }
 // Only what the session file keeps; request counters change constantly and are not saved.

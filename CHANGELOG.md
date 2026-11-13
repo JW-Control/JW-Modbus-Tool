@@ -2,6 +2,31 @@
 
 All notable changes to JW Modbus Tool will be documented in this file.
 
+## 0.2.0 - Unreleased
+
+### Added
+
+- Modbus TCP master (MBAP, matched by transaction id) and RTU over TCP for serial-to-Ethernet gateways.
+- Modbus ASCII on serial ports, in the master and in the slave simulator.
+- Simulator Modbus TCP server (MBAP or RTU over TCP, several clients at once), next to the COM port and the internal channel.
+- FC17 Report Server ID, FC22 Mask Write Register, FC23 Read/Write Multiple Registers and FC43/14 Read Device Identification, in the master and in the simulator.
+- Registros view rebuilt as polling windows: several blocks polled in parallel, each with its own slave, function, interval and timeout; polling keeps running in other views.
+- Data formats UInt16, Int16, Hex, Binary, Text, UInt32, Int32, Float32, UInt64, Int64 and Float64, with byte orders ABCD, CDAB, BADC and DCBA, per window and per row.
+- Write by double click on a value (FC5/FC6, or FC15/FC16 on request; FC16 for 32/64-bit values).
+- Per-address aliases, multi-trace chart (1, 5 or 10 minutes) and CSV logging with timestamps (";" separator, "," decimals).
+- Funciones view: FC43/14, FC17, FC22, FC23 and a hex frame typed by hand, with or without CRC, LRC or MBAP header.
+- Address numbering: 4xxxx from 40000 (default), base 0, base 1, or Modicon from 40001.
+- Sessions keep the transport, TCP settings, address mode and polling windows.
+
+### Changed
+
+- The Modbus engine works on PDUs; RTU, ASCII and TCP only add their own framing.
+- Quantity out of range now answers exception 03 in the simulator, as the specification asks.
+
+### Fixed
+
+- `preload.cjs` (the file the app loads) now exposes the same IPC channels as `preload.ts`; a test keeps them in sync.
+
 ## 0.1.0 - Unreleased
 
 ### Added
