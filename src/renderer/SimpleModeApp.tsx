@@ -41,6 +41,7 @@ import { SimulatorView } from "./SimulatorView.js";
 import { loadSimulatorSettings, normalizeSimulatorSettings, storeSimulatorSettings } from "./simulatorSettings.js";
 import type { SlaveSimulatorSessionConfig, VirtualDeviceSummary } from "../shared/slave/types.js";
 import { INTERNAL_SIMULATOR_PATH } from "../shared/serial/types.js";
+import { defaultEchoMode, echoModeLabels, isEchoMode, type EchoMode } from "../shared/serial/echoFilter.js";
 
 const INTERNAL_PORT_LABEL = "Simulador interno (sin COM)";
 
@@ -108,7 +109,7 @@ interface SessionDocument {
   format: "jwmodbus-session";
   version: 1;
   session: { id: string; name: string; createdAt: string; updatedAt: string; status: SessionState; notes: string };
-  connection: { protocol: "RTU"; port: string; baudRate: number; dataBits: number; parity: string; stopBits: number; timeoutMs: number };
+  connection: { protocol: "RTU"; port: string; baudRate: number; dataBits: number; parity: string; stopBits: number; timeoutMs: number; echo?: EchoMode };
   devices: Device[];
   activeSlaveId: number | null;
   stats: Stats;
@@ -172,6 +173,7 @@ export function SimpleModeApp() {
   const [dataBits, setDataBits] = useState(8);
   const [parity, setParity] = useState("none");
   const [stopBits, setStopBits] = useState(1);
+  const [echo, setEcho] = useState<EchoMode>(defaultEchoMode);
   const [timeout, setTimeoutMs] = useState(1000);
   const [devices, setDevices] = useState<Device[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -208,7 +210,7 @@ export function SimpleModeApp() {
     () => (activeId === null ? null : devices.find((device) => device.id === activeId) ?? null),
     [activeId, devices]
   );
-  const currentSignature = useMemo(() => signatureFromState({ sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices }), [sessionName, port, baud, dataBits, parity, stopBits, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices]);
+  const currentSignature = useMemo(() => signatureFromState({ sessionName, port, baud, dataBits, parity, stopBits, echo, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices }), [sessionName, port, baud, dataBits, parity, stopBits, echo, timeout, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices]);
   const sessionState = useMemo<SessionState>(() => {
     const isClean = devices.length === 0 && activity.length === 0 && stats.requests === 0 && testsExecutionHistory.length === 0 && notes.trim().length === 0 && simulatorDevices.length === 0;
     if (isClean) return "Limpia";
@@ -274,6 +276,7 @@ export function SimpleModeApp() {
         setDataBits(state.config.dataBits);
         setParity(state.config.parity);
         setStopBits(state.config.stopBits);
+        if (isEchoMode(state.config.echo)) setEcho(state.config.echo);
       }
     }
     if (portResult.ok) setVisiblePorts(portResult.value as unknown as Array<Record<string, unknown>>, currentPath);
@@ -312,7 +315,7 @@ export function SimpleModeApp() {
     if (!bridge) return setMessage("Backend Electron no disponible.");
     if (!port) return setMessage("No hay puerto seleccionado. Recarga la lista de puertos.");
     setBusy(true);
-    const result = await bridge.serial.open({ path: port, baudRate: baud, dataBits: dataBits === 7 ? 7 : 8, parity: parity as "none" | "even" | "odd", stopBits: stopBits === 2 ? 2 : 1 });
+    const result = await bridge.serial.open({ path: port, baudRate: baud, dataBits: dataBits === 7 ? 7 : 8, parity: parity as "none" | "even" | "odd", stopBits: stopBits === 2 ? 2 : 1, echo });
     setBusy(false);
     if (!result.ok) {
       setConnected(false);
@@ -413,7 +416,7 @@ export function SimpleModeApp() {
       format: "jwmodbus-session",
       version: 1,
       session: { id, name: sessionName.trim() || "Nueva_sesion_Modbus", createdAt: sessionCreatedAt, updatedAt: now, status, notes },
-      connection: { protocol: "RTU", port, baudRate: baud, dataBits, parity, stopBits, timeoutMs: timeout },
+      connection: { protocol: "RTU", port, baudRate: baud, dataBits, parity, stopBits, timeoutMs: timeout, echo },
       devices,
       activeSlaveId: activeId,
       stats,
@@ -442,6 +445,7 @@ export function SimpleModeApp() {
     setDataBits(document.connection.dataBits);
     setParity(document.connection.parity);
     setStopBits(document.connection.stopBits);
+    setEcho(document.connection.echo ?? defaultEchoMode);
     setTimeoutMs(document.connection.timeoutMs);
     setDevices(document.devices ?? []);
     setActiveId(document.activeSlaveId ?? null);
@@ -636,10 +640,10 @@ export function SimpleModeApp() {
   function handleMaximize() { bridge?.window?.maximize?.(); }
   function handleClose() { bridge?.window?.close?.(); }
 
-  return <main className="shell"><header className="toolbar" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>{busy && <span>Procesando…</span>}<button onClick={handleMinimize}><Minus size={18} strokeWidth={2} /></button><button onClick={handleMaximize}><Square size={14} strokeWidth={2.5} /></button><button className="close-btn" onClick={handleClose}><X size={18} strokeWidth={2} /></button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia: Profesional<br /><small>Versión 1.3.0 (64-bit)</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} onSaveSession={saveSession} isSessionSaved={!!sessionFilePath} />}{view === "registers" && <RegistersView {...{ activeDevice, rFn, setRFn, rAddr, setRAddr, rQty, setRQty, rAutoRead, setRAutoRead, rInterval, setRInterval, regs, selectedRegister, setSelectedRegister, registerRead, activity }} />}{view === "traffic" && <TrafficView traffic={traffic} />}{view === "simulator" && <SimulatorView masterPort={port} masterConnected={connected} onMessage={setMessage} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{port || "Sin puerto"}</span><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
+  return <main className="shell"><header className="toolbar" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>{busy && <span>Procesando…</span>}<button onClick={handleMinimize}><Minus size={18} strokeWidth={2} /></button><button onClick={handleMaximize}><Square size={14} strokeWidth={2.5} /></button><button className="close-btn" onClick={handleClose}><X size={18} strokeWidth={2} /></button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia: Profesional<br /><small>Versión 1.3.0 (64-bit)</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, echo, setEcho, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} onSaveSession={saveSession} isSessionSaved={!!sessionFilePath} />}{view === "registers" && <RegistersView {...{ activeDevice, rFn, setRFn, rAddr, setRAddr, rQty, setRQty, rAutoRead, setRAutoRead, rInterval, setRInterval, regs, selectedRegister, setSelectedRegister, registerRead, activity }} />}{view === "traffic" && <TrafficView traffic={traffic} />}{view === "simulator" && <SimulatorView masterPort={port} masterConnected={connected} onMessage={setMessage} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{port || "Sin puerto"}</span><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
 }
 
-function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void; baud: number; setBaud: (value: number) => void; dataBits: number; setDataBits: (value: number) => void; parity: string; setParity: (value: string) => void; stopBits: number; setStopBits: (value: number) => void; timeout: number; setTimeoutMs: (value: number) => void; connected: boolean; devices: Device[]; activeId: number | null; activeDevice: Device | null; selectDevice: (id: number) => void; scanDevices: () => void; lastScan: Date | null; stats: Stats; qFn: Fn; setQFn: (value: Fn) => void; qAddr: number; setQAddr: (value: number) => void; qQty: number; setQQty: (value: number) => void; quick: RegisterRow[]; quickRead: () => void; activity: ActivityRow[]; connect: () => void; disconnect: () => void; clearActivity: () => void }) {
+function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void; baud: number; setBaud: (value: number) => void; dataBits: number; setDataBits: (value: number) => void; parity: string; setParity: (value: string) => void; stopBits: number; setStopBits: (value: number) => void; echo: EchoMode; setEcho: (value: EchoMode) => void; timeout: number; setTimeoutMs: (value: number) => void; connected: boolean; devices: Device[]; activeId: number | null; activeDevice: Device | null; selectDevice: (id: number) => void; scanDevices: () => void; lastScan: Date | null; stats: Stats; qFn: Fn; setQFn: (value: Fn) => void; qAddr: number; setQAddr: (value: number) => void; qQty: number; setQQty: (value: number) => void; quick: RegisterRow[]; quickRead: () => void; activity: ActivityRow[]; connect: () => void; disconnect: () => void; clearActivity: () => void }) {
   const [activityDetail, setActivityDetail] = useState<ActivityRow | null>(null);
 
   return (
@@ -654,6 +658,7 @@ function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value
         <SelectField label="Bits de datos" value={String(props.dataBits)} onChange={(value) => props.setDataBits(Number(value))} options={["8", "7"]} />
         <SelectField label="Paridad" value={props.parity} onChange={props.setParity} options={["none", "even", "odd"]} />
         <SelectField label="Bits de parada" value={String(props.stopBits)} onChange={(value) => props.setStopBits(Number(value))} options={["1", "2"]} />
+        <SelectField label="Eco del conversor" value={props.echo} onChange={(value) => props.setEcho(isEchoMode(value) ? value : defaultEchoMode)} options={["auto", "off", "on"]} labels={echoModeLabels} />
         <NumberField label="Timeout (ms)" value={props.timeout} onChange={props.setTimeoutMs} />
         {props.connected ? (
           <button className="primary block-btn danger-btn" style={{marginTop: '10px'}} onClick={props.disconnect}><Unplug size={18} /> Desconectar</button>
@@ -1168,6 +1173,7 @@ function signatureFromState(input: {
   dataBits: number;
   parity: string;
   stopBits: number;
+  echo: EchoMode;
   timeout: number;
   devices: Device[];
   activeId: number | null;
@@ -1190,6 +1196,7 @@ function signatureFromState(input: {
       dataBits: input.dataBits,
       parity: input.parity,
       stopBits: input.stopBits,
+      echo: input.echo,
       timeout: input.timeout
     },
     devices: input.devices,
@@ -1215,6 +1222,7 @@ function signatureFromDocument(document: SessionDocument) {
       dataBits: document.connection.dataBits,
       parity: document.connection.parity,
       stopBits: document.connection.stopBits,
+      echo: document.connection.echo ?? defaultEchoMode,
       timeout: document.connection.timeoutMs
     },
     devices: document.devices,
@@ -1257,7 +1265,8 @@ function normalizeSessionDocument(data: unknown): SessionDocument | null {
       dataBits: doc.connection.dataBits ?? 8,
       parity: doc.connection.parity ?? "none",
       stopBits: doc.connection.stopBits ?? 1,
-      timeoutMs: doc.connection.timeoutMs ?? 1000
+      timeoutMs: doc.connection.timeoutMs ?? 1000,
+      echo: isEchoMode(doc.connection.echo) ? doc.connection.echo : defaultEchoMode
     },
     devices: doc.devices ?? [],
     activeSlaveId: doc.activeSlaveId ?? null,

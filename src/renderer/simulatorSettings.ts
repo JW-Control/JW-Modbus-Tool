@@ -1,10 +1,11 @@
 import type { SlaveSimulatorSettings } from "../shared/slave/types.js";
+import { defaultEchoMode, isEchoMode } from "../shared/serial/echoFilter.js";
 
 const SETTINGS_STORAGE_KEY = "jw-modbus-tool.simulator.settings.v1";
 export const SIMULATOR_SETTINGS_EVENT = "jw-simulator-settings-changed";
 export const simulatorBaudRates = [9600, 19200, 38400, 57600, 115200];
 
-export const defaultSimulatorSettings: SlaveSimulatorSettings = { port: "", baudRate: 9600, dataBits: 8, parity: "none", stopBits: 1 };
+export const defaultSimulatorSettings: SlaveSimulatorSettings = { port: "", baudRate: 9600, dataBits: 8, parity: "none", stopBits: 1, echo: defaultEchoMode };
 
 export function normalizeSimulatorSettings(input: unknown): SlaveSimulatorSettings {
   if (!input || typeof input !== "object") return { ...defaultSimulatorSettings };
@@ -14,7 +15,8 @@ export function normalizeSimulatorSettings(input: unknown): SlaveSimulatorSettin
     baudRate: simulatorBaudRates.includes(Number(source.baudRate)) ? Number(source.baudRate) : defaultSimulatorSettings.baudRate,
     dataBits: source.dataBits === 7 ? 7 : 8,
     parity: source.parity === "even" || source.parity === "odd" ? source.parity : "none",
-    stopBits: source.stopBits === 2 ? 2 : 1
+    stopBits: source.stopBits === 2 ? 2 : 1,
+    echo: isEchoMode(source.echo) ? source.echo : defaultEchoMode
   };
 }
 

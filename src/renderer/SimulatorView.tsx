@@ -14,6 +14,7 @@ import type {
   VirtualExceptionCode,
   VirtualFaultMode
 } from "../shared/slave/types.js";
+import { defaultEchoMode, echoModeLabels, isEchoMode } from "../shared/serial/echoFilter.js";
 import { loadSimulatorSettings, SIMULATOR_SETTINGS_EVENT, simulatorBaudRates, storeSimulatorSettings } from "./simulatorSettings.js";
 import "./simulator.css";
 
@@ -56,7 +57,7 @@ const exceptionCodes: Array<{ code: VirtualExceptionCode; label: string }> = [
 const emptyState: SlaveSimulatorState = {
   running: false,
   devices: [],
-  counters: { requests: 0, responses: 0, exceptions: 0, ignored: 0, crcErrors: 0, faults: 0 }
+  counters: { requests: 0, responses: 0, exceptions: 0, ignored: 0, crcErrors: 0, faults: 0, echoesDiscarded: 0 }
 };
 
 export function SimulatorView({ masterPort, masterConnected, onMessage }: { masterPort: string; masterConnected: boolean; onMessage: (text: string) => void }) {
@@ -191,7 +192,7 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
     setBusy(true);
     const result = state.running
       ? await slave.stop()
-      : await slave.start({ path: settings.port, baudRate: settings.baudRate, dataBits: settings.dataBits, parity: settings.parity, stopBits: settings.stopBits });
+      : await slave.start({ path: settings.port, baudRate: settings.baudRate, dataBits: settings.dataBits, parity: settings.parity, stopBits: settings.stopBits, echo: settings.echo });
     setBusy(false);
     if (!result.ok) return onMessage(result.error);
     setState(result.value);
@@ -284,6 +285,11 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
               <option value={2}>2</option>
             </select>
           </label>
+          <label>Eco del conversor
+            <select value={settings.echo} disabled={state.running} onChange={(event) => setSettings({ ...settings, echo: isEchoMode(event.target.value) ? event.target.value : defaultEchoMode })}>
+              {(["auto", "off", "on"] as const).map((mode) => <option key={mode} value={mode}>{echoModeLabels[mode]}</option>)}
+            </select>
+          </label>
         </div>
         {masterUsesPort && !state.running && <p className="note simWarn"><AlertTriangle size={16} />{settings.port} está abierto como master. Elige otro puerto para el simulador.</p>}
         {state.lastError && <p className="note simWarn"><AlertTriangle size={16} />{state.lastError}</p>}
@@ -301,6 +307,7 @@ export function SimulatorView({ masterPort, masterConnected, onMessage }: { mast
           <Counter label="Ignoradas" value={state.counters.ignored} />
           <Counter label="Err. CRC" value={state.counters.crcErrors} tone="bad" />
           <Counter label="Fallas" value={state.counters.faults} tone="warn" />
+          {state.counters.echoesDiscarded > 0 && <Counter label="Ecos descartados" value={state.counters.echoesDiscarded} />}
         </div>
       </section>
 

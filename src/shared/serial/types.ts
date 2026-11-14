@@ -1,3 +1,5 @@
+import type { EchoMode } from "./echoFilter.js";
+
 /**
  * Port path that connects the master to the slave simulator in memory, with
  * no COM port involved. The serial format is accepted but has no effect.
@@ -28,6 +30,8 @@ export interface SerialPortConfig {
   parity?: SerialParity;
   stopBits?: SerialStopBits;
   lock?: boolean;
+  /** Echo of the USB-RS485 converter (see echoFilter.ts). Default: auto. */
+  echo?: EchoMode;
 }
 
 export interface NormalizedSerialPortConfig {
@@ -37,6 +41,7 @@ export interface NormalizedSerialPortConfig {
   parity: SerialParity;
   stopBits: SerialStopBits;
   lock: boolean;
+  echo: EchoMode;
 }
 
 export interface SerialConnectionState {
@@ -44,6 +49,8 @@ export interface SerialConnectionState {
   config?: NormalizedSerialPortConfig;
   openedAt?: string;
   lastError?: string;
+  /** What `auto` echo mode learned from the converter; undefined = not yet known. */
+  echoDetected?: boolean;
 }
 
 export type SerialOperationResult<T> =

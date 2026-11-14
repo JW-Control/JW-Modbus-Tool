@@ -4,6 +4,7 @@ import { formatHex } from "../../shared/modbus/byteUtils.js";
 import { isExceptionFunctionCode } from "../../shared/modbus/exceptions.js";
 import { RtuRequestFramer, rtuSilenceMs } from "../../shared/modbus/rtuRequestFramer.js";
 import { VirtualSlaveBus, type VirtualBusFrameResult } from "../../shared/modbus/virtualSlaveBus.js";
+import { responseRepeatsRequest } from "../../shared/serial/echoFilter.js";
 import { INTERNAL_SIMULATOR_PATH, type NormalizedSerialPortConfig, type SerialPortConfig } from "../../shared/serial/types.js";
 import type {
   AddVirtualDeviceRequest,
@@ -44,8 +45,14 @@ interface ResponseSink {
 // USB-serial adapters deliver bytes in bursts, so the idle timeout that
 // releases unframed bytes must be well above the theoretical 3.5 characters.
 const MIN_IDLE_FLUSH_MS = 20;
+// A request that is clearly incomplete (known function code, bytes missing)
+// gets this much silence before it is given up: the rest is usually in flight.
+const INCOMPLETE_FRAME_WAIT_MS = 150;
 // Counters change on every frame; the UI only needs them a few times a second.
 const STATE_EMIT_INTERVAL_MS = 200;
+// Margin over the transmit time in which an echo of our response may arrive
+// (USB-serial latency). Bytes after it are a new request.
+const ECHO_WINDOW_MARGIN_MS = 30;
 // Traffic kept for the Simulator view, so it survives switching views.
 const MAX_TRAFFIC_ENTRIES = 500;
 
@@ -76,6 +83,10 @@ export class RtuSlaveSimulator {
   private idleFlushMs = MIN_IDLE_FLUSH_MS;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private stateTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Response just written to the COM port, whose echo we may still receive. */
+  private pendingEcho: { bytes: Uint8Array; matched: number; until: number } | null = null;
+  /** What `auto` echo mode learned about the converter; undefined = unknown. */
+  private echoDetected: boolean | undefined;
 
   constructor(private readonly portFactory: SlavePortFactory = defaultPortFactory) {}
 
@@ -86,7 +97,8 @@ export class RtuSlaveSimulator {
       startedAt: this.port ? this.startedAt : undefined,
       devices: this.bus.listDevices(),
       counters: { ...this.counters },
-      lastError: this.lastError
+      lastError: this.lastError,
+      echoDetected: this.port ? this.echoDetected : undefined
     };
   }
 
@@ -138,6 +150,8 @@ export class RtuSlaveSimulator {
     this.lastError = undefined;
     this.counters = emptyCounters();
     this.framer = new RtuRequestFramer();
+    this.pendingEcho = null;
+    this.echoDetected = undefined;
     this.idleFlushMs = Math.max(MIN_IDLE_FLUSH_MS, Math.ceil(rtuSilenceMs(normalizedConfig) * 4));
     this.emitState();
     return this.getState();
@@ -238,11 +252,20 @@ export class RtuSlaveSimulator {
       return;
     }
 
-    for (const frame of this.framer.push(Uint8Array.from(chunk))) {
+    const bytes = this.discardEcho(Uint8Array.from(chunk));
+
+    if (bytes.length === 0) {
+      return;
+    }
+
+    for (const frame of this.framer.push(bytes)) {
       this.processFrame(frame, sink);
     }
 
     if (this.framer.pendingBytes > 0) {
+      const waitMs = this.framer.awaitingRestOfFrame
+        ? Math.max(this.idleFlushMs, INCOMPLETE_FRAME_WAIT_MS)
+        : this.idleFlushMs;
       this.idleTimer = setTimeout(() => {
         this.idleTimer = null;
         const rest = this.framer.flush();
@@ -250,7 +273,7 @@ export class RtuSlaveSimulator {
         if (rest && sink.isActive()) {
           this.processFrame(rest, sink);
         }
-      }, this.idleFlushMs);
+      }, waitMs);
     }
   }
 
@@ -317,7 +340,65 @@ export class RtuSlaveSimulator {
     }, STATE_EMIT_INTERVAL_MS);
   }
 
+  /**
+   * Drops the echo of our own last response, if the converter sends it back.
+   * Without this, the simulator would read its response as a new request and
+   * answer it, flooding the bus.
+   */
+  private discardEcho(chunk: Uint8Array): Uint8Array {
+    const pending = this.pendingEcho;
+    const mode = this.config?.echo ?? "off";
+
+    if (!pending) {
+      return chunk;
+    }
+
+    const learnable = !responseRepeatsRequest(pending.bytes);
+
+    if (Date.now() > pending.until) {
+      this.pendingEcho = null;
+      if (mode === "auto" && learnable && pending.matched === 0) this.echoDetected = false;
+      return pending.matched > 0 ? concat(pending.bytes.subarray(0, pending.matched), chunk) : chunk;
+    }
+
+    const matchedBefore = pending.matched;
+    let index = 0;
+
+    while (index < chunk.length && pending.matched < pending.bytes.length) {
+      if (chunk[index] !== pending.bytes[pending.matched]) {
+        this.pendingEcho = null;
+        if (mode === "auto" && learnable) this.echoDetected = false;
+        return concat(pending.bytes.subarray(0, matchedBefore), chunk);
+      }
+
+      index += 1;
+      pending.matched += 1;
+    }
+
+    if (pending.matched === pending.bytes.length) {
+      this.pendingEcho = null;
+      this.counters.echoesDiscarded += 1;
+      if (mode === "auto" && learnable) this.echoDetected = true;
+    }
+
+    return chunk.slice(index);
+  }
+
+  private expectEcho(response: Uint8Array): void {
+    const mode = this.config?.echo ?? "off";
+
+    if (mode === "off" || (mode === "auto" && this.echoDetected === false) || !this.config) {
+      this.pendingEcho = null;
+      return;
+    }
+
+    const bitsPerCharacter = 1 + this.config.dataBits + (this.config.parity === "none" ? 0 : 1) + this.config.stopBits;
+    const transmitMs = (response.length * bitsPerCharacter * 1000) / this.config.baudRate;
+    this.pendingEcho = { bytes: response, matched: 0, until: Date.now() + transmitMs + ECHO_WINDOW_MARGIN_MS };
+  }
+
   private writeResponse(port: SlavePort, response: Uint8Array): void {
+    this.expectEcho(response);
     port.write(Buffer.from(response), (error) => {
       if (error) {
         this.lastError = error.message;
@@ -328,6 +409,7 @@ export class RtuSlaveSimulator {
 
   private detachPort(): void {
     this.clearIdleTimer();
+    this.pendingEcho = null;
     this.comSink?.pending.forEach((timer) => clearTimeout(timer));
     this.comSink = null;
     this.framer.flush();
@@ -382,7 +464,14 @@ function describeFault(faults: VirtualDeviceFaults): string {
 }
 
 function emptyCounters(): SlaveSimulatorCounters {
-  return { requests: 0, responses: 0, exceptions: 0, ignored: 0, crcErrors: 0, faults: 0 };
+  return { requests: 0, responses: 0, exceptions: 0, ignored: 0, crcErrors: 0, faults: 0, echoesDiscarded: 0 };
+}
+
+function concat(head: Uint8Array, tail: Uint8Array): Uint8Array {
+  const joined = new Uint8Array(head.length + tail.length);
+  joined.set(head, 0);
+  joined.set(tail, head.length);
+  return joined;
 }
 
 export const slaveSimulator = new RtuSlaveSimulator();

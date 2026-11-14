@@ -21,6 +21,10 @@ This repository is in the first implementation step. It currently includes:
   the "Simulador interno (sin COM)" port, with no hardware or driver. User
   guide (Spanish): `docs/GUIA_USO_SIMULADOR.md`;
   technical notes: `docs/SLAVE_SIMULATOR.md`.
+- USB-RS485 converter echo handling ("Eco del conversor": automatic, off, on)
+  in the master and in the slave simulator.
+- Integration tests against a simulated JWPLC Basic in JWPLC Sim, with and
+  without converter echo: `docs/PRUEBAS_JWPLC_SIM.md`.
 - Serial port listing and basic connect/disconnect IPC through Electron main.
 - Persistent serial settings for baudrate, data bits, parity, stop bits,
   response timeout, and last selected COM port.

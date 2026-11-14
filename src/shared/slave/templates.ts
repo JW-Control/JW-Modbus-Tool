@@ -7,7 +7,7 @@ export interface VirtualDeviceTemplate {
   description: string;
   unitId: number;
   /** Serial format the real device uses; the port is chosen by the user. */
-  serial: Omit<SlaveSimulatorSettings, "port"> | null;
+  serial: Omit<SlaveSimulatorSettings, "port" | "echo"> | null;
   sizes: VirtualDeviceSizes;
   labels: VirtualDeviceLabels;
 }

@@ -1,5 +1,6 @@
 import { SerialPort } from "serialport";
 import { concatBytes } from "../../shared/modbus/byteUtils.js";
+import { decideEcho, defaultEchoMode, isEchoMode } from "../../shared/serial/echoFilter.js";
 import {
   INTERNAL_SIMULATOR_PATH,
   type NormalizedSerialPortConfig,
@@ -42,7 +43,16 @@ export interface SerialTransactionResult {
   request: Uint8Array;
   response: Uint8Array;
   elapsedMs: number;
+  /** True when the converter echoed the request and it was discarded. */
+  echoDiscarded?: boolean;
 }
+
+/**
+ * Silence that settles an FC5/FC6 reply while it is still unknown whether the
+ * converter echoes: if nothing follows the repeated request in this time, it
+ * was the response. Generous, because slaves may take tens of ms to answer.
+ */
+export const ECHO_GRACE_MS = 120;
 
 export const supportedBaudRates = [9600, 19200, 38400, 57600, 115200] as const;
 
@@ -88,13 +98,20 @@ export function validateSerialPortConfig(config: SerialPortConfig): NormalizedSe
     throw new Error("Stop bits must be 1 or 2");
   }
 
+  const echo = config.echo ?? defaultEchoMode;
+
+  if (!isEchoMode(echo)) {
+    throw new Error("Echo must be off, auto, or on");
+  }
+
   return {
     path,
     baudRate: config.baudRate,
     dataBits,
     parity,
     stopBits,
-    lock: config.lock ?? true
+    lock: config.lock ?? true,
+    echo
   };
 }
 
@@ -239,6 +256,7 @@ export class SerialManager {
 
         settled = true;
         clearTimeout(timer);
+        if (graceTimer) clearTimeout(graceTimer);
         openPort.off("data", onData);
         openPort.off("error", onError);
       };
@@ -248,18 +266,53 @@ export class SerialManager {
         reject(error);
       };
 
-      const onData = (chunk: Buffer) => {
-        chunks.push(Uint8Array.from(chunk));
-        const response = concatBytes(...chunks);
-        const expectedLength = options.expectedResponseLength(response);
+      const echoMode = this.state.config?.echo ?? defaultEchoMode;
+      let graceTimer: ReturnType<typeof setTimeout> | null = null;
 
-        if (expectedLength !== null && response.length >= expectedLength) {
-          cleanup();
-          resolve({
-            request,
-            response: response.slice(0, expectedLength),
-            elapsedMs: Math.round(performance.now() - startedAt)
-          });
+      const finish = (response: Uint8Array, echoDiscarded: boolean) => {
+        cleanup();
+        resolve({
+          request,
+          response,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          echoDiscarded
+        });
+      };
+
+      const onData = (chunk: Buffer) => {
+        if (settled) {
+          return;
+        }
+
+        if (graceTimer) {
+          clearTimeout(graceTimer);
+          graceTimer = null;
+        }
+
+        chunks.push(Uint8Array.from(chunk));
+        const received = concatBytes(...chunks);
+        const decision = decideEcho(echoMode, request, received, this.state.echoDetected);
+
+        if (decision.action === "wait") {
+          return;
+        }
+
+        if (decision.action === "ambiguous") {
+          graceTimer = setTimeout(() => {
+            graceTimer = null;
+            finish(decision.candidate, false);
+          }, ECHO_GRACE_MS);
+          return;
+        }
+
+        const expectedLength = options.expectedResponseLength(decision.payload);
+
+        if (expectedLength !== null && decision.payload.length >= expectedLength) {
+          if (echoMode === "auto") {
+            this.state = { ...this.state, echoDetected: decision.echoSeen };
+          }
+
+          finish(decision.payload.slice(0, expectedLength), decision.echoSeen);
         }
       };
 
