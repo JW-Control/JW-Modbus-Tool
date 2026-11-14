@@ -21,7 +21,7 @@ if not exist "node_modules\electron\dist\electron.exe" set "NEED_INSTALL=1"
 
 if defined NEED_INSTALL (
   echo [JW Modbus Tool] Installing dependencies...
-  "%NPM_CMD%" install
+  call "%NPM_CMD%" install
   if errorlevel 1 (
     echo [JW Modbus Tool] npm install failed.
     goto :error
@@ -33,7 +33,7 @@ echo [JW Modbus Tool] Building Windows x64 portable...
 echo Close the development app first if Windows reports locked files.
 echo.
 
-"%NPM_CMD%" run build:portable
+call "%NPM_CMD%" run build:portable
 if errorlevel 1 goto :error
 
 echo.
