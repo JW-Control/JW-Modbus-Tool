@@ -1,6 +1,8 @@
 export {};
 
 import type {
+  ModbusCommand,
+  RawFrameCommand,
   ReadCoilsCommand,
   ReadDiscreteInputsCommand,
   ReadHoldingRegistersCommand,
@@ -30,10 +32,12 @@ import type {
   SetVirtualValueRequest,
   SlaveSimulatorEvent,
   SlaveSimulatorState,
+  SlaveTcpConfig,
   SlaveTrafficEntry,
   VirtualDeviceConfig,
   VirtualDeviceSnapshot
 } from "../shared/slave/types.js";
+import type { AppendTextFileRequest, SaveTextFileRequest, SaveTextFileResult } from "../shared/files/types.js";
 import type {
   OpenSessionFileRequest,
   OpenSessionFileResult,
@@ -89,6 +93,8 @@ declare global {
         writeMultipleRegisters: (
           command: WriteMultipleRegistersCommand
         ) => Promise<SerialOperationResult<RtuMasterActionResult>>;
+        execute: (command: ModbusCommand) => Promise<SerialOperationResult<RtuMasterActionResult>>;
+        sendRaw: (command: RawFrameCommand) => Promise<SerialOperationResult<RtuMasterActionResult>>;
         runJwplcValidation: (
           command: ValidationSequenceCommand
         ) => Promise<SerialOperationResult<ValidationSequenceResult>>;
@@ -97,6 +103,8 @@ declare global {
         getState: () => Promise<SerialOperationResult<SlaveSimulatorState>>;
         start: (config: SerialPortConfig) => Promise<SerialOperationResult<SlaveSimulatorState>>;
         stop: () => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        startTcp: (config: SlaveTcpConfig) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        stopTcp: () => Promise<SerialOperationResult<SlaveSimulatorState>>;
         addDevice: (request: AddVirtualDeviceRequest) => Promise<SerialOperationResult<SlaveSimulatorState>>;
         removeDevice: (unitId: number) => Promise<SerialOperationResult<SlaveSimulatorState>>;
         getDevice: (unitId: number) => Promise<SerialOperationResult<VirtualDeviceSnapshot>>;
@@ -107,6 +115,12 @@ declare global {
         clearTraffic: () => Promise<SerialOperationResult<void>>;
         importDevices: (devices: VirtualDeviceConfig[]) => Promise<SerialOperationResult<SlaveSimulatorState>>;
         onEvent: (listener: (event: SlaveSimulatorEvent) => void) => () => void;
+      };
+      files: {
+        /** Asks where to save (unless `filePath` is given) and writes the text. */
+        saveText: (request: SaveTextFileRequest) => Promise<SerialOperationResult<SaveTextFileResult>>;
+        /** Appends to a file chosen earlier with `saveText`. */
+        appendText: (request: AppendTextFileRequest) => Promise<SerialOperationResult<{ bytesWritten: number }>>;
       };
       sessions: {
         saveFile: (

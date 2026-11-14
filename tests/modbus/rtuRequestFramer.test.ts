@@ -21,7 +21,8 @@ describe("expectedRtuRequestLength", () => {
     const fc16 = encodeWriteMultipleRegistersRequest({ unitId: 1, startAddress: 0, values: [1, 2, 3] });
     expect(expectedRtuRequestLength(fc16)).toBe(fc16.length);
     expect(expectedRtuRequestLength(fc16.slice(0, 6))).toBeNull();
-    expect(expectedRtuRequestLength(Uint8Array.of(1, 0x2b))).toBeNull();
+    expect(expectedRtuRequestLength(Uint8Array.of(1, 0x14))).toBeNull();
+    expect(expectedRtuRequestLength(Uint8Array.of(1, 0x2b))).toBe(7);
   });
 });
 

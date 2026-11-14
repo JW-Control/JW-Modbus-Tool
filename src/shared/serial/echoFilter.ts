@@ -53,8 +53,28 @@ export function splitEcho(sent: Uint8Array, received: Uint8Array): EchoSplit {
  * FC6), so its echo and its response cannot be told apart by content.
  */
 export function responseRepeatsRequest(request: Uint8Array): boolean {
-  const functionCode = request[1];
-  return functionCode === FunctionCode.WriteSingleCoil || functionCode === FunctionCode.WriteSingleRegister;
+  // Modbus ASCII: ":" + 2 hex chars of unit id + 2 hex chars of function code.
+  const functionCode = isAsciiFrame(request)
+    ? Number.parseInt(String.fromCharCode(request[3], request[4]), 16)
+    : request[1];
+  return (
+    functionCode === FunctionCode.WriteSingleCoil ||
+    functionCode === FunctionCode.WriteSingleRegister ||
+    functionCode === FunctionCode.MaskWriteRegister
+  );
+}
+
+/** ":" + hex characters + CR LF: a Modbus ASCII frame rather than RTU bytes. */
+function isAsciiFrame(frame: Uint8Array): boolean {
+  if (frame.length < 9 || frame[0] !== 0x3a || frame[frame.length - 2] !== 0x0d || frame[frame.length - 1] !== 0x0a) {
+    return false;
+  }
+  for (let index = 1; index < frame.length - 2; index += 1) {
+    const byte = frame[index];
+    const hex = (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x46) || (byte >= 0x61 && byte <= 0x66);
+    if (!hex) return false;
+  }
+  return true;
 }
 
 export type EchoDecision =

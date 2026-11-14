@@ -1,4 +1,4 @@
-# Guía de uso: Simulador slave Modbus RTU
+# Guía de uso: Simulador slave Modbus (RTU, ASCII y TCP)
 
 El simulador convierte el PC en uno o varios slaves Modbus RTU (dispositivos
 virtuales). Sirve para probar un master (la propia JW Modbus Tool, un PLC, un
@@ -101,6 +101,36 @@ Qué deberías ver:
 
 Para agregar más slaves, repite el paso 2 con otros IDs (1 a 247). El JWPLC solo
 consulta los ID 1 y 2; el resto lo atiende el master de la app.
+
+## Inicio rápido (Modbus TCP)
+
+Úsalo para probar un master Modbus TCP (SCADA, HMI, otro programa) o el
+master de la propia app por TCP, sin puerto COM.
+
+1. Vista **Simulador**: agrega al menos un dispositivo virtual.
+2. En la tarjeta **Servidor Modbus TCP**:
+   - **Escuchar en**: «Solo esta PC (127.0.0.1)» para probar en la misma PC,
+     o «Toda la red (0.0.0.0)» para que otra PC se conecte con la IP de esta.
+   - **Puerto TCP**: 502 es el estándar; en Linux y en algunas PC hace falta
+     un puerto mayor a 1024, por ejemplo 1502.
+   - **Protocolo**: «Modbus TCP (MBAP)» o «RTU sobre TCP» (lo que usan las
+     pasarelas serie-Ethernet).
+   - Pulsa **Iniciar servidor TCP**. La etiqueta muestra cuántos masters hay
+     conectados.
+3. En el master (o en **Dispositivos** de la app: **TCP / Ethernet**, IP,
+   puerto y el mismo protocolo) conecta y lee.
+
+Los mismos dispositivos virtuales responden a la vez por el COM, por TCP y
+por el canal interno. Una petición a un unit id que no existe no recibe
+respuesta (el master ve timeout), como haría una pasarela. «CRC corrupto»
+en TCP envía la cabecera MBAP con un identificador de protocolo inválido.
+
+## Modbus ASCII
+
+En la tarjeta **Simulador slave**, **Protocolo** → «Modbus ASCII» antes de
+iniciar el COM. El master debe usar el mismo protocolo (en **Dispositivos**,
+**Serie** → **Protocolo** → «Modbus ASCII»). ASCII suele ir con 7 bits de
+datos y paridad par, pero el simulador acepta cualquier formato serial.
 
 ## La vista Simulador
 
@@ -324,8 +354,9 @@ prueba C1 de `PLAN_PRUEBAS_SIMULADOR.md`).
 
 ## Limitaciones actuales
 
-- Solo Modbus RTU y las funciones FC01 a FC06, FC15 y FC16.
+- Funciones FC01 a FC06, FC15, FC16, FC17, FC22, FC23 y FC43/14 (lectura
+  de identificación con los datos de la plantilla).
+- La memoria siempre muestra la numeración 4xxxx, aunque el master use otra.
 - No emula el fail-safe del JWPLC (apagar salidas si pasa 1 s sin escrituras).
-- No suprime el eco de conversores RS-485 que lo tienen.
 - El canal interno solo lo puede usar el master de la propia app; otro programa
   necesita un par COM virtual.

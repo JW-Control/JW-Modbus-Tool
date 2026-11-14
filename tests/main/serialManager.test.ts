@@ -50,8 +50,15 @@ describe("serialManager", () => {
       parity: "none",
       stopBits: 1,
       lock: true,
-      echo: "auto"
+      echo: "auto",
+      transport: "serial",
+      framing: "rtu"
     });
+  });
+
+  it("accepts Modbus ASCII framing on a serial port", () => {
+    expect(validateSerialPortConfig({ path: "COM7", baudRate: 9600, dataBits: 7, parity: "even", framing: "ascii" }).framing).toBe("ascii");
+    expect(() => validateSerialPortConfig({ path: "COM7", baudRate: 9600, framing: "tcp" as never })).toThrow("framing");
   });
 
   it("rejects unsupported baud rates", () => {

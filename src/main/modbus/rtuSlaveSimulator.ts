@@ -1,11 +1,18 @@
 import { EventEmitter } from "node:events";
+import { createServer, type Server, type Socket } from "node:net";
 import { SerialPort } from "serialport";
-import { formatHex } from "../../shared/modbus/byteUtils.js";
+import { formatAdu, type Framing } from "../../shared/modbus/adu.js";
+import { AsciiFramer, MbapFramer } from "../../shared/modbus/streamFramers.js";
 import { isExceptionFunctionCode } from "../../shared/modbus/exceptions.js";
 import { RtuRequestFramer, rtuSilenceMs } from "../../shared/modbus/rtuRequestFramer.js";
 import { VirtualSlaveBus, type VirtualBusFrameResult } from "../../shared/modbus/virtualSlaveBus.js";
 import { responseRepeatsRequest } from "../../shared/serial/echoFilter.js";
-import { INTERNAL_SIMULATOR_PATH, type NormalizedSerialPortConfig, type SerialPortConfig } from "../../shared/serial/types.js";
+import {
+  DEFAULT_TCP_PORT,
+  INTERNAL_SIMULATOR_PATH,
+  type NormalizedSerialPortConfig,
+  type SerialPortConfig
+} from "../../shared/serial/types.js";
 import type {
   AddVirtualDeviceRequest,
   SetVirtualFaultsRequest,
@@ -13,6 +20,8 @@ import type {
   SlaveSimulatorCounters,
   SlaveSimulatorEvent,
   SlaveSimulatorState,
+  SlaveTcpConfig,
+  SlaveTcpState,
   SlaveTrafficEntry,
   SlaveTrafficResult,
   VirtualDeviceConfig,
@@ -36,6 +45,7 @@ export type SlavePortFactory = (config: NormalizedSerialPortConfig) => SlavePort
 /** Where a response goes: the COM port or the in-memory master. */
 interface ResponseSink {
   channel: string;
+  framing: Framing;
   isActive(): boolean;
   write(response: Uint8Array): void;
   /** Delayed responses waiting to be sent, so they can be dropped when the channel closes. */
@@ -67,10 +77,25 @@ const defaultPortFactory: SlavePortFactory = (config) =>
     autoOpen: false
   });
 
+/** Splits a byte stream into request frames; RTU also reports a frame still in flight. */
+interface RequestFramer {
+  readonly pendingBytes: number;
+  readonly awaitingRestOfFrame?: boolean;
+  push(chunk: Uint8Array): Uint8Array[];
+  flush(): Uint8Array | null;
+}
+
+interface TcpServerState {
+  server: Server;
+  config: SlaveTcpState;
+  sockets: Set<Socket>;
+}
+
 export class RtuSlaveSimulator {
   private readonly bus = new VirtualSlaveBus();
   private readonly events = new EventEmitter();
-  private framer = new RtuRequestFramer();
+  private framer: RequestFramer = new RtuRequestFramer();
+  private tcp: TcpServerState | null = null;
   private port: SlavePort | null = null;
   private comSink: ResponseSink | null = null;
   private readonly internalPending = new Set<ReturnType<typeof setTimeout>>();
@@ -98,7 +123,8 @@ export class RtuSlaveSimulator {
       devices: this.bus.listDevices(),
       counters: { ...this.counters },
       lastError: this.lastError,
-      echoDetected: this.port ? this.echoDetected : undefined
+      echoDetected: this.port ? this.echoDetected : undefined,
+      tcp: this.tcp ? { ...this.tcp.config, clients: this.tcp.sockets.size } : undefined
     };
   }
 
@@ -141,6 +167,7 @@ export class RtuSlaveSimulator {
     this.port = port;
     this.comSink = {
       channel: normalizedConfig.path,
+      framing: normalizedConfig.framing,
       isActive: () => this.port === port,
       write: (response) => this.writeResponse(port, response),
       pending: new Set()
@@ -149,7 +176,7 @@ export class RtuSlaveSimulator {
     this.startedAt = new Date().toISOString();
     this.lastError = undefined;
     this.counters = emptyCounters();
-    this.framer = new RtuRequestFramer();
+    this.framer = normalizedConfig.framing === "ascii" ? new AsciiFramer() : new RtuRequestFramer();
     this.pendingEcho = null;
     this.echoDetected = undefined;
     this.idleFlushMs = Math.max(MIN_IDLE_FLUSH_MS, Math.ceil(rtuSilenceMs(normalizedConfig) * 4));
@@ -225,12 +252,109 @@ export class RtuSlaveSimulator {
     return this.bus.setValue(request);
   }
 
+  /**
+   * Serves the virtual devices over TCP, alongside (or instead of) the COM
+   * port. Standard Modbus TCP (MBAP) or RTU frames over TCP.
+   */
+  async startTcp(config: SlaveTcpConfig): Promise<SlaveSimulatorState> {
+    if (this.tcp) {
+      throw new Error(`El simulador ya escucha por TCP en ${this.tcp.config.host}:${this.tcp.config.port}. Detenlo antes de cambiarlo.`);
+    }
+
+    const host = (config?.host ?? "0.0.0.0").trim() || "0.0.0.0";
+    const port = config?.port ?? DEFAULT_TCP_PORT;
+    const framing: Framing = config?.framing === "rtu" ? "rtu" : "tcp";
+
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error("El puerto TCP debe estar entre 1 y 65535");
+    }
+
+    const sockets = new Set<Socket>();
+    const server = createServer((socket) => this.acceptTcpClient(socket, framing, sockets));
+
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", (error: NodeJS.ErrnoException) => {
+        reject(
+          new Error(
+            error.code === "EADDRINUSE"
+              ? `El puerto TCP ${port} ya está en uso por otro programa`
+              : error.code === "EACCES"
+                ? `Sin permiso para usar el puerto TCP ${port}`
+                : error.message
+          )
+        );
+      });
+      server.listen(port, host, () => resolve());
+    });
+
+    server.on("error", (error) => {
+      this.lastError = error.message;
+      this.emitState();
+    });
+
+    this.tcp = { server, sockets, config: { host, port, framing, clients: 0, startedAt: new Date().toISOString() } };
+    this.emitState();
+    return this.getState();
+  }
+
+  async stopTcp(): Promise<SlaveSimulatorState> {
+    const tcp = this.tcp;
+
+    if (!tcp) return this.getState();
+
+    this.tcp = null;
+    tcp.sockets.forEach((socket) => socket.destroy());
+    await new Promise<void>((resolve) => tcp.server.close(() => resolve()));
+    this.emitState();
+    return this.getState();
+  }
+
+  private acceptTcpClient(socket: Socket, framing: Framing, sockets: Set<Socket>): void {
+    sockets.add(socket);
+    socket.setNoDelay(true);
+    const remote = `${socket.remoteAddress ?? "?"}:${socket.remotePort ?? "?"}`.replace(/^::ffff:/, "");
+    const framer: RequestFramer = framing === "rtu" ? new RtuRequestFramer() : new MbapFramer();
+    const sink: ResponseSink = {
+      channel: `TCP ${remote}`,
+      framing,
+      isActive: () => !socket.destroyed && this.tcp?.sockets === sockets,
+      write: (response) => {
+        socket.write(Buffer.from(response));
+      },
+      pending: new Set()
+    };
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    socket.on("data", (chunk: Buffer) => {
+      if (idleTimer) clearTimeout(idleTimer);
+      for (const frame of framer.push(Uint8Array.from(chunk))) this.processFrame(frame, sink);
+      // RTU over TCP: release bytes that never formed a frame.
+      if (framing === "rtu" && framer.pendingBytes > 0) {
+        idleTimer = setTimeout(() => {
+          const rest = framer.flush();
+          if (rest && sink.isActive()) this.processFrame(rest, sink);
+        }, INCOMPLETE_FRAME_WAIT_MS);
+      }
+    });
+    socket.on("error", () => {
+      // "close" follows.
+    });
+    socket.on("close", () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      sink.pending.forEach((timer) => clearTimeout(timer));
+      sockets.delete(socket);
+      this.scheduleStateEmit();
+    });
+    this.scheduleStateEmit();
+  }
+
   /** Lets the app's master talk to the virtual devices in memory, with no COM port. */
   internalEndpoint(): InternalSlaveEndpoint {
     return {
-      send: (request, reply) => {
+      send: (request, reply, framing = "rtu") => {
         this.processFrame(Uint8Array.from(request), {
           channel: INTERNAL_SIMULATOR_PATH,
+          framing,
           isActive: () => true,
           write: reply,
           pending: this.internalPending
@@ -278,7 +402,7 @@ export class RtuSlaveSimulator {
   }
 
   private processFrame(frame: Uint8Array, sink: ResponseSink): void {
-    const result = this.bus.handleFrame(frame);
+    const result = this.bus.handleAdu(sink.framing, frame);
     const trafficResult = classify(result);
 
     this.counters.requests += 1;
@@ -311,8 +435,8 @@ export class RtuSlaveSimulator {
       channel: sink.channel,
       unitId: result.unitId,
       functionCode: result.functionCode,
-      request: formatHex(frame),
-      response: response ? formatHex(response) : null,
+      request: formatAdu(sink.framing, frame),
+      response: response ? formatAdu(sink.framing, response) : null,
       result: trafficResult,
       summary: result.summary,
       fault: result.fault ? describeFault(result.fault) : null
@@ -440,7 +564,7 @@ export class RtuSlaveSimulator {
 function classify(result: VirtualBusFrameResult): SlaveTrafficResult {
   switch (result.kind) {
     case "response":
-      return isExceptionFunctionCode(result.response[1]) ? "exception" : "response";
+      return isExceptionFunctionCode(result.responsePdu?.[0] ?? result.response[1]) ? "exception" : "response";
     case "broadcast":
       return "broadcast";
     case "silenced":

@@ -1,19 +1,10 @@
-import { formatHex } from "../../shared/modbus/byteUtils.js";
-import { decodeExceptionResponse } from "../../shared/modbus/rtuFrame.js";
-import { expectedRtuResponseLength } from "../../shared/modbus/rtuResponseLength.js";
+import { formatAdu } from "../../shared/modbus/adu.js";
+import { functionCodeName } from "../../shared/modbus/functionCodes.js";
+import { decodeResponsePdu, encodeRequestPdu, type ModbusRequest } from "../../shared/modbus/pdu.js";
+import { fromHex } from "../../shared/modbus/adu.js";
 import {
-  decodeBitReadResponse,
-  decodeRegisterReadResponse,
-  encodeReadCoilsRequest,
-  encodeReadDiscreteInputsRequest,
-  encodeReadHoldingRegistersRequest,
-  encodeReadInputRegistersRequest,
-  encodeWriteMultipleRegistersRequest,
-  encodeWriteMultipleCoilsRequest,
-  encodeWriteSingleRegisterRequest,
-  encodeWriteSingleCoilRequest
-} from "../../shared/modbus/masterRequests.js";
-import {
+  type ModbusCommand,
+  type RawFrameCommand,
   type ReadCoilsCommand,
   type ReadDiscreteInputsCommand,
   type ReadHoldingRegistersCommand,
@@ -27,145 +18,168 @@ import {
   type WriteSingleCoilCommand,
   type WriteSingleRegisterCommand
 } from "../../shared/modbus/masterActionTypes.js";
-import { parseRtuFrame } from "../../shared/modbus/rtuFrame.js";
-import { serialManager } from "../serial/serialManager.js";
+import { masterConnection, type MasterTransaction } from "./masterConnection.js";
 
 const defaultTimeoutMs = 1000;
 
-export async function readCoils(command: ReadCoilsCommand): Promise<RtuMasterActionResult> {
-  const request = encodeReadCoilsRequest(command);
-  const transaction = await serialManager.transact(request, {
-    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
-    expectedResponseLength: expectedRtuResponseLength
-  });
-  const parsed = parseRtuFrame(transaction.response);
-  const exception = decodeExceptionResponse(transaction.response);
-
-  if (exception) {
-    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
-      functionCode: exception.functionCode,
-      exceptionCode: exception.exceptionCode,
-      exceptionName: exception.exceptionName
-    });
-  }
-
-  if (!parsed.crcOk) {
-    return buildBaseResult(command.unitId, transaction, "CRC error in response", undefined, parsed.functionCode);
-  }
-
-  const decoded = decodeBitReadResponse(transaction.response, command.quantity);
-  return buildBaseResult(
-    command.unitId,
-    transaction,
-    `FC1 Read Coils ${command.startAddress}:${command.quantity}`,
-    undefined,
-    parsed.functionCode,
-    decoded.values
-  );
+/**
+ * Sends any supported request over the open connection (RTU, ASCII or TCP)
+ * and decodes the reply. Timeouts and I/O errors are thrown; CRC/LRC errors,
+ * exceptions and malformed replies come back in the result.
+ */
+export async function executeModbusRequest(command: ModbusCommand): Promise<RtuMasterActionResult> {
+  const pdu = encodeRequestPdu(command.request);
+  const transaction = await masterConnection.transactPdu(command.unitId, pdu, command.timeoutMs ?? defaultTimeoutMs);
+  return interpret(command.unitId, command.request, transaction);
 }
 
-export async function readDiscreteInputs(
-  command: ReadDiscreteInputsCommand
-): Promise<RtuMasterActionResult> {
-  const request = encodeReadDiscreteInputsRequest(command);
-  const transaction = await serialManager.transact(request, {
-    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
-    expectedResponseLength: expectedRtuResponseLength
+/** Sends a frame typed by the user in hex; see `RawFrameCommand`. */
+export async function sendRawFrame(command: RawFrameCommand): Promise<RtuMasterActionResult> {
+  const bytes = fromHex(command.hex);
+
+  if (bytes.length === 0) {
+    throw new Error("Escribe la trama en hexadecimal, por ejemplo 01 03 00 00 00 0A");
+  }
+
+  const transaction = await masterConnection.transactRaw(bytes, {
+    addCheck: command.addCheck,
+    timeoutMs: command.timeoutMs ?? defaultTimeoutMs
   });
-  const parsed = parseRtuFrame(transaction.response);
-  const exception = decodeExceptionResponse(transaction.response);
+  const { parsed } = transaction;
+  const base = baseResult(parsed.unitId, transaction, parsed.pdu[0] ?? 0);
 
-  if (exception) {
-    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
-      functionCode: exception.functionCode,
-      exceptionCode: exception.exceptionCode,
-      exceptionName: exception.exceptionName
-    });
+  if (!parsed.checkOk) {
+    return { ...base, summary: parsed.checkError ?? "Trama inválida" };
   }
 
-  if (!parsed.crcOk) {
-    return buildBaseResult(command.unitId, transaction, "CRC error in response", undefined, parsed.functionCode);
-  }
-
-  const decoded = decodeBitReadResponse(transaction.response, command.quantity);
-  return buildBaseResult(
-    command.unitId,
-    transaction,
-    `FC2 Read Discrete Inputs ${command.startAddress}:${command.quantity}`,
-    undefined,
-    parsed.functionCode,
-    decoded.values
-  );
+  const exception = parsed.pdu.length === 2 && (parsed.pdu[0] & 0x80) !== 0;
+  return {
+    ...base,
+    summary: exception
+      ? `Excepción ${parsed.pdu[1]} a FC${parsed.pdu[0] & 0x7f}`
+      : `Respuesta FC${parsed.pdu[0]} (${functionCodeName(parsed.pdu[0])}), ${parsed.pdu.length} bytes de PDU`,
+    exception: exception
+      ? { functionCode: parsed.pdu[0] & 0x7f, exceptionCode: parsed.pdu[1], exceptionName: exceptionName(parsed.pdu[1]) }
+      : undefined
+  };
 }
 
-export async function readHoldingRegisters(
-  command: ReadHoldingRegistersCommand
-): Promise<RtuMasterActionResult> {
-  const request = encodeReadHoldingRegistersRequest(command);
-  const transaction = await serialManager.transact(request, {
-    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
-    expectedResponseLength: expectedRtuResponseLength
-  });
-  const parsed = parseRtuFrame(transaction.response);
-  const exception = decodeExceptionResponse(transaction.response);
+function interpret(unitId: number, request: ModbusRequest, transaction: MasterTransaction): RtuMasterActionResult {
+  const { parsed } = transaction;
+  const base = baseResult(unitId, transaction, parsed.pdu[0] ?? request.fc);
 
-  if (exception) {
-    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
-      functionCode: exception.functionCode,
-      exceptionCode: exception.exceptionCode,
-      exceptionName: exception.exceptionName
-    });
+  if (!parsed.checkOk) {
+    return { ...base, summary: parsed.checkError === "Error de LRC" ? "LRC error in response" : parsed.checkError === "Error de CRC" ? "CRC error in response" : parsed.checkError ?? "Invalid frame" };
   }
 
-  if (!parsed.crcOk) {
-    return buildBaseResult(command.unitId, transaction, "CRC error in response", undefined, parsed.functionCode);
+  if (unitId !== 0 && parsed.unitId !== unitId && transaction.framing !== "tcp") {
+    return { ...base, crcOk: false, summary: `Responde el unit id ${parsed.unitId}, se esperaba ${unitId}` };
   }
 
-  const decoded = decodeRegisterReadResponse(transaction.response);
-  return buildBaseResult(
-    command.unitId,
-    transaction,
-    `FC3 Read Holding Registers ${command.startAddress}:${command.quantity}`,
-    undefined,
-    parsed.functionCode,
-    undefined,
-    decoded.values
-  );
+  let decoded;
+
+  try {
+    decoded = decodeResponsePdu(request, parsed.pdu);
+  } catch (error) {
+    return { ...base, crcOk: false, checkError: error instanceof Error ? error.message : "Invalid response", summary: error instanceof Error ? error.message : "Invalid response" };
+  }
+
+  if (decoded.exception) {
+    return { ...base, functionCode: decoded.exception.functionCode, summary: `Exception: ${decoded.exception.exceptionName}`, exception: decoded.exception };
+  }
+
+  return {
+    ...base,
+    summary: describe(request),
+    values: decoded.bits,
+    registerValues: decoded.registers,
+    serverId: decoded.serverId,
+    deviceId: decoded.deviceId
+  };
 }
 
-export async function readInputRegisters(
-  command: ReadInputRegistersCommand
-): Promise<RtuMasterActionResult> {
-  const request = encodeReadInputRegistersRequest(command);
-  const transaction = await serialManager.transact(request, {
-    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
-    expectedResponseLength: expectedRtuResponseLength
-  });
-  const parsed = parseRtuFrame(transaction.response);
-  const exception = decodeExceptionResponse(transaction.response);
+function baseResult(unitId: number, transaction: MasterTransaction, functionCode: number): RtuMasterActionResult {
+  return {
+    timestamp: new Date().toISOString(),
+    elapsedMs: transaction.elapsedMs,
+    unitId,
+    functionCode,
+    summary: "",
+    txHex: formatAdu(transaction.framing, transaction.request),
+    rxHex: formatAdu(transaction.framing, transaction.response),
+    crcOk: transaction.parsed.checkOk,
+    checkError: transaction.parsed.checkError,
+    framing: transaction.framing
+  };
+}
 
-  if (exception) {
-    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
-      functionCode: exception.functionCode,
-      exceptionCode: exception.exceptionCode,
-      exceptionName: exception.exceptionName
-    });
+function describe(request: ModbusRequest): string {
+  switch (request.fc) {
+    case 1:
+      return `FC1 Read Coils ${request.startAddress}:${request.quantity}`;
+    case 2:
+      return `FC2 Read Discrete Inputs ${request.startAddress}:${request.quantity}`;
+    case 3:
+      return `FC3 Read Holding Registers ${request.startAddress}:${request.quantity}`;
+    case 4:
+      return `FC4 Read Input Registers ${request.startAddress}:${request.quantity}`;
+    case 5:
+      return `FC5 Write Coil ${request.address} ${request.value ? "ON" : "OFF"}`;
+    case 6:
+      return `FC6 Write Register ${request.address}=${request.value}`;
+    case 15:
+      return `FC15 Write Coils ${request.startAddress}:${request.values.length}`;
+    case 16:
+      return `FC16 Write Registers ${request.startAddress}:${request.values.length}`;
+    case 17:
+      return "FC17 Report Server ID";
+    case 22:
+      return `FC22 Mask Write ${request.address} AND 0x${hex4(request.andMask)} OR 0x${hex4(request.orMask)}`;
+    case 23:
+      return `FC23 Read ${request.readStartAddress}:${request.readQuantity} / Write ${request.writeStartAddress}:${request.values.length}`;
+    case 43:
+      return `FC43/14 Read Device Identification (código ${request.readDeviceIdCode})`;
   }
+}
 
-  if (!parsed.crcOk) {
-    return buildBaseResult(command.unitId, transaction, "CRC error in response", undefined, parsed.functionCode);
-  }
+function hex4(value: number): string {
+  return value.toString(16).toUpperCase().padStart(4, "0");
+}
 
-  const decoded = decodeRegisterReadResponse(transaction.response);
-  return buildBaseResult(
-    command.unitId,
-    transaction,
-    `FC4 Read Input Registers ${command.startAddress}:${command.quantity}`,
-    undefined,
-    parsed.functionCode,
-    undefined,
-    decoded.values
-  );
+function exceptionName(code: number): string {
+  return ["", "Illegal Function", "Illegal Data Address", "Illegal Data Value", "Slave Device Failure"][code] ?? `Exception ${code}`;
+}
+
+export function readCoils(command: ReadCoilsCommand): Promise<RtuMasterActionResult> {
+  return executeModbusRequest({ unitId: command.unitId, timeoutMs: command.timeoutMs, request: { fc: 1, startAddress: command.startAddress, quantity: command.quantity } });
+}
+
+export function readDiscreteInputs(command: ReadDiscreteInputsCommand): Promise<RtuMasterActionResult> {
+  return executeModbusRequest({ unitId: command.unitId, timeoutMs: command.timeoutMs, request: { fc: 2, startAddress: command.startAddress, quantity: command.quantity } });
+}
+
+export function readHoldingRegisters(command: ReadHoldingRegistersCommand): Promise<RtuMasterActionResult> {
+  return executeModbusRequest({ unitId: command.unitId, timeoutMs: command.timeoutMs, request: { fc: 3, startAddress: command.startAddress, quantity: command.quantity } });
+}
+
+export function readInputRegisters(command: ReadInputRegistersCommand): Promise<RtuMasterActionResult> {
+  return executeModbusRequest({ unitId: command.unitId, timeoutMs: command.timeoutMs, request: { fc: 4, startAddress: command.startAddress, quantity: command.quantity } });
+}
+
+export function writeSingleCoil(command: WriteSingleCoilCommand): Promise<RtuMasterActionResult> {
+  return executeModbusRequest({ unitId: command.unitId, timeoutMs: command.timeoutMs, request: { fc: 5, address: command.address, value: command.value } });
+}
+
+export function writeSingleRegister(command: WriteSingleRegisterCommand): Promise<RtuMasterActionResult> {
+  return executeModbusRequest({ unitId: command.unitId, timeoutMs: command.timeoutMs, request: { fc: 6, address: command.address, value: command.value } });
+}
+
+export function writeMultipleCoils(command: WriteMultipleCoilsCommand): Promise<RtuMasterActionResult> {
+  return executeModbusRequest({ unitId: command.unitId, timeoutMs: command.timeoutMs, request: { fc: 15, startAddress: command.startAddress, values: command.values } });
+}
+
+export function writeMultipleRegisters(command: WriteMultipleRegistersCommand): Promise<RtuMasterActionResult> {
+  return executeModbusRequest({ unitId: command.unitId, timeoutMs: command.timeoutMs, request: { fc: 16, startAddress: command.startAddress, values: command.values } });
 }
 
 export async function runJwplcValidationSequence(
@@ -245,150 +259,6 @@ export async function runJwplcValidationSequence(
     summary,
     steps,
     markdown: buildValidationMarkdown(command.unitId, summary, steps)
-  };
-}
-
-export async function writeSingleCoil(
-  command: WriteSingleCoilCommand
-): Promise<RtuMasterActionResult> {
-  const request = encodeWriteSingleCoilRequest(command);
-  const transaction = await serialManager.transact(request, {
-    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
-    expectedResponseLength: expectedRtuResponseLength
-  });
-  const parsed = parseRtuFrame(transaction.response);
-  const exception = decodeExceptionResponse(transaction.response);
-
-  if (exception) {
-    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
-      functionCode: exception.functionCode,
-      exceptionCode: exception.exceptionCode,
-      exceptionName: exception.exceptionName
-    });
-  }
-
-  return buildBaseResult(
-    command.unitId,
-    transaction,
-    `FC5 Write Coil ${command.address} ${command.value ? "ON" : "OFF"}`,
-    undefined,
-    parsed.functionCode
-  );
-}
-
-export async function writeSingleRegister(
-  command: WriteSingleRegisterCommand
-): Promise<RtuMasterActionResult> {
-  const request = encodeWriteSingleRegisterRequest(command);
-  const transaction = await serialManager.transact(request, {
-    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
-    expectedResponseLength: expectedRtuResponseLength
-  });
-  const parsed = parseRtuFrame(transaction.response);
-  const exception = decodeExceptionResponse(transaction.response);
-
-  if (exception) {
-    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
-      functionCode: exception.functionCode,
-      exceptionCode: exception.exceptionCode,
-      exceptionName: exception.exceptionName
-    });
-  }
-
-  return buildBaseResult(
-    command.unitId,
-    transaction,
-    `FC6 Write Register ${command.address} = ${formatRegisterValue(command.value)}`,
-    undefined,
-    parsed.functionCode
-  );
-}
-
-export async function writeMultipleCoils(
-  command: WriteMultipleCoilsCommand
-): Promise<RtuMasterActionResult> {
-  const request = encodeWriteMultipleCoilsRequest(command);
-  const transaction = await serialManager.transact(request, {
-    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
-    expectedResponseLength: expectedRtuResponseLength
-  });
-  const parsed = parseRtuFrame(transaction.response);
-  const exception = decodeExceptionResponse(transaction.response);
-
-  if (exception) {
-    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
-      functionCode: exception.functionCode,
-      exceptionCode: exception.exceptionCode,
-      exceptionName: exception.exceptionName
-    });
-  }
-
-  return buildBaseResult(
-    command.unitId,
-    transaction,
-    `FC15 Write Coils ${command.startAddress}:${command.values.length}`,
-    undefined,
-    parsed.functionCode
-  );
-}
-
-export async function writeMultipleRegisters(
-  command: WriteMultipleRegistersCommand
-): Promise<RtuMasterActionResult> {
-  const request = encodeWriteMultipleRegistersRequest(command);
-  const transaction = await serialManager.transact(request, {
-    timeoutMs: command.timeoutMs ?? defaultTimeoutMs,
-    expectedResponseLength: expectedRtuResponseLength
-  });
-  const parsed = parseRtuFrame(transaction.response);
-  const exception = decodeExceptionResponse(transaction.response);
-
-  if (exception) {
-    return buildBaseResult(command.unitId, transaction, `Exception: ${exception.exceptionName}`, {
-      functionCode: exception.functionCode,
-      exceptionCode: exception.exceptionCode,
-      exceptionName: exception.exceptionName
-    });
-  }
-
-  return buildBaseResult(
-    command.unitId,
-    transaction,
-    `FC16 Write Registers ${command.startAddress}:${command.values.length}`,
-    undefined,
-    parsed.functionCode
-  );
-}
-
-interface SerialTransactionShape {
-  request: Uint8Array;
-  response: Uint8Array;
-  elapsedMs: number;
-}
-
-function buildBaseResult(
-  unitId: number,
-  transaction: SerialTransactionShape,
-  summary: string,
-  exception?: RtuMasterActionResult["exception"],
-  functionCode = 0,
-  values?: boolean[],
-  registerValues?: number[]
-): RtuMasterActionResult {
-  const parsed = parseRtuFrame(transaction.response);
-
-  return {
-    timestamp: new Date().toISOString(),
-    elapsedMs: transaction.elapsedMs,
-    unitId,
-    functionCode: functionCode || exception?.functionCode || parsed.functionCode,
-    summary,
-    txHex: formatHex(transaction.request),
-    rxHex: formatHex(transaction.response),
-    crcOk: parsed.crcOk,
-    values,
-    registerValues,
-    exception
   };
 }
 

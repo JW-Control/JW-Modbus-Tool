@@ -264,3 +264,8 @@
   min-height: 16px;
   margin: 0;
 }
+
+/* Servidor Modbus TCP del simulador */
+.simTcp { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #2d5c7566; }
+.simTcp > header { display: flex; justify-content: space-between; align-items: center; }
+.simTcp h3 { font-size: .98rem; color: #dd85ff; margin: 0; }
