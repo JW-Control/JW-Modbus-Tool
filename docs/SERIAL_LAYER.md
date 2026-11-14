@@ -27,11 +27,12 @@ serial port without exposing Node.js APIs to the renderer.
   FC6, FC15, and FC16.
 - Feeds the renderer Bus Monitor with TX/RX hex, elapsed time, and CRC status.
 - Exports Bus Monitor captures through the shared Markdown report IPC.
+- Runs the slave simulator on its own COM port, separate from the master
+  connection. See `SLAVE_SIMULATOR.md`.
 
 ## Deferred
 
 - Retries around serial responses.
 - Automatic reconnection after a device is unplugged.
 - Signed, floating-point, and mixed-endian register display modes.
-- Serial-backed slave sessions.
 - Packaging validation for native serial bindings.

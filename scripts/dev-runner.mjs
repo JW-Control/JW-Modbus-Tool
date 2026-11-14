@@ -113,9 +113,12 @@ try {
   }
 
   console.log("[JW Modbus Tool] Opening Electron...");
+  // VS Code/Electron-hosted shells export ELECTRON_RUN_AS_NODE=1, which makes
+  // electron.exe run as plain Node and exit without opening a window.
+  const { ELECTRON_RUN_AS_NODE: _ignored, ...electronEnv } = process.env;
   await run(electronExecutable, ["."], {
     env: {
-      ...process.env,
+      ...electronEnv,
       VITE_DEV_SERVER_URL: devServerUrl
     }
   });

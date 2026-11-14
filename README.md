@@ -1,39 +1,53 @@
 # JW Modbus Tool
 
 JW Modbus Tool is a clean-room, MIT-licensed desktop tool by JW Control for
-Modbus RTU testing, diagnostics, and demonstrations on Windows. The first target
-hardware profile is JWPLC Basic Remote I/O over Modbus RTU.
+Modbus testing, diagnostics, and demonstrations on Windows: Modbus RTU and
+ASCII over serial, Modbus TCP and RTU over TCP. The first target hardware
+profile is JWPLC Basic Remote I/O.
 
-## MVP 0.1 status
+## Estado: 0.2.0 (sin publicar)
 
-This repository is in the first implementation step. It currently includes:
+La app abre en "Modo sencillo", con siete vistas:
 
-- Electron, TypeScript, React, and Vite project skeleton.
-- Secure Electron defaults: `contextIsolation: true` and `nodeIntegration: false`.
-- Shared Modbus RTU engine foundations.
-- CRC16/Modbus implementation.
-- RTU frame build/parse utilities.
-- Master request encoders for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
-- Slave simulator response core for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
-- Serial port listing and basic connect/disconnect IPC through Electron main.
-- Persistent serial settings for baudrate, data bits, parity, stop bits,
-  response timeout, and last selected COM port.
-- Base application views: Dashboard, JWPLC Preset, Generic Master, Bus Monitor,
-  and Settings.
-- Minimal Master RTU probe for JWPLC Basic: FC1, FC2, FC5, and FC15 with
-  TX/RX monitor output.
-- JWPLC validation sequence with PASS/FAIL summary.
-- Clipboard copy and Markdown save for validation reports.
-- Generic RTU Master for FC1, FC2, FC3, FC4, FC5, FC6, FC15, and FC16.
-- Locally persisted Generic Master request presets.
-- Clipboard copy and Markdown save for Bus Monitor captures.
-- Minimal tests for CRC, frame construction, exception responses, and slave behavior.
-- Base documentation and third-party policy.
+- **Dispositivos**: conexión **Serie** (RTU o ASCII, puerto, formato serial,
+  eco del conversor) o **TCP / Ethernet** (IP, puerto, Modbus TCP o RTU
+  sobre TCP para pasarelas), timeout, numeración de direcciones, escaneo de
+  IDs y lectura rápida.
+- **Sesiones**: guardar y abrir sesiones `.jwmodbus-session` (conexión,
+  ventanas de lectura, dispositivos, historial de pruebas, notas y
+  dispositivos virtuales).
+- **Pruebas**: plan de pruebas por pasos con escenarios de falla.
+- **Registros**: varias ventanas de sondeo en paralelo (como Modbus Poll),
+  cada una con su slave, función, bloque, intervalo y timeout. Formatos
+  UInt16, Int16, Hex, Binario, Texto, UInt32, Int32, Float32, UInt64, Int64
+  y Float64 con orden de bytes ABCD, CDAB, BADC o DCBA, también por fila.
+  Doble clic en un valor para escribirlo (FC5/FC6, o FC15/FC16), alias por
+  dirección, gráfica de varias direcciones y registro a CSV con fecha y hora.
+- **Funciones**: identificación del equipo (FC43/14 y FC17), escritura con
+  máscara (FC22), lectura y escritura en una petición (FC23) y trama escrita
+  a mano en hexadecimal, con o sin CRC, LRC o cabecera MBAP.
+- **Tráfico Modbus**: monitor de peticiones y respuestas.
+- **Simulador**: el PC responde como uno o varios slaves virtuales por un
+  COM (RTU o ASCII) y por un servidor Modbus TCP (MBAP o RTU sobre TCP), con
+  plantilla JWPLC Basic Remote I/O y fallas configurables. El master de la
+  app también lo alcanza en memoria por el puerto "Simulador interno (sin
+  COM)". Guía: `docs/GUIA_USO_SIMULADOR.md`; notas técnicas:
+  `docs/SLAVE_SIMULATOR.md`; hoja de ruta: `docs/HOJA_DE_RUTA_SIMULADOR.md`.
 
-RTU request execution over serial, the JWPLC validation preset, register
-operations, and report export are now wired. Persistence, advanced data
-formats, and Windows packaging validation remain deferred until the RTU
-workflows stay stable on hardware.
+Numeración de direcciones (Dispositivos → Direcciones): 4xxxx desde 40000
+(por defecto, como en 0.1), base 0, base 1 o Modicon desde 40001. Solo cambia
+cómo se muestran y escriben; en la trama siempre viaja la dirección de
+protocolo.
+
+Motor compartido por PDU: cada transporte agrega su envoltura (unit id y CRC
+en RTU, ":" + LRC + CRLF en ASCII, cabecera MBAP en TCP). Funciones FC1 a
+FC6, FC15, FC16, FC17, FC22, FC23 y FC43/14 en el master y en el simulador;
+separadores de tramas tolerantes a pausas; respuestas TCP emparejadas por
+número de transacción; manejo del eco de conversores USB-RS485.
+
+Pruebas: `npm test` (unitarias y de extremo a extremo en memoria) y la
+integración contra un JWPLC Basic simulado en JWPLC Sim, con y sin eco:
+`docs/PRUEBAS_JWPLC_SIM.md`. Bitácora del proceso: `BITACORA_CAMBIOS.md`.
 
 ## Install dependencies
 
@@ -104,7 +118,7 @@ binding. Installer signing remains deferred.
 
 ## Current scope
 
-- Modbus RTU only.
+- Modbus RTU and ASCII (serial), Modbus TCP and RTU over TCP.
 - Clean-room TypeScript implementation.
 - Windows-first desktop architecture.
 - Base desktop renderer while the protocol and serial layers are stabilized.
@@ -114,12 +128,13 @@ binding. Installer signing remains deferred.
 - Generic bit and register operations for all eight supported function codes.
 - Save, load, update, and delete Generic Master request presets.
 - Bus Monitor copy/save as Markdown.
+- Virtual slaves on a dedicated COM port (RTU or ASCII) and on a Modbus TCP
+  server.
 
 ## Current limitations
 
-- The UI is still an MVP surface, not the final full workspace.
-- Register values are currently displayed as unsigned 16-bit decimal and
-  hexadecimal values only.
+- The simulator's memory tables always show 4xxxx numbering, whatever the
+  address mode chosen for the master views.
 - No file-based JSON preset import/export yet.
 - The remembered serial port is selected on startup but is not opened
   automatically.
@@ -136,13 +151,14 @@ MVP 0.1:
 - Export logs.
 - Windows portable and installer builds.
 
-MVP 0.2:
+MVP 0.2 (done in this branch):
 
-- Modbus TCP Master.
-- Modbus TCP Slave.
-- Float32, Int32, and endian display options.
-- Multiple sessions.
-- Better validation reports.
+- Modbus TCP Master and Slave, RTU over TCP, Modbus ASCII.
+- 16/32/64-bit data formats and byte orders.
+- Several polling windows, write by double click, CSV logging, multi-trace chart.
+- FC17, FC22, FC23 and FC43/14; hand-typed frames.
+
+Still open from 0.2: better validation reports.
 
 MVP 0.3:
 

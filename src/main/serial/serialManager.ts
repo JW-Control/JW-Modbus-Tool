@@ -1,12 +1,25 @@
 import { SerialPort } from "serialport";
+import type { Framing } from "../../shared/modbus/adu.js";
 import { concatBytes } from "../../shared/modbus/byteUtils.js";
-import type {
-  NormalizedSerialPortConfig,
-  SerialConnectionState,
-  SerialPortConfig,
-  SerialPortDescriptor,
-  SerialOperationResult
+import { decideEcho, defaultEchoMode, isEchoMode } from "../../shared/serial/echoFilter.js";
+import {
+  INTERNAL_SIMULATOR_PATH,
+  type NormalizedSerialPortConfig,
+  type SerialConnectionState,
+  type SerialPortConfig,
+  type SerialPortDescriptor,
+  type SerialOperationResult
 } from "../../shared/serial/types.js";
+
+/** Answers master requests in memory; the slave simulator provides it. */
+export interface InternalSlaveEndpoint {
+  /** `reply` is called once with the response, or never when the slave stays silent. */
+  send(request: Uint8Array, reply: (response: Uint8Array) => void, framing?: Framing): void;
+}
+
+export function isInternalSimulatorPath(path: unknown): boolean {
+  return typeof path === "string" && path.trim().toUpperCase() === INTERNAL_SIMULATOR_PATH;
+}
 
 interface RawSerialPortDescriptor {
   path: string;
@@ -25,13 +38,28 @@ interface SerialPortLister {
 export interface SerialTransactionOptions {
   timeoutMs: number;
   expectedResponseLength: (bytes: Uint8Array) => number | null;
+  /**
+   * When the length cannot be known (a raw frame typed by the user), the
+   * response ends after this much silence. Without it, such a reply waits
+   * for the timeout.
+   */
+  idleCompleteMs?: number;
 }
 
 export interface SerialTransactionResult {
   request: Uint8Array;
   response: Uint8Array;
   elapsedMs: number;
+  /** True when the converter echoed the request and it was discarded. */
+  echoDiscarded?: boolean;
 }
+
+/**
+ * Silence that settles an FC5/FC6 reply while it is still unknown whether the
+ * converter echoes: if nothing follows the repeated request in this time, it
+ * was the response. Generous, because slaves may take tens of ms to answer.
+ */
+export const ECHO_GRACE_MS = 120;
 
 export const supportedBaudRates = [9600, 19200, 38400, 57600, 115200] as const;
 
@@ -77,13 +105,32 @@ export function validateSerialPortConfig(config: SerialPortConfig): NormalizedSe
     throw new Error("Stop bits must be 1 or 2");
   }
 
+  const echo = config.echo ?? defaultEchoMode;
+
+  if (!isEchoMode(echo)) {
+    throw new Error("Echo must be off, auto, or on");
+  }
+
+  const framing = config.framing ?? "rtu";
+
+  if (framing !== "rtu" && framing !== "ascii") {
+    throw new Error("Serial framing must be rtu or ascii");
+  }
+
+  if (framing === "ascii" && dataBits !== 7 && dataBits !== 8) {
+    throw new Error("Data bits must be 7 or 8");
+  }
+
   return {
     path,
     baudRate: config.baudRate,
     dataBits,
     parity,
     stopBits,
-    lock: config.lock ?? true
+    lock: config.lock ?? true,
+    echo,
+    transport: "serial",
+    framing
   };
 }
 
@@ -93,6 +140,8 @@ export async function listSerialPorts(lister: SerialPortLister = SerialPort): Pr
 
 export class SerialManager {
   private port: SerialPort | null = null;
+  private internalEndpoint: InternalSlaveEndpoint | null = null;
+  private internalOpen = false;
   private state: SerialConnectionState = {
     connected: false
   };
@@ -105,11 +154,29 @@ export class SerialManager {
     return { ...this.state };
   }
 
+  setInternalEndpoint(endpoint: InternalSlaveEndpoint | null): void {
+    this.internalEndpoint = endpoint;
+  }
+
   async open(config: SerialPortConfig): Promise<SerialConnectionState> {
     const normalizedConfig = validateSerialPortConfig(config);
 
-    if (this.port?.isOpen) {
+    if (this.port?.isOpen || this.internalOpen) {
       await this.close();
+    }
+
+    if (isInternalSimulatorPath(normalizedConfig.path)) {
+      if (!this.internalEndpoint) {
+        throw new Error("El simulador interno no está disponible");
+      }
+
+      this.internalOpen = true;
+      this.state = {
+        connected: true,
+        config: { ...normalizedConfig, path: INTERNAL_SIMULATOR_PATH },
+        openedAt: new Date().toISOString()
+      };
+      return this.getConnectionState();
     }
 
     const nextPort = new SerialPort({
@@ -151,6 +218,12 @@ export class SerialManager {
   }
 
   async close(): Promise<SerialConnectionState> {
+    if (this.internalOpen) {
+      this.internalOpen = false;
+      this.state = { connected: false };
+      return this.getConnectionState();
+    }
+
     const openPort = this.port;
 
     if (!openPort) {
@@ -175,6 +248,10 @@ export class SerialManager {
   }
 
   async transact(request: Uint8Array, options: SerialTransactionOptions): Promise<SerialTransactionResult> {
+    if (this.internalOpen && this.internalEndpoint) {
+      return this.transactInternal(this.internalEndpoint, request, options);
+    }
+
     const openPort = this.port;
 
     if (!openPort?.isOpen) {
@@ -188,7 +265,7 @@ export class SerialManager {
       let settled = false;
       const timer = setTimeout(() => {
         cleanup();
-        reject(new Error(`Timed out waiting for RTU response after ${options.timeoutMs} ms`));
+        reject(new Error(`Timed out waiting for response after ${options.timeoutMs} ms`));
       }, options.timeoutMs);
 
       const cleanup = () => {
@@ -198,6 +275,7 @@ export class SerialManager {
 
         settled = true;
         clearTimeout(timer);
+        if (graceTimer) clearTimeout(graceTimer);
         openPort.off("data", onData);
         openPort.off("error", onError);
       };
@@ -207,18 +285,62 @@ export class SerialManager {
         reject(error);
       };
 
-      const onData = (chunk: Buffer) => {
-        chunks.push(Uint8Array.from(chunk));
-        const response = concatBytes(...chunks);
-        const expectedLength = options.expectedResponseLength(response);
+      const echoMode = this.state.config?.echo ?? defaultEchoMode;
+      let graceTimer: ReturnType<typeof setTimeout> | null = null;
 
-        if (expectedLength !== null && response.length >= expectedLength) {
-          cleanup();
-          resolve({
-            request,
-            response: response.slice(0, expectedLength),
-            elapsedMs: Math.round(performance.now() - startedAt)
-          });
+      const finish = (response: Uint8Array, echoDiscarded: boolean) => {
+        cleanup();
+        resolve({
+          request,
+          response,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          echoDiscarded
+        });
+      };
+
+      const onData = (chunk: Buffer) => {
+        if (settled) {
+          return;
+        }
+
+        if (graceTimer) {
+          clearTimeout(graceTimer);
+          graceTimer = null;
+        }
+
+        chunks.push(Uint8Array.from(chunk));
+        const received = concatBytes(...chunks);
+        const decision = decideEcho(echoMode, request, received, this.state.echoDetected);
+
+        if (decision.action === "wait") {
+          return;
+        }
+
+        if (decision.action === "ambiguous") {
+          graceTimer = setTimeout(() => {
+            graceTimer = null;
+            finish(decision.candidate, false);
+          }, ECHO_GRACE_MS);
+          return;
+        }
+
+        const expectedLength = options.expectedResponseLength(decision.payload);
+
+        if (expectedLength === null && options.idleCompleteMs && decision.payload.length > 0) {
+          const payload = decision.payload;
+          graceTimer = setTimeout(() => {
+            graceTimer = null;
+            finish(payload, decision.echoSeen);
+          }, options.idleCompleteMs);
+          return;
+        }
+
+        if (expectedLength !== null && decision.payload.length >= expectedLength) {
+          if (echoMode === "auto") {
+            this.state = { ...this.state, echoDetected: decision.echoSeen };
+          }
+
+          finish(decision.payload.slice(0, expectedLength), decision.echoSeen);
         }
       };
 
@@ -247,6 +369,32 @@ export class SerialManager {
           });
         });
       });
+    });
+  }
+
+  private transactInternal(
+    endpoint: InternalSlaveEndpoint,
+    request: Uint8Array,
+    options: SerialTransactionOptions
+  ): Promise<SerialTransactionResult> {
+    const startedAt = performance.now();
+
+    return new Promise<SerialTransactionResult>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        settled = true;
+        reject(new Error(`Timed out waiting for response after ${options.timeoutMs} ms`));
+      }, options.timeoutMs);
+
+      endpoint.send(Uint8Array.from(request), (response) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimeout(timer);
+        resolve({ request, response, elapsedMs: Math.round(performance.now() - startedAt) });
+      }, this.state.config?.framing ?? "rtu");
     });
   }
 }

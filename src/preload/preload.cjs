@@ -7,6 +7,11 @@ contextBridge.exposeInMainWorld("jwModbus", {
     electron: process.versions.electron,
     node: process.versions.node
   },
+  window: {
+    minimize: () => ipcRenderer.invoke("window:minimize"),
+    maximize: () => ipcRenderer.invoke("window:maximize"),
+    close: () => ipcRenderer.invoke("window:close")
+  },
   serial: {
     listPorts: () => ipcRenderer.invoke("serial:listPorts"),
     getConnectionState: () => ipcRenderer.invoke("serial:getConnectionState"),
@@ -22,7 +27,40 @@ contextBridge.exposeInMainWorld("jwModbus", {
     writeMultipleCoils: (command) => ipcRenderer.invoke("modbus:writeMultipleCoils", command),
     writeSingleRegister: (command) => ipcRenderer.invoke("modbus:writeSingleRegister", command),
     writeMultipleRegisters: (command) => ipcRenderer.invoke("modbus:writeMultipleRegisters", command),
+    execute: (command) => ipcRenderer.invoke("modbus:execute", command),
+    sendRaw: (command) => ipcRenderer.invoke("modbus:sendRaw", command),
     runJwplcValidation: (command) => ipcRenderer.invoke("modbus:runJwplcValidation", command)
+  },
+  slave: {
+    getState: () => ipcRenderer.invoke("slave:getState"),
+    start: (config) => ipcRenderer.invoke("slave:start", config),
+    stop: () => ipcRenderer.invoke("slave:stop"),
+    startTcp: (config) => ipcRenderer.invoke("slave:startTcp", config),
+    stopTcp: () => ipcRenderer.invoke("slave:stopTcp"),
+    addDevice: (request) => ipcRenderer.invoke("slave:addDevice", request),
+    removeDevice: (unitId) => ipcRenderer.invoke("slave:removeDevice", unitId),
+    getDevice: (unitId) => ipcRenderer.invoke("slave:getDevice", unitId),
+    setValue: (request) => ipcRenderer.invoke("slave:setValue", request),
+    setFaults: (request) => ipcRenderer.invoke("slave:setFaults", request),
+    exportDevices: () => ipcRenderer.invoke("slave:exportDevices"),
+    getTraffic: () => ipcRenderer.invoke("slave:getTraffic"),
+    clearTraffic: () => ipcRenderer.invoke("slave:clearTraffic"),
+    importDevices: (devices) => ipcRenderer.invoke("slave:importDevices", devices),
+    onEvent: (listener) => {
+      const handler = (_event, payload) => listener(payload);
+      ipcRenderer.on("slave:event", handler);
+      return () => {
+        ipcRenderer.removeListener("slave:event", handler);
+      };
+    }
+  },
+  files: {
+    saveText: (request) => ipcRenderer.invoke("file:saveText", request),
+    appendText: (request) => ipcRenderer.invoke("file:appendText", request)
+  },
+  sessions: {
+    saveFile: (request) => ipcRenderer.invoke("session:saveFile", request),
+    openFile: (request) => ipcRenderer.invoke("session:openFile", request)
   },
   reports: {
     copyMarkdown: (markdown) => ipcRenderer.invoke("report:copyMarkdown", markdown),

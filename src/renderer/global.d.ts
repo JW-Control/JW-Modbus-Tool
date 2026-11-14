@@ -1,6 +1,8 @@
 export {};
 
 import type {
+  ModbusCommand,
+  RawFrameCommand,
   ReadCoilsCommand,
   ReadDiscreteInputsCommand,
   ReadHoldingRegistersCommand,
@@ -24,8 +26,29 @@ import type {
   SerialPortConfig,
   SerialPortDescriptor
 } from "../shared/serial/types.js";
+import type {
+  AddVirtualDeviceRequest,
+  SetVirtualFaultsRequest,
+  SetVirtualValueRequest,
+  SlaveSimulatorEvent,
+  SlaveSimulatorState,
+  SlaveTcpConfig,
+  SlaveTrafficEntry,
+  VirtualDeviceConfig,
+  VirtualDeviceSnapshot
+} from "../shared/slave/types.js";
+import type { AppendTextFileRequest, SaveTextFileRequest, SaveTextFileResult } from "../shared/files/types.js";
+import type {
+  OpenSessionFileRequest,
+  OpenSessionFileResult,
+  SaveSessionFileRequest,
+  SaveSessionFileResult
+} from "../shared/session/types.js";
 
 declare global {
+  /** Version from package.json, injected by Vite. */
+  const __APP_VERSION__: string;
+
   interface Window {
     jwModbus?: {
       appName: string;
@@ -33,6 +56,11 @@ declare global {
         chrome?: string;
         electron?: string;
         node?: string;
+      };
+      window?: {
+        minimize: () => void;
+        maximize: () => void;
+        close: () => void;
       };
       serial: {
         listPorts: () => Promise<SerialOperationResult<SerialPortDescriptor[]>>;
@@ -65,9 +93,42 @@ declare global {
         writeMultipleRegisters: (
           command: WriteMultipleRegistersCommand
         ) => Promise<SerialOperationResult<RtuMasterActionResult>>;
+        execute: (command: ModbusCommand) => Promise<SerialOperationResult<RtuMasterActionResult>>;
+        sendRaw: (command: RawFrameCommand) => Promise<SerialOperationResult<RtuMasterActionResult>>;
         runJwplcValidation: (
           command: ValidationSequenceCommand
         ) => Promise<SerialOperationResult<ValidationSequenceResult>>;
+      };
+      slave: {
+        getState: () => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        start: (config: SerialPortConfig) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        stop: () => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        startTcp: (config: SlaveTcpConfig) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        stopTcp: () => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        addDevice: (request: AddVirtualDeviceRequest) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        removeDevice: (unitId: number) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        getDevice: (unitId: number) => Promise<SerialOperationResult<VirtualDeviceSnapshot>>;
+        setValue: (request: SetVirtualValueRequest) => Promise<SerialOperationResult<VirtualDeviceSnapshot>>;
+        setFaults: (request: SetVirtualFaultsRequest) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        exportDevices: () => Promise<SerialOperationResult<VirtualDeviceConfig[]>>;
+        getTraffic: () => Promise<SerialOperationResult<SlaveTrafficEntry[]>>;
+        clearTraffic: () => Promise<SerialOperationResult<void>>;
+        importDevices: (devices: VirtualDeviceConfig[]) => Promise<SerialOperationResult<SlaveSimulatorState>>;
+        onEvent: (listener: (event: SlaveSimulatorEvent) => void) => () => void;
+      };
+      files: {
+        /** Asks where to save (unless `filePath` is given) and writes the text. */
+        saveText: (request: SaveTextFileRequest) => Promise<SerialOperationResult<SaveTextFileResult>>;
+        /** Appends to a file chosen earlier with `saveText`. */
+        appendText: (request: AppendTextFileRequest) => Promise<SerialOperationResult<{ bytesWritten: number }>>;
+      };
+      sessions: {
+        saveFile: (
+          request: SaveSessionFileRequest
+        ) => Promise<SerialOperationResult<SaveSessionFileResult>>;
+        openFile: (
+          request?: OpenSessionFileRequest
+        ) => Promise<SerialOperationResult<OpenSessionFileResult>>;
       };
       reports: {
         copyMarkdown: (markdown: string) => Promise<SerialOperationResult<CopyMarkdownReportResult>>;

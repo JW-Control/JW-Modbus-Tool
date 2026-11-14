@@ -1,0 +1,1323 @@
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  CheckCircle2,
+  ChevronDown,
+  Clock3,
+  Database,
+  FileText,
+  FlaskConical,
+  FolderOpen,
+  Info,
+  Minus,
+  Monitor,
+  Network,
+  Pencil,
+  Play,
+  Plug,
+  RefreshCw,
+  Save,
+  Search,
+  Server,
+  Settings,
+  Star,
+  Terminal,
+  XCircle,
+  Square,
+  Unplug,
+  X
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import {
+  TestsView as NativeTestsView,
+  normalizeTestsRuntimeState,
+  type TestsRunSummary,
+  type TestsRuntimeState
+} from "./simple-tests-consolidated.js";
+import { SimulatorView } from "./SimulatorView.js";
+import { loadSimulatorSettings, normalizeSimulatorSettings, storeSimulatorSettings } from "./simulatorSettings.js";
+import type { SlaveSimulatorSessionConfig, VirtualDeviceSummary } from "../shared/slave/types.js";
+import { INTERNAL_SIMULATOR_PATH } from "../shared/serial/types.js";
+import { defaultEchoMode, echoModeLabels, isEchoMode, type EchoMode } from "../shared/serial/echoFilter.js";
+import { PollView } from "./PollView.js";
+import { FunctionsView } from "./FunctionsView.js";
+import { pollEngine, type PollActionEvent, type PollDefinition, type PollStatus } from "./pollEngine.js";
+import { addressModeLabels, addressModes, isAddressMode, tableOf, toDisplayAddress, toProtocolAddress, type AddressMode } from "./addressing.js";
+import type { Framing } from "../shared/modbus/adu.js";
+import type { SerialOperationResult, MasterTransport, SerialFraming, TcpFraming } from "../shared/serial/types.js";
+import type { RtuMasterActionResult } from "../shared/modbus/masterActionTypes.js";
+
+const INTERNAL_PORT_LABEL = "Simulador interno (sin COM)";
+
+function JwplcIcon({ size = 32, className = "", strokeWidth = 1.5 }: { size?: number, className?: string, strokeWidth?: number }) {
+  return (
+    <svg 
+      width={size} 
+      height={size} 
+      viewBox="0 0 24 24" 
+      fill="none" 
+      stroke="currentColor" 
+      strokeWidth={strokeWidth} 
+      strokeLinecap="round" 
+      strokeLinejoin="round" 
+      className={className} 
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      {/* Main Body */}
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      
+      {/* Top Terminals */}
+      <path d="M6 4v-2 M10 4v-2 M14 4v-2 M18 4v-2" />
+
+      {/* Bottom Terminals */}
+      <path d="M4 20v2 M8 20v2 M12 20v2 M16 20v2 M20 20v2" />
+      
+      {/* Screen */}
+      <rect x="4" y="7" width="9" height="5" rx="1" />
+      
+      {/* D-Pad (Arrows) */}
+      <path d="M17 6v4 M15 8h4" />
+      
+      {/* Action Buttons */}
+      <rect x="14.5" y="14" width="2" height="2" rx="0.5" />
+      <rect x="18" y="14" width="2" height="2" rx="0.5" />
+      
+      {/* Logo abstract "J" */}
+      <path d="M5 14v3h3v-2" />
+    </svg>
+  );
+}
+
+type View = "devices" | "sessions" | "tests" | "registers" | "functions" | "traffic" | "simulator";
+type Status = "OK" | "Aprobado" | "Error" | "Timeout" | "CRC Error" | "Excepción" | "Pendiente";
+type Fn = "fc1" | "fc2" | "fc3" | "fc4" | "fc6";
+type SessionState = "Limpia" | "Activa sin guardar" | "Guardada" | "Modificada";
+
+interface Device { id: number; name: string; named: boolean; active?: boolean }
+interface PortOption { path: string; label: string; hasMetadata: boolean }
+interface Stats { requests: number; responses: number; errors: number; timeouts: number }
+interface RegisterRow { raw: number; address: string; name: string; value: string; type: string; access: string; status: Status }
+interface ActivityRow { id: number; at: Date; ms: number; slave: number | "—"; device: string; fn: string; fnKey: Fn; label: string; address: number; range: string; qty: number | "—"; values: string; rows: RegisterRow[]; status: Status }
+interface TrafficRow { id: number; dir: "up" | "down"; at: Date; route: string; slave: number; type: "Petición" | "Respuesta"; fn: string; status: Status; summary: string; ms?: number }
+interface TestRow { enabled: boolean; step: number; slave: number; device: string; fn: Fn; label: string; address: number; amount: number; expected: string; timeout: number; result: Status }
+type TrafficAction = { timestamp?: string; unitId: number; elapsedMs?: number; registerValues?: unknown[]; values?: unknown[]; exception?: unknown };
+interface StoredActivityRow extends Omit<ActivityRow, "at"> { at: string }
+interface StoredTrafficRow extends Omit<TrafficRow, "at"> { at: string }
+type TestExecutionHistoryEntry = Record<string, unknown> & {
+  key?: string;
+  status?: string;
+  completedAt?: string;
+  startedAt?: string;
+};
+interface SessionDocument {
+  format: "jwmodbus-session";
+  version: 1;
+  session: { id: string; name: string; createdAt: string; updatedAt: string; status: SessionState; notes: string };
+  connection: ConnectionSettings;
+  devices: Device[];
+  activeSlaveId: number | null;
+  stats: Stats;
+  quickReads: RegisterRow[];
+  registerSnapshot: RegisterRow[];
+  activity: StoredActivityRow[];
+  traffic: StoredTrafficRow[];
+  tests: TestRow[];
+  testsRuntime?: TestsRuntimeState | null;
+  testsExecutionHistory?: TestExecutionHistoryEntry[];
+  testsExecutionHistoryUpdatedAt?: string | null;
+  registerMaps: unknown[];
+  templates: unknown[];
+  simulator?: SlaveSimulatorSessionConfig | null;
+  /** Numbering shown in the app; frames always carry protocol addresses. */
+  addressMode?: AddressMode;
+  pollWindows?: PollDefinition[];
+}
+interface ConnectionSettings {
+  /** Shown in old sessions and reports: RTU, ASCII, TCP or RTU/TCP. */
+  protocol: string;
+  transport?: MasterTransport;
+  serialFraming?: SerialFraming;
+  host?: string;
+  tcpPort?: number;
+  tcpFraming?: TcpFraming;
+  port: string;
+  baudRate: number;
+  dataBits: number;
+  parity: string;
+  stopBits: number;
+  timeoutMs: number;
+  echo?: EchoMode;
+}
+interface RecentSession { id: string; name: string; savedAt: string; filePath: string; devices: number; registers: number; tests: string; errors: number; status: SessionState }
+
+const RECENT_SESSION_STORAGE_KEY = "jw-modbus-tool.simple.recent-sessions.v1";
+const LAST_SERIAL_PORT_STORAGE_KEY = "jw-modbus-tool.simple.last-serial-port.v1";
+const TESTS_EXECUTION_HISTORY_STORAGE_KEY = "jw-modbus-tool.simple.tests-execution-history.v1";
+
+const nav: Array<{ id: View; label: string; icon: LucideIcon }> = [
+  { id: "devices", label: "Dispositivos", icon: Network },
+  { id: "sessions", label: "Sesiones", icon: Clock3 },
+  { id: "tests", label: "Pruebas", icon: FlaskConical },
+  { id: "registers", label: "Registros", icon: Database },
+  { id: "functions", label: "Funciones", icon: Terminal },
+  { id: "traffic", label: "Tráfico Modbus", icon: Activity },
+  { id: "simulator", label: "Simulador", icon: Server }
+];
+
+const fnMap: Record<Fn, { short: string; label: string }> = {
+  fc1: { short: "FC01", label: "FC01 Read Coils" },
+  fc2: { short: "FC02", label: "FC02 Read Discrete Inputs" },
+  fc3: { short: "FC03", label: "FC03 Read Holding Registers" },
+  fc4: { short: "FC04", label: "FC04 Read Input Registers" },
+  fc6: { short: "FC06", label: "FC06 Write Single Register" }
+};
+
+const LAST_TCP_HOST_STORAGE_KEY = "jw-modbus-tool.simple.last-tcp-host.v1";
+const ADDRESS_MODE_STORAGE_KEY = "jw-modbus-tool.simple.address-mode.v1";
+
+let rowId = 1;
+
+export function SimpleModeApp() {
+  const bridge = window.jwModbus;
+  const [view, setView] = useState<View>("devices");
+  const [message, setMessage] = useState(bridge ? "Sesión limpia. Conecta y escanea para empezar." : "Abre la app en Electron para usar el backend serial.");
+  const [busy, setBusy] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [ports, setPorts] = useState<PortOption[]>([]);
+  const [port, setPort] = useState(() => loadStoredSerialPort());
+  const [baud, setBaud] = useState(9600);
+  const [dataBits, setDataBits] = useState(8);
+  const [parity, setParity] = useState("none");
+  const [stopBits, setStopBits] = useState(1);
+  const [echo, setEcho] = useState<EchoMode>(defaultEchoMode);
+  const [timeout, setTimeoutMs] = useState(1000);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const [lastScan, setLastScan] = useState<Date | null>(null);
+  const [qFn, setQFn] = useState<Fn>("fc3");
+  const [qAddr, setQAddr] = useState(40000);
+  const [qQty, setQQty] = useState(6);
+  const [quick, setQuick] = useState<RegisterRow[]>([]);
+  const [regs, setRegs] = useState<RegisterRow[]>([]);
+  const [transport, setTransport] = useState<MasterTransport>("serial");
+  const [serialFraming, setSerialFraming] = useState<SerialFraming>("rtu");
+  const [host, setHost] = useState(() => loadStored(LAST_TCP_HOST_STORAGE_KEY) || "127.0.0.1");
+  const [tcpPort, setTcpPort] = useState(502);
+  const [tcpFraming, setTcpFraming] = useState<TcpFraming>("mbap");
+  const [addressMode, setAddressMode] = useState<AddressMode>(() => { const stored = loadStored(ADDRESS_MODE_STORAGE_KEY); return isAddressMode(stored) ? stored : "jw"; });
+  const addressModeRef = useRef(addressMode);
+  addressModeRef.current = addressMode;
+  const pollWindows = useSyncExternalStore(pollEngine.subscribe, pollEngine.getSnapshot);
+  const pollDefinitions = useMemo(() => pollWindows.map((window) => window.def), [pollWindows]);
+  const framing: Framing = transport === "tcp" ? (tcpFraming === "mbap" ? "tcp" : "rtu") : serialFraming;
+  const connectionLabel = transport === "tcp" ? `${host}:${tcpPort}` : port === INTERNAL_SIMULATOR_PATH ? INTERNAL_PORT_LABEL : port || "Sin puerto";
+  const protocolLabel = protocolName(transport, serialFraming, tcpFraming);
+  const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [traffic, setTraffic] = useState<TrafficRow[]>([]);
+  const [stats, setStats] = useState<Stats>({ requests: 0, responses: 0, errors: 0, timeouts: 0 });
+  const [tests, setTests] = useState<TestRow[]>(createCleanTests());
+  const [testsRuntime, setTestsRuntime] = useState<TestsRuntimeState | null>(null);
+  const [testsExecutionHistory, setTestsExecutionHistory] = useState<TestExecutionHistoryEntry[]>(() => loadStoredTestsExecutionHistory());
+  const [testsResetKey, setTestsResetKey] = useState(0);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionCreatedAt, setSessionCreatedAt] = useState(() => new Date().toISOString());
+  const [sessionName, setSessionName] = useState("Nueva_sesion_Modbus");
+  const [sessionFilePath, setSessionFilePath] = useState<string | null>(null);
+  const [lastSavedSignature, setLastSavedSignature] = useState<string | null>(null);
+  const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
+  const [notes, setNotes] = useState("");
+  const [simulatorDevices, setSimulatorDevices] = useState<VirtualDeviceSummary[]>([]);
+
+  const activeDevice = useMemo(
+    () => (activeId === null ? null : devices.find((device) => device.id === activeId) ?? null),
+    [activeId, devices]
+  );
+  const connectionSettings = useMemo<ConnectionSettings>(() => ({ protocol: protocolLabel, transport, serialFraming, host, tcpPort, tcpFraming, port, baudRate: baud, dataBits, parity, stopBits, timeoutMs: timeout, echo }), [protocolLabel, transport, serialFraming, host, tcpPort, tcpFraming, port, baud, dataBits, parity, stopBits, timeout, echo]);
+  const currentSignature = useMemo(() => signatureFromState({ sessionName, connection: connectionSettings, addressMode, pollWindows: pollDefinitions, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices }), [sessionName, connectionSettings, addressMode, pollDefinitions, devices, activeId, stats, quick, regs, activity, traffic, tests, testsRuntime, testsExecutionHistory, notes, simulatorDevices]);
+  const sessionState = useMemo<SessionState>(() => {
+    const isClean = devices.length === 0 && activity.length === 0 && stats.requests === 0 && testsExecutionHistory.length === 0 && notes.trim().length === 0 && simulatorDevices.length === 0 && pollDefinitions.length === 0;
+    if (isClean) return "Limpia";
+    if (!sessionFilePath) return "Activa sin guardar";
+    return lastSavedSignature === currentSignature ? "Guardada" : "Modificada";
+  }, [activity.length, currentSignature, devices.length, lastSavedSignature, notes, sessionFilePath, stats.requests, testsExecutionHistory.length, simulatorDevices.length, pollDefinitions.length]);
+
+  useEffect(() => { void initBackend(); }, []);
+  useEffect(() => {
+    if (!bridge?.slave) return;
+    void bridge.slave.getState().then((result) => { if (result.ok) setSimulatorDevices(result.value.devices); });
+    return bridge.slave.onEvent((event) => {
+      if (event.type === "state") setSimulatorDevices((current) => sameSimulatorDevices(current, event.state.devices) ? current : event.state.devices);
+    });
+  }, []);
+  useEffect(() => { setRecentSessions(loadStoredRecentSessions()); }, []);
+  useEffect(() => {
+    const syncHistory = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      setTestsExecutionHistory(normalizeTestsExecutionHistory(detail));
+    };
+
+    window.addEventListener("jw-simple-tests-history-updated", syncHistory);
+    return () => window.removeEventListener("jw-simple-tests-history-updated", syncHistory);
+  }, []);
+  useEffect(() => { storeLastSerialPort(port); }, [port]);
+  useEffect(() => { storeValue(LAST_TCP_HOST_STORAGE_KEY, host.trim()); }, [host]);
+  useEffect(() => { storeValue(ADDRESS_MODE_STORAGE_KEY, addressMode); }, [addressMode]);
+  useEffect(() => { pollEngine.setAddressModeSource(() => addressModeRef.current); }, []);
+  useEffect(() => pollEngine.onAction(recordPollAction), [devices]);
+
+  useEffect(() => {
+    setQQty(qFn === "fc1" || qFn === "fc2" ? 8 : 6);
+    setQuick([]);
+  }, [qFn]);
+  useEffect(() => { setQAddr(toDisplayAddress(addressMode, fnTable(qFn), 0)); }, [qFn, addressMode]);
+  async function initBackend() {
+    if (!bridge) return;
+    const [portResult, stateResult] = await Promise.all([bridge.serial.listPorts(), bridge.serial.getConnectionState()]);
+    const state = stateResult.ok ? stateResult.value : null;
+    const currentPath = state?.config?.path || "";
+    if (stateResult.ok) {
+      setConnected(Boolean(state?.connected));
+      if (state?.config) {
+        setPort(state.config.path);
+        setBaud(state.config.baudRate);
+        setDataBits(state.config.dataBits);
+        setParity(state.config.parity);
+        setStopBits(state.config.stopBits);
+        if (isEchoMode(state.config.echo)) setEcho(state.config.echo);
+        if (state.config.transport === "tcp") {
+          setTransport("tcp");
+          if (state.config.host) setHost(state.config.host);
+          if (state.config.tcpPort) setTcpPort(state.config.tcpPort);
+          setTcpFraming(state.config.framing === "rtu" ? "rtu" : "mbap");
+        } else if (state.config.framing === "ascii" || state.config.framing === "rtu") setSerialFraming(state.config.framing);
+      }
+    }
+    if (portResult.ok) setVisiblePorts(portResult.value as unknown as Array<Record<string, unknown>>, currentPath);
+  }
+
+  function setVisiblePorts(rawPorts: Array<Record<string, unknown>>, preferred = port) {
+    const normalized = normalizePorts(rawPorts);
+    const withMetadata = normalized.filter((item) => item.hasMetadata);
+    let visible = withMetadata.length > 0 ? withMetadata : normalized;
+    if (preferred) {
+      const preferredPort = normalized.find((item) => item.path === preferred);
+      if (preferredPort && withMetadata.length === 0 && normalized.length > 1) visible = [preferredPort];
+    }
+    if (!preferred && withMetadata.length === 0 && normalized.length > 1) visible = [highestComPort(normalized)];
+    // The internal simulator is always offered last, after the real ports.
+    const options = [...visible, { path: INTERNAL_SIMULATOR_PATH, label: INTERNAL_PORT_LABEL, hasMetadata: false }];
+    setPorts(options);
+    setPort((current) => {
+      const stored = loadStoredSerialPort();
+      const candidate = [preferred, current, stored].find((value) => value && options.some((item) => item.path === value));
+      return candidate || options[0].path;
+    });
+  }
+
+  async function refreshPorts() {
+    if (!bridge) return setMessage("Backend Electron no disponible.");
+    setBusy(true);
+    const result = await bridge.serial.listPorts();
+    setBusy(false);
+    if (!result.ok) return setMessage(result.error);
+    setVisiblePorts(result.value as unknown as Array<Record<string, unknown>>, port);
+    setMessage("Lista de puertos actualizada. Se muestran puertos USB/activos para evitar COM residuales.");
+  }
+
+  async function connect() {
+    if (!bridge) return setMessage("Backend Electron no disponible.");
+    if (transport === "serial" && !port) return setMessage("No hay puerto seleccionado. Recarga la lista de puertos.");
+    if (transport === "tcp" && !host.trim()) return setMessage("Escribe la IP o el nombre del equipo Modbus TCP.");
+    pollEngine.stopAll();
+    setBusy(true);
+    const result = transport === "tcp"
+      ? await bridge.serial.open({ path: "", baudRate: 0, transport: "tcp", host: host.trim(), tcpPort, tcpFraming })
+      : await bridge.serial.open({ path: port, baudRate: baud, dataBits: dataBits === 7 ? 7 : 8, parity: parity as "none" | "even" | "odd", stopBits: stopBits === 2 ? 2 : 1, echo, transport: "serial", framing: serialFraming });
+    setBusy(false);
+    if (!result.ok) {
+      setConnected(false);
+      setMessage(result.error);
+      return;
+    }
+    setConnected(Boolean(result.value.connected));
+    if (transport === "tcp") setMessage(`Conectado por ${protocolLabel} a ${host.trim()}:${tcpPort}. Escanea o crea una ventana en Registros.`);
+    else setMessage(port === INTERNAL_SIMULATOR_PATH
+      ? `Conectado al simulador interno (${protocolLabel}), sin puerto COM. Escanea para ver los slaves virtuales de la vista Simulador.`
+      : `Conectado a ${port} (${protocolLabel}). Escanea para detectar slaves reales.`);
+  }
+
+  async function disconnect() {
+    if (!bridge) return;
+    pollEngine.stopAll();
+    setBusy(true);
+    const result = await bridge.serial.close();
+    setBusy(false);
+    if (result.ok) {
+      setConnected(false);
+      setMessage("Desconectado.");
+    } else setMessage(result.error);
+  }
+
+  function newSession() {
+    setSessionId(null);
+    setSessionCreatedAt(new Date().toISOString());
+    setSessionName("Nueva_sesion_Modbus");
+    setSessionFilePath(null);
+    setLastSavedSignature(null);
+    setNotes("");
+    setDevices([]);
+    setActiveId(null);
+    setLastScan(null);
+    setQuick([]);
+    setRegs([]);
+    pollEngine.load([]);
+    setActivity([]);
+    setTraffic([]);
+    setStats({ requests: 0, responses: 0, errors: 0, timeouts: 0 });
+    setTests(createCleanTests());
+    setTestsRuntime(null);
+    setTestsExecutionHistory(replaceStoredTestsExecutionHistory([]));
+    setTestsResetKey((value) => value + 1);
+    setMessage("Nueva sesión limpia creada. Conecta, escanea y lee para generar datos reales.");
+  }
+
+  async function saveSession() { await saveSessionToFile(false); }
+  async function saveSessionAs() { await saveSessionToFile(true); }
+
+  async function saveSessionToFile(forceDialog: boolean) {
+    if (!bridge?.sessions) return setMessage("Backend de sesiones no disponible.");
+    const id = sessionId ?? `session-${Date.now()}`;
+    setBusy(true);
+    const simulator = await exportSimulatorConfig();
+    const document = createSessionDocument(id, sessionState, simulator);
+    const result = await bridge.sessions.saveFile({ filePath: forceDialog ? null : sessionFilePath, defaultFileName: `${document.session.name}.jwmodbus-session`, data: document });
+    setBusy(false);
+    if (!result.ok) return setMessage(result.error);
+    if (result.value.canceled || !result.value.filePath) return setMessage("Guardado cancelado.");
+    setSessionId(id);
+    setSessionFilePath(result.value.filePath);
+    setLastSavedSignature(currentSignature);
+    upsertRecent(document, result.value.filePath, "Guardada");
+    setMessage(`Sesión guardada: ${document.session.name}.`);
+  }
+
+  async function openSessionFile(filePath?: string) {
+    if (!bridge?.sessions) return setMessage("Backend de sesiones no disponible.");
+    setBusy(true);
+    const result = await bridge.sessions.openFile(filePath ? { filePath } : undefined);
+    setBusy(false);
+    if (!result.ok) return setMessage(result.error);
+    if (result.value.canceled || !result.value.data || !result.value.filePath) return setMessage("Apertura cancelada.");
+    const document = normalizeSessionDocument(result.value.data);
+    if (!document) return setMessage("El archivo seleccionado no es una sesión JW Modbus válida.");
+    applySessionDocument(document, result.value.filePath);
+    upsertRecent(document, result.value.filePath, "Guardada");
+  }
+
+  async function exportSimulatorConfig(): Promise<SlaveSimulatorSessionConfig | null> {
+    if (!bridge?.slave) return null;
+    const result = await bridge.slave.exportDevices();
+    if (!result.ok || result.value.length === 0) return null;
+    return { settings: loadSimulatorSettings(), devices: result.value };
+  }
+
+  async function restoreSimulatorConfig(config: SlaveSimulatorSessionConfig) {
+    if (!bridge?.slave) return;
+    const result = await bridge.slave.importDevices(config.devices);
+    if (!result.ok) return setMessage(`La sesión se abrió, pero no se pudieron cargar los slaves virtuales: ${result.error}`);
+    if (config.settings) storeSimulatorSettings(config.settings, true);
+  }
+
+  function createSessionDocument(id: string, status: SessionState, simulator: SlaveSimulatorSessionConfig | null): SessionDocument {
+    const now = new Date().toISOString();
+    const history = loadStoredTestsExecutionHistory();
+    return {
+      format: "jwmodbus-session",
+      version: 1,
+      session: { id, name: sessionName.trim() || "Nueva_sesion_Modbus", createdAt: sessionCreatedAt, updatedAt: now, status, notes },
+      connection: connectionSettings,
+      devices,
+      activeSlaveId: activeId,
+      stats,
+      quickReads: quick,
+      registerSnapshot: regs,
+      activity: activity.map((item) => ({ ...item, at: item.at.toISOString() })),
+      traffic: traffic.map((item) => ({ ...item, at: item.at.toISOString() })),
+      tests,
+      testsRuntime,
+      testsExecutionHistory: history,
+      testsExecutionHistoryUpdatedAt: history.length ? now : null,
+      registerMaps: [],
+      templates: [],
+      simulator,
+      addressMode,
+      pollWindows: pollEngine.definitions()
+    };
+  }
+
+  function applySessionDocument(document: SessionDocument, filePath: string) {
+    setSessionId(document.session.id);
+    setSessionCreatedAt(document.session.createdAt);
+    setSessionName(document.session.name);
+    setSessionFilePath(filePath);
+    setNotes(document.session.notes ?? "");
+    setPort(document.connection.port);
+    setBaud(document.connection.baudRate);
+    setDataBits(document.connection.dataBits);
+    setParity(document.connection.parity);
+    setStopBits(document.connection.stopBits);
+    setEcho(document.connection.echo ?? defaultEchoMode);
+    setTimeoutMs(document.connection.timeoutMs);
+    setTransport(document.connection.transport === "tcp" ? "tcp" : "serial");
+    setSerialFraming(document.connection.serialFraming === "ascii" ? "ascii" : "rtu");
+    if (document.connection.host) setHost(document.connection.host);
+    setTcpPort(document.connection.tcpPort ?? 502);
+    setTcpFraming(document.connection.tcpFraming === "rtu" ? "rtu" : "mbap");
+    if (document.addressMode) setAddressMode(document.addressMode);
+    pollEngine.load(document.pollWindows ?? []);
+    setDevices(document.devices ?? []);
+    setActiveId(document.activeSlaveId ?? null);
+    setStats(document.stats ?? { requests: 0, responses: 0, errors: 0, timeouts: 0 });
+    setQuick(document.quickReads ?? []);
+    setRegs(document.registerSnapshot ?? []);
+    setActivity((document.activity ?? []).map((item) => ({ ...item, at: new Date(item.at) })));
+    setTraffic((document.traffic ?? []).map((item) => ({ ...item, at: new Date(item.at) })));
+    setTests(document.tests ?? createCleanTests());
+    setTestsRuntime(normalizeTestsRuntimeState(document.testsRuntime, document.activeSlaveId ?? 2));
+    const restoredHistory = replaceStoredTestsExecutionHistory(document.testsExecutionHistory ?? []);
+    setTestsExecutionHistory(restoredHistory);
+    setTestsResetKey((value) => value + 1);
+    setLastSavedSignature(signatureFromDocument(document));
+    setMessage(`Sesión abierta: ${document.session.name}.`);
+    // Sessions without simulator data leave the current virtual devices as they are.
+    if (document.simulator) void restoreSimulatorConfig(document.simulator);
+    setView("sessions");
+  }
+
+  function upsertRecent(document: SessionDocument, filePath: string, status: SessionState) {
+    const recent = createRecentSession(document, filePath, status);
+    setRecentSessions((current) => {
+      const next = [recent, ...current.filter((item) => item.filePath !== filePath)].slice(0, 12);
+      storeRecentSessions(next);
+      return next;
+    });
+  }
+
+  function requireReady() {
+    if (!bridge) { setMessage("Abre la app en Electron para usar el backend serial."); return false; }
+    if (!connected) { setMessage("Conecta primero (puerto serie o TCP)."); return false; }
+    return true;
+  }
+
+  async function scanDevices() {
+    if (!requireReady()) return;
+    setBusy(true);
+    const found: Device[] = [];
+    const scanRange = Array.from({ length: 10 }, (_, index) => index + 1);
+    for (const id of scanRange) {
+      const started = Date.now();
+      const result = await bridge!.modbus.readHoldingRegisters({ unitId: id, startAddress: 0, quantity: 1, timeoutMs: 250 });
+      if (result.ok) {
+        const device = createDiscoveredDevice(id);
+        found.push(device);
+        const action = result.value as { registerValues?: Array<number | boolean> };
+        const values = action.registerValues ?? [];
+        const rows = buildRegisterRows("fc3", 0, values, addressMode);
+        const first = toDisplayAddress(addressMode, 3, 0);
+        pushActivity({ ms: Date.now() - started, slave: id, device: device.name, fn: "FC03", fnKey: "fc3", label: "Escaneo detectó respuesta", address: first, range: `${first} / 1 reg`, qty: 1, values: valuesPreview("fc3", 0, values, addressMode), rows, status: "OK" });
+      }
+      
+      // Añadir Turnaround Delay entre escaneos para evitar colisiones RS485
+      await new Promise(r => setTimeout(r, 60));
+    }
+    setStats((current) => ({ ...current, requests: current.requests + scanRange.length, responses: current.responses + found.length }));
+    setDevices(found.map((device, index) => ({ ...device, active: index === 0 })));
+    const nextActiveId = found[0]?.id ?? null;
+    setActiveId(nextActiveId);
+    setQuick([]);
+    setLastScan(new Date());
+    setBusy(false);
+    setMessage(found.length > 0 ? `${found.length} dispositivo(s) detectados.` : "No se detectaron slaves en el rango 1–10.");
+  }
+
+  async function readRegisters(fn: Fn, unitId: number, displayAddress: number, quantity: number, timeoutMs = timeout) {
+    if (!requireReady()) return null;
+    const started = new Date();
+    let rawStart: number;
+    try {
+      rawStart = toProtocolAddress(addressMode, fnTable(fn), displayAddress);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Dirección no válida");
+      return null;
+    }
+    const command = { unitId, startAddress: rawStart, quantity, timeoutMs };
+    setStats((current) => ({ ...current, requests: current.requests + 1 }));
+    let result;
+    if (fn === "fc1") result = await bridge!.modbus.readCoils(command);
+    else if (fn === "fc2") result = await bridge!.modbus.readDiscreteInputs(command);
+    else if (fn === "fc4") result = await bridge!.modbus.readInputRegisters(command);
+    else result = await bridge!.modbus.readHoldingRegisters(command);
+    if (!result.ok) {
+      const status: Status = result.error.toLowerCase().includes("timeout") ? "Timeout" : "Error";
+      setStats((current) => ({ ...current, errors: current.errors + 1, timeouts: current.timeouts + (status === "Timeout" ? 1 : 0) }));
+      pushTrafficError(fn, unitId, displayNameFor(unitId), result.error, started, status);
+      setMessage(result.error);
+      return null;
+    }
+    const action = result.value as { exception?: unknown; crcOk?: boolean; registerValues?: Array<number | boolean>; values?: Array<number | boolean>; elapsedMs?: number; timestamp?: string; unitId: number };
+    const status: Status = action.exception ? "Excepción" : action.crcOk !== false ? "OK" : "CRC Error";
+    const values = action.registerValues ?? action.values ?? [];
+    const rows = buildRegisterRows(fn, rawStart, values, addressMode);
+    setStats((current) => ({ ...current, responses: current.responses + (status === "OK" ? 1 : 0), errors: current.errors + (status === "OK" ? 0 : 1) }));
+    pushTrafficAction(action, fn, displayNameFor(unitId), displayAddress, quantity, status);
+    pushActivity({ ms: action.elapsedMs ?? Date.now() - started.getTime(), slave: unitId, device: displayNameFor(unitId), fn: fnMap[fn].short, fnKey: fn, label: fnMap[fn].label, address: displayAddress, range: `${displayAddress} / ${quantity} ${fn === "fc1" || fn === "fc2" ? "bits" : "regs"}`, qty: quantity, values: valuesPreview(fn, rawStart, values, addressMode), rows, status });
+    return { values, rows, action };
+  }
+
+  async function quickRead(showBusy = true) {
+    if (activeId === null) {
+      if (showBusy) setMessage("Primero escanea y selecciona un slave activo.");
+      return;
+    }
+    if (showBusy) setBusy(true);
+    const result = await readRegisters(qFn, activeId, qAddr, qQty);
+    if (showBusy) setBusy(false);
+    if (!result) return;
+    setQuick(result.rows);
+    if (showBusy) setMessage(`${result.values.length} valor(es) leídos desde ${qAddr}.`);
+  }
+
+  async function runTests() {
+    if (activeId === null) return setMessage("Primero detecta un slave activo.");
+    if (!requireReady()) return;
+    setBusy(true);
+    const next = [...tests];
+    for (const test of next) {
+      if (!test.enabled) continue;
+      test.result = "Pendiente";
+      setTests([...next]);
+      if (test.fn === "fc6") {
+        const started = new Date();
+        setStats((current) => ({ ...current, requests: current.requests + 1 }));
+        const result = await bridge!.modbus.writeSingleRegister({ unitId: test.slave, address: legacyRawAddress(test.fn, test.address), value: test.amount, timeoutMs: test.timeout });
+        if (result.ok) {
+          const action = result.value as { exception?: unknown; unitId: number; elapsedMs?: number; timestamp?: string };
+          test.result = action.exception ? "Excepción" : "Aprobado";
+          setStats((current) => ({ ...current, responses: current.responses + (test.result === "Aprobado" ? 1 : 0) }));
+          pushTrafficAction(action, test.fn, test.device, test.address, test.amount, test.result);
+        } else {
+          test.result = result.error.toLowerCase().includes("timeout") ? "Timeout" : "Error";
+          setStats((current) => ({ ...current, errors: current.errors + 1, timeouts: current.timeouts + (test.result === "Timeout" ? 1 : 0) }));
+          pushTrafficError(test.fn, test.slave, test.device, result.error, started, test.result);
+        }
+      } else {
+        const result = await readRegisters(test.fn, test.slave, test.address, test.amount, test.timeout);
+        test.result = result ? "Aprobado" : "Error";
+      }
+      setTests([...next]);
+      // Añadir un pequeño retraso entre peticiones Modbus para dar tiempo a que los esclavos
+      // liberen el bus RS485 (Turnaround delay) y evitar colisiones de hardware.
+      await new Promise(r => setTimeout(r, 60));
+    }
+    setBusy(false);
+    setMessage("Plan de pruebas ejecutado.");
+  }
+
+  function selectDevice(id: number) {
+    setActiveId(id);
+    setDevices((current) => current.map((device) => ({ ...device, active: device.id === id })));
+    setQuick([]);
+    setMessage(`Slave activo: ${displayNameFor(id)}.`);
+  }
+  function renameDevice(id: number, rawName: string) {
+    setDevices((current) => {
+      let baseName = rawName.trim();
+      if (!baseName) baseName = `Slave ID ${id}`;
+
+      let finalName = baseName;
+      let counter = 1;
+      
+      // Auto-enumerar si el nombre ya existe en OTRO dispositivo (ej. PLC -> PLC 2)
+      while (current.some(d => d.id !== id && d.name.toLowerCase() === finalName.toLowerCase())) {
+        counter++;
+        finalName = `${baseName} ${counter}`;
+      }
+
+      return current.map((device) => device.id === id ? { ...device, name: finalName, named: true } : device);
+    });
+  }
+  function pushActivity(row: Omit<ActivityRow, "id" | "at">) { setActivity((current) => [{ id: rowId++, at: new Date(), ...row }, ...current].slice(0, 30)); }
+  function pushTrafficAction(action: TrafficAction, fn: Fn, device: string, address: number, quantity: number, status: Status) {
+    const at = action.timestamp ? new Date(action.timestamp) : new Date();
+    const request: TrafficRow = { id: rowId++, dir: "up", at, route: `PC Master → ${device}`, slave: action.unitId, type: "Petición", fn: fnMap[fn].short, status, summary: summarize(fn, address, quantity), ms: action.elapsedMs };
+    const response: TrafficRow = { id: rowId++, dir: "down", at, route: `${device} → PC Master`, slave: action.unitId, type: "Respuesta", fn: fnMap[fn].short, status, summary: responseSummary(action), ms: action.elapsedMs };
+    setTraffic((current) => [request, response, ...current].slice(0, 80));
+  }
+  function pushTrafficError(fn: Fn, unitId: number, device: string, error: string, at: Date, status: Status) {
+    const request: TrafficRow = { id: rowId++, dir: "up", at, route: `PC Master → ${device}`, slave: unitId, type: "Petición", fn: fnMap[fn].short, status, summary: error };
+    setTraffic((current) => [request, ...current].slice(0, 80));
+  }
+  function pushTrafficEvent(input: { at: Date; unitId: number; fn: string; summary: string; status: Status; ms?: number; reply?: string }) {
+    const device = displayNameFor(input.unitId);
+    const request: TrafficRow = { id: rowId++, dir: "up", at: input.at, route: `PC Master → ${device}`, slave: input.unitId, type: "Petición", fn: input.fn, status: input.status, summary: input.summary, ms: input.ms };
+    const rows = [request];
+    if (input.reply) rows.unshift({ id: rowId++, dir: "down", at: input.at, route: `${device} → PC Master`, slave: input.unitId, type: "Respuesta", fn: input.fn, status: input.status, summary: input.reply, ms: input.ms });
+    setTraffic((current) => [...rows, ...current].slice(0, 80));
+  }
+  function countRequest(status: Status) {
+    setStats((current) => ({
+      requests: current.requests + 1,
+      responses: current.responses + (status === "OK" ? 1 : 0),
+      errors: current.errors + (status === "OK" ? 0 : 1),
+      timeouts: current.timeouts + (status === "Timeout" ? 1 : 0)
+    }));
+  }
+  function recordPollAction(event: PollActionEvent) {
+    const status = pollStatusLabel(event.status);
+    const fc = event.request.fc;
+    const summary = "startAddress" in event.request
+      ? `${requestName(fc)} (${toDisplayAddress(addressModeRef.current, tableOf(fc), event.request.startAddress)}${"quantity" in event.request ? ` ×${event.request.quantity}` : ""})`
+      : "address" in event.request ? `${requestName(fc)} (${toDisplayAddress(addressModeRef.current, tableOf(fc), event.request.address)})` : requestName(fc);
+    countRequest(status);
+    pushTrafficEvent({ at: event.at, unitId: event.unitId, fn: `FC${String(fc).padStart(2, "0")}`, summary, status, ms: event.action?.elapsedMs, reply: event.action ? event.action.exception ? exceptionName(event.action.exception) : event.action.summary : event.error });
+  }
+  function recordFunctionResult(label: string, unitId: number, result: SerialOperationResult<RtuMasterActionResult>, at: Date) {
+    const status: Status = !result.ok ? (/timed\s*out|timeout/i.test(result.error) ? "Timeout" : "Error") : result.value.exception ? "Excepción" : result.value.crcOk ? "OK" : "CRC Error";
+    countRequest(status);
+    pushTrafficEvent({ at, unitId, fn: result.ok ? `FC${String(result.value.functionCode).padStart(2, "0")}` : label.split(" ")[0], summary: label, status, ms: result.ok ? result.value.elapsedMs : undefined, reply: result.ok ? result.value.summary : result.error });
+  }
+  function displayNameFor(id: number) { return devices.find((device) => device.id === id)?.name ?? `Slave ID ${id}`; }
+
+  function handleMinimize() { bridge?.window?.minimize?.(); }
+  function handleMaximize() { bridge?.window?.maximize?.(); }
+  function handleClose() { bridge?.window?.close?.(); }
+
+  return <main className="shell"><header className="toolbar" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>{busy && <span>Procesando…</span>}<button onClick={handleMinimize}><Minus size={18} strokeWidth={2} /></button><button onClick={handleMaximize}><Square size={14} strokeWidth={2.5} /></button><button className="close-btn" onClick={handleClose}><X size={18} strokeWidth={2} /></button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia MIT<br /><small>Versión {__APP_VERSION__}</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ transport, setTransport, serialFraming, setSerialFraming, host, setHost, tcpPort, setTcpPort, tcpFraming, setTcpFraming, addressMode, setAddressMode, protocolLabel, connectionLabel, ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, echo, setEcho, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ protocolLabel, connectionLabel, transport, sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} onSaveSession={saveSession} isSessionSaved={!!sessionFilePath} />}{view === "registers" && <PollView addressMode={addressMode} connected={connected} activeSlaveId={activeId} onMessage={setMessage} />}{view === "functions" && <FunctionsView addressMode={addressMode} connected={connected} framing={framing} defaultUnitId={activeId ?? 1} timeoutMs={timeout} onResult={recordFunctionResult} onMessage={setMessage} />}{view === "traffic" && <TrafficView traffic={traffic} protocolLabel={protocolLabel} />}{view === "simulator" && <SimulatorView masterPort={port} masterConnected={connected} onMessage={setMessage} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{protocolLabel}</span><span>{connectionLabel}</span>{transport === "serial" && port !== INTERNAL_SIMULATOR_PATH ? <><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span></> : null}<span>{pollWindows.filter((window) => window.rt.running).length} sondeando</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
+}
+
+function DevicesView(props: { transport: MasterTransport; setTransport: (value: MasterTransport) => void; serialFraming: SerialFraming; setSerialFraming: (value: SerialFraming) => void; host: string; setHost: (value: string) => void; tcpPort: number; setTcpPort: (value: number) => void; tcpFraming: TcpFraming; setTcpFraming: (value: TcpFraming) => void; addressMode: AddressMode; setAddressMode: (value: AddressMode) => void; protocolLabel: string; connectionLabel: string; ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void; baud: number; setBaud: (value: number) => void; dataBits: number; setDataBits: (value: number) => void; parity: string; setParity: (value: string) => void; stopBits: number; setStopBits: (value: number) => void; echo: EchoMode; setEcho: (value: EchoMode) => void; timeout: number; setTimeoutMs: (value: number) => void; connected: boolean; devices: Device[]; activeId: number | null; activeDevice: Device | null; selectDevice: (id: number) => void; scanDevices: () => void; lastScan: Date | null; stats: Stats; qFn: Fn; setQFn: (value: Fn) => void; qAddr: number; setQAddr: (value: number) => void; qQty: number; setQQty: (value: number) => void; quick: RegisterRow[]; quickRead: () => void; activity: ActivityRow[]; connect: () => void; disconnect: () => void; clearActivity: () => void }) {
+  const [activityDetail, setActivityDetail] = useState<ActivityRow | null>(null);
+
+  return (
+    <div className="devices grid">
+      <Card title="Conectar" className="connect panel-fusion" action={<Info size={15} className="hint-icon" />}>
+        <div className="segmented-control">
+          <button className={props.transport === "serial" ? "active" : ""} disabled={props.connected} onClick={() => props.setTransport("serial")}>Serie (RS485)</button>
+          <button className={props.transport === "tcp" ? "active" : ""} disabled={props.connected} onClick={() => props.setTransport("tcp")}>TCP / Ethernet</button>
+        </div>
+        {props.transport === "serial" ? (
+          <>
+            <PortSelectRow ports={props.ports} port={props.port} setPort={props.setPort} refreshPorts={props.refreshPorts} />
+            <SelectField label="Protocolo" value={props.serialFraming} onChange={(value) => props.setSerialFraming(value === "ascii" ? "ascii" : "rtu")} options={["rtu", "ascii"]} labels={{ rtu: "Modbus RTU", ascii: "Modbus ASCII" }} />
+            <SelectField label="Baud Rate" value={String(props.baud)} onChange={(value) => props.setBaud(Number(value))} options={["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"]} />
+            <SelectField label="Bits de datos" value={String(props.dataBits)} onChange={(value) => props.setDataBits(Number(value))} options={["8", "7"]} />
+            <SelectField label="Paridad" value={props.parity} onChange={props.setParity} options={["none", "even", "odd"]} labels={{ none: "Ninguna", even: "Par", odd: "Impar" }} />
+            <SelectField label="Bits de parada" value={String(props.stopBits)} onChange={(value) => props.setStopBits(Number(value))} options={["1", "2"]} />
+            <SelectField label="Eco del conversor" value={props.echo} onChange={(value) => props.setEcho(isEchoMode(value) ? value : defaultEchoMode)} options={["auto", "off", "on"]} labels={echoModeLabels} />
+          </>
+        ) : (
+          <>
+            <label className="field"><span>IP o equipo</span><input type="text" value={props.host} placeholder="192.168.1.10" onChange={(event) => props.setHost(event.target.value)} /></label>
+            <NumberField label="Puerto TCP" value={props.tcpPort} onChange={props.setTcpPort} />
+            <SelectField label="Protocolo" value={props.tcpFraming} onChange={(value) => props.setTcpFraming(value === "rtu" ? "rtu" : "mbap")} options={["mbap", "rtu"]} labels={{ mbap: "Modbus TCP (MBAP)", rtu: "RTU sobre TCP (pasarela)" }} />
+          </>
+        )}
+        <NumberField label="Timeout (ms)" value={props.timeout} onChange={props.setTimeoutMs} />
+        <SelectField label="Direcciones" value={props.addressMode} onChange={(value) => props.setAddressMode(isAddressMode(value) ? value : "jw")} options={addressModes} labels={addressModeLabels} />
+        {props.connected ? (
+          <button className="primary block-btn danger-btn" style={{marginTop: '10px'}} onClick={props.disconnect}><Unplug size={18} /> Desconectar</button>
+        ) : (
+          <button className="primary block-btn" style={{marginTop: '10px'}} onClick={props.connect}><Plug size={18} /> Conectar</button>
+        )}
+      </Card>
+
+      <Card title={`Dispositivos detectados (${props.devices.length})`} action={<button onClick={props.scanDevices} style={{border: 'none', background: 'transparent', padding: 0, cursor: 'pointer'}}><RefreshCw size={18} color="#0ea5e9" /></button>} className="detected panel-fusion device-tree-card">
+        <style>{`
+          .devices.grid { grid-template-columns: 320px 1fr 480px !important; }
+          .device-tree-card { padding: 12px !important; }
+          .device-tree-card > header { margin-bottom: 6px !important; }
+          .device-tree-table { display: flex; flex-direction: column; border: 1px solid #2d5c7544; border-radius: 8px; margin-top: 8px; font-size: 14px; }
+          .dt-header { display: grid; grid-template-columns: 2fr 1.2fr 1fr; padding: 10px 15px; border-bottom: 1px solid #2d5c7544; color: #e2e8f0; background: #ffffff04; font-weight: bold; }
+          .dt-group-row { display: grid; grid-template-columns: 2fr 1.2fr 1fr; padding: 15px 15px; border-bottom: 1px solid #2d5c7522; align-items: center; }
+          .dt-group-title { display: flex; align-items: center; gap: 8px; color: #e2e8f0; font-size: 14.5px; }
+          .dt-children { display: flex; flex-direction: column; position: relative; }
+          .dt-children::before { content: ""; position: absolute; left: 23px; top: 0; bottom: 35px; width: 1px; background: #2d5c7566; }
+          .dt-child-row { display: grid; grid-template-columns: 2fr 1.2fr 1fr; padding: 15px 15px; border-bottom: 1px solid #2d5c7522; align-items: center; position: relative; cursor: pointer; }
+          .dt-child-row:hover { background: #ffffff05; }
+          .dt-child-row.active { background: #0ea5e911; }
+          .dt-child-row::before { content: ""; position: absolute; left: 23px; top: 50%; width: 16px; height: 1px; background: #2d5c7566; }
+          .dt-child-row:last-child { border-bottom: none; }
+          .dt-child-title { display: flex; align-items: center; gap: 12px; padding-left: 28px; }
+          .dt-icon { color: #0ea5e9; }
+          .dt-id { font-size: 16px; color: #e2e8f0; width: 15px; text-align: right; }
+          .dt-name-hex { display: flex; flex-direction: column; }
+          .dt-name-hex strong { color: #e2e8f0; font-weight: normal; font-size: 14.5px; }
+          .dt-name-hex small { color: #8b929e; font-size: 12.5px; margin-top: 2px;}
+          .dt-col-type { color: #8b929e; font-size: 14px; }
+          .dt-col-status { display: flex; align-items: center; gap: 8px; color: #e2e8f0; font-size: 14px;}
+          .dt-col-status .dot { width: 10px; height: 10px; border-radius: 50%; margin: 0; }
+          .dt-footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding: 10px 5px 5px 5px; color: #8b929e; font-size: 14px; }
+        `}</style>
+        
+        <div className="device-tree-table">
+          <div className="dt-header">
+            <div className="dt-col-device">Dispositivo / Dirección</div>
+            <div className="dt-col-type">Tipo</div>
+            <div className="dt-col-status">Estado</div>
+          </div>
+          
+          <div className="dt-group-row">
+            <div className="dt-group-title">
+              <ChevronDown size={16} />
+              <Network size={18} color="#0ea5e9" />
+              <span>Red {props.protocolLabel} ({props.connectionLabel})</span>
+            </div>
+            <div className="dt-col-type"></div>
+            <div className="dt-col-status">
+              <div className="dot" style={{ background: '#8b929e', boxShadow: 'none' }}></div> Activa
+            </div>
+          </div>
+
+          <div className="dt-children">
+            {props.devices.length === 0 ? (
+               <div style={{padding: '15px', color: '#8b929e', textAlign: 'center'}}>Sesión limpia: todavía no hay dispositivos detectados.</div>
+            ) : props.devices.map((device) => {
+               const isJWPLC = device.name.toLowerCase().includes("jwplc");
+               return (
+                <div key={device.id} className={`dt-child-row ${device.id === props.activeId ? 'active' : ''}`} onClick={() => props.selectDevice(device.id)}>
+                  <div className="dt-child-title">
+                    <div style={{display: 'flex', alignItems: 'center'}}>
+                      {isJWPLC ? <JwplcIcon size={20} className="dt-icon" /> : <Server size={20} className="dt-icon" />}
+                    </div>
+                    <span className="dt-id">{device.id}</span>
+                    <div className="dt-name-hex">
+                       <strong>{device.name}</strong>
+                       <small>(0x{device.id.toString(16).padStart(2, '0').toUpperCase()})</small>
+                    </div>
+                  </div>
+                  <div className="dt-col-type">
+                    {isJWPLC ? "Controlador JWPLC" : "Dispositivo Genérico"}
+                  </div>
+                  <div className="dt-col-status">
+                    <div className="dot" style={{ background: '#22c55e', boxShadow: '0 0 5px #22c55e' }}></div> <span style={{color: '#22c55e'}}>En línea</span>
+                  </div>
+                </div>
+               );
+            })}
+          </div>
+        </div>
+        
+        <div className="dt-footer">
+          <div className="dt-last-scan">
+            Último escaneo: {props.lastScan ? fmt(props.lastScan) : "Nunca"}
+          </div>
+          <button style={{color: '#0ea5e9', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '14px', padding: 0}} onClick={props.scanDevices}>
+            [ Escanear ahora
+          </button>
+        </div>
+      </Card>
+
+      <Card title="Resumen" className="summary panel-fusion" action={
+        <div className={`pill ${props.connected ? "active-pill" : ""}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px' }}>
+          <div className="dot" style={{ width: 10, height: 10, background: props.connected ? '#22c55e' : '#ef4444', boxShadow: props.connected ? '0 0 10px #22c55e' : '0 0 10px #ef4444', margin: 0 }}></div>
+          <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{props.connected ? "CONECTADO" : "DESCONECTADO"}</span>
+        </div>
+      }>
+        <p className="helper-text">Estado general de la comunicación.</p>
+        <div className="kpis">
+          <Kpi icon={<Network size={16} />} label="Solicitudes" value={String(props.stats.requests)} />
+          <Kpi icon={<CheckCircle2 size={16} />} label="Respuestas" value={String(props.stats.responses)} tone="ok" />
+          <Kpi icon={<AlertTriangle size={16} />} label="Errores" value={String(props.stats.errors)} tone="warn" />
+          <Kpi icon={<Clock3 size={16} />} label="Timeouts" value={String(props.stats.timeouts)} tone="purple" />
+        </div>
+        <dl>
+          <dt>Dispositivos encontrados</dt><dd>{props.devices.length}</dd>
+          <dt>Rango de escaneo</dt><dd>1 – 10</dd>
+          <dt>Último escaneo</dt><dd>{props.lastScan ? <><Status status="OK" /><small>{fmt(props.lastScan)}</small></> : "—"}</dd>
+          <dt>Rol</dt><dd><Monitor size={15} /> PC Master</dd>
+        </dl>
+      </Card>
+
+      <div className="devicesLower">
+        <Card title="Lectura rápida de registros" className="quickPanel" action={
+          <span style={{ fontSize: '12.5px', color: '#8b929e' }}>Slave activo: <strong className="cyan">{props.activeDevice ? `${props.activeDevice.name} — ID ${props.activeDevice.id}` : "Sin seleccionar"}</strong></span>
+        }>
+          <div className="quickbar">
+            <SelectField label="Función" value={props.qFn} onChange={(value) => props.setQFn(value as Fn)} options={["fc3", "fc4", "fc1", "fc2"]} labels={fnLabels()} />
+            <NumberField label="Dir. inicial" value={props.qAddr} onChange={props.setQAddr} />
+            <NumberField label="Cantidad" value={props.qQty} onChange={props.setQQty} />
+            <button className="primary" onClick={() => props.quickRead()} disabled={!props.activeDevice}><Database size={15} />Leer</button>
+          </div>
+          <p className="note"><Info size={16} />{addressHelp(props.qFn)}</p>
+          <div className="quickScroll">
+            {props.quick.length === 0 ? <Empty text="Aún no hay lecturas. La tabla se llenará al presionar Leer." /> : <Table columns={["Dirección", "Nombre", "Valor", "Estado"]} rows={props.quick.map((row) => [row.address, withUnit(row), valueCell(row), <Status status={row.status} />])} />}
+          </div>
+          <p className="note"><Info size={16} />Se leerá el slave activo real; no hay datos precargados.</p>
+        </Card>
+
+        <Card title="Actividad reciente" className="recentPanel">
+          {activityDetail ? <ActivityDetail row={activityDetail} onClose={() => setActivityDetail(null)} /> : props.activity.length === 0 ? <Empty text="Sin actividad todavía. Aquí aparecerán escaneos y lecturas reales." /> : 
+          <div className="activityScroll">
+            <Table columns={["Fecha/hora", "Duración", "Slave ID", "Función", "Dirección / cantidad", "Valor leído", "Resultado", "Info"]} rows={props.activity.map((row) => [fmt(row.at), `${row.ms} ms`, row.slave, row.fn, row.range, row.values, <Status status={row.status} />, <button className="infoButton" onClick={() => setActivityDetail(row)} title="Ver detalle de la lectura"><Info size={14} /></button>])} />
+          </div>}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function ActivityDetail({ row, onClose }: { row: ActivityRow; onClose: () => void }) { return <div className="activityDetail"><div className="activityDetailHeader"><div><strong>Detalle de lectura</strong><small>{fmt(row.at)} · {row.device}</small></div><button className="infoButton" onClick={onClose} title="Cerrar detalle"><X size={15} /></button></div><div className="detailFacts"><Fact label="Función" value={row.label} /><Fact label="Slave ID" value={String(row.slave)} /><Fact label="Dirección inicial" value={String(row.address)} /><Fact label="Cantidad" value={String(row.qty)} /><Fact label="Duración" value={`${row.ms} ms`} /><Fact label="Resultado" value={row.status} /></div><div className="detailTable"><Table columns={["Dirección", "Nombre", "Valor", "Tipo", "Acceso", "Estado"]} rows={row.rows.map((item) => [item.address, withUnit(item), valueCell(item), item.type, item.access, <Status status={item.status} />])} /></div></div>; }
+
+function SessionsView(props: { protocolLabel: string; connectionLabel: string; transport: MasterTransport; sessionName: string; setSessionName: (value: string) => void; recentSessions: RecentSession[]; onNew: () => void; onSave: () => void; onSaveAs: () => void; onOpen: (filePath?: string) => void; activity: ActivityRow[]; devices: Device[]; stats: Stats; traffic: TrafficRow[]; tests: TestRow[]; testsRuntime: TestsRuntimeState | null; connected: boolean; port: string; baud: number; dataBits: number; parity: string; stopBits: number; activeId: number | null; sessionId: string | null; sessionFilePath: string | null; sessionState: SessionState; notes: string; setNotes: (value: string) => void; renameDevice: (id: number, name: string) => void; }) {
+  const registerReads = props.activity.reduce((total, item) => total + item.rows.length, 0);
+  const testSummary = sessionTestSummary(props.testsRuntime, props.tests);
+  const failed = testSummary.failed;
+  const testsProgress = `${testSummary.passed}/${testSummary.total}`;
+  const currentName = props.sessionName.trim() || "Nueva_sesion_Modbus";
+  const connectionText = !props.connected ? "Sin conexión activa" : props.transport === "tcp" || props.port === INTERNAL_SIMULATOR_PATH ? props.connectionLabel : `${props.port} · ${props.baud} · ${props.dataBits}${props.parity === "none" ? "N" : props.parity[0].toUpperCase()}${props.stopBits}`;
+  const recent = props.recentSessions.filter((session) => session.filePath !== props.sessionFilePath);
+  
+  const [renameId, setRenameId] = useState<number | "">(props.devices.length > 0 ? props.devices[0].id : "");
+  const [renameText, setRenameText] = useState("");
+  useEffect(() => { if (props.devices.length > 0 && renameId === "") setRenameId(props.devices[0].id); }, [props.devices]);
+
+  return <div className="sessions grid">
+    <div className="top">
+      <button className="primary" onClick={props.onNew}>+ Nueva sesión</button>
+      <button onClick={() => props.onOpen()}><FolderOpen size={16} />Abrir sesión</button>
+      <button onClick={props.onSave}><Save size={16} />Guardar</button>
+      <button onClick={props.onSaveAs}><Save size={16} />Guardar como</button>
+    </div>
+    
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px", gridRow: "2 / 3" }}>
+      <Card title="Sesión actual" className="current" action={<span className="oktext">● {props.sessionState}</span>}><h1><input className="sessionNameInput" value={props.sessionName} onChange={(event) => props.setSessionName(event.target.value)} aria-label="Nombre de sesión" /> <Pencil size={15} /></h1><div className="facts"><Fact label="Rol" value="PC Master" /><Fact label="Protocolo" value={props.protocolLabel} /><Fact label="Slave activo" value={props.activeId ? `${displayDeviceName(props.devices, props.activeId)} — ID ${props.activeId}` : "Sin seleccionar"} /><Fact label="Conexión" value={connectionText} /><Fact label="Última actividad" value={props.activity[0] ? time(props.activity[0].at) : "—"} /></div><button className="primary wide"><Play size={16} />Continuar sesión</button></Card>
+      <Card title="Sesiones recientes" className="sessionlist"><div className="sessionRows"><SessionRow name={currentName} date={props.sessionFilePath ? shortPath(props.sessionFilePath) : "Actual"} devices={props.devices.length} registers={registerReads} tests={testsProgress} errors={props.stats.errors + failed} status={props.sessionState} action="En curso" /><>{recent.length === 0 ? <Empty text="Aún no hay sesiones guardadas. Presiona Guardar sesión para conservar la actual." /> : recent.map((session) => <SessionRow key={session.filePath} name={session.name} date={fmt(new Date(session.savedAt))} devices={session.devices} registers={session.registers} tests={session.tests} errors={session.errors} status={session.status} action="Abrir" onClick={() => props.onOpen(session.filePath)} />)}</></div></Card>
+    </div>
+    
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px", gridRow: "1 / 3" }}>
+      <Card title="Dispositivos de la sesión" className="what">
+      <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+        <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>
+          Selecciona un dispositivo detectado para asignarle un nombre personalizado.
+        </p>
+        
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", background: "#121519", padding: "12px", borderRadius: "8px", border: "1px solid #1e293b" }}>
+          <Monitor size={16} color="#0ea5e9" style={{ flexShrink: 0 }} />
+          
+          <select 
+            style={{ flex: 1, background: "#0f172a", border: "1px solid #2a303a", color: "white", padding: "8px", borderRadius: "4px", fontSize: "13px", outline: "none" }}
+            value={renameId}
+            onChange={(e) => {
+              const id = Number(e.target.value);
+              setRenameId(id);
+              const device = props.devices.find(d => d.id === id);
+              setRenameText(device ? device.name : "");
+            }}
+          >
+            <option value="" disabled>Seleccionar slave...</option>
+            {props.devices.map(d => <option key={d.id} value={d.id}>ID {d.id} - {d.name || "Sin nombre"}</option>)}
+          </select>
+          
+          <input 
+            placeholder="Ej: PLC_Principal..." 
+            style={{ flex: 1, background: "#0f172a", border: "1px solid #2a303a", color: "white", padding: "8px", borderRadius: "4px", fontSize: "13px", outline: "none" }}
+            value={renameText}
+            onChange={(e) => setRenameText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && renameId !== "" && renameText.trim()) {
+                props.renameDevice(Number(renameId), renameText.trim());
+                setRenameText("");
+              }
+            }}
+          />
+          
+          <button 
+            className="primary" 
+            style={{ padding: "8px 15px", height: "auto", minHeight: "36px", display: "flex", alignItems: "center", gap: "5px" }}
+            onClick={() => {
+              if(renameId !== "" && renameText.trim()){
+                props.renameDevice(Number(renameId), renameText.trim());
+                setRenameText("");
+              }
+            }}
+          >
+            <Save size={14} />
+            Guardar
+          </button>
+        </div>
+      </div>
+    </Card>
+    <Card title="Resumen de la sesión actual" className="sumsession"><div className="tiles"><Tile icon={Network} label="Dispositivos" value={String(props.devices.length)} note="Detectados" /><Tile icon={FileText} label="Registros leídos" value={String(registerReads)} note="En total" /><Tile icon={FlaskConical} label="Pruebas" value={testsProgress} note={failed ? `${failed} con error` : "Plan guardable"} /><Tile icon={Activity} label="Tráfico capturado" value={`${props.traffic.length}`} note="Tramas" /><Tile icon={FileText} label="Notas" value={props.notes.trim() ? "1" : "0"} note="Guardadas" /><Tile icon={AlertTriangle} label="Errores" value={String(props.stats.errors + failed)} note="Detectados" /></div></Card>
+    <Card title="Actividad reciente" className="timeline">{props.activity.length === 0 ? <Empty text="Sin actividad todavía." /> : <div className="sessionActivityScroll"><Table columns={["#", "Fecha/hora", "Función", "Descripción", "Resultado"]} rows={props.activity.slice(0, 30).map((item, index) => [index + 1, fmt(item.at), item.fn, item.label, <Status status={item.status} />])} /></div>}</Card>
+    </div>
+  </div>;
+}
+
+function SessionRow({ name, date, devices, registers, tests, errors, status, action, onClick }: { name: string; date: string; devices: number; registers: number; tests: string; errors: number; status: string; action: string; onClick?: () => void }) { return <article className="sessionrow"><div><strong>{name}</strong><small>{date}</small></div><span>Dispositivos<b>{devices}</b></span><span>Registros<b>{registers}</b></span><span>Pruebas<b>{tests}</b></span><span>Errores<b>{errors}</b></span><button onClick={onClick} disabled={!onClick}>{action}</button><em>{status}</em></article>; }
+
+function TestsView({ tests, runTests, busy }: { tests: TestRow[]; runTests: () => void; busy: boolean }) { const passed = tests.filter((item) => item.result === "Aprobado").length; const failed = tests.filter((item) => !["Aprobado", "Pendiente"].includes(item.result)).length; return <div className="tests grid"><Card title="Plan de pruebas al slave" className="plan" action={<div><button className="primary" onClick={runTests}><Play size={15} />{busy ? "Ejecutando" : "Iniciar prueba"}</button><button><Square size={14} />Detener</button></div>}><p>PC como Master</p><div className="tableactions"><button>+ Agregar paso</button><button><Save size={15} />Guardar plan</button></div><Table columns={["Activo", "Paso", "Slave", "Función", "Dirección", "Cantidad/Valor", "Esperado", "Timeout", "Resultado"]} rows={tests.map((item) => [item.enabled ? "✓" : "", item.step, <SelectChip text={item.device} />, <SelectChip text={item.label} />, item.address, item.amount, item.expected, `${item.timeout} ms`, <Status status={item.result} />])} /><p className="note"><Info size={15} />El PC actuará como Master ejecutando esta secuencia de comandos hacia los slaves seleccionados.</p></Card><Card title="Escenarios" className="scenarios"><Scenario label="Operación normal" text="Verifica lectura y escritura correcta." ok /><Scenario label="Timeout detectado" text="Simula dispositivos no disponibles." warn /><Scenario label="Error CRC detectado" text="Introduce errores de CRC en la trama." warn /><Scenario label="Excepción Modbus" text="Forza códigos de excepción (01, 02, 03)." danger /><button className="ghost">Gestionar escenarios</button></Card><Card title="Simulador slave (PC como slave)" className="sim"><Field label="Estado" value="Detenido" /><Field label="Dirección slave" value="1" suffix="(1–247)" /><Field label="Puerto" value="COM3" select /><Field label="Baud Rate" value="115200" select /><button className="purple"><Play size={15} />Iniciar simulador slave</button><button><Settings size={15} /></button></Card><div className="testkpis"><Big label="Tasa de éxito" value={tests.length ? `${Math.round((passed / tests.length) * 100)}%` : "0%"} note="Última ejecución" /><Big label="Latencia promedio" value="—" note="Limpia" /><Big label="Errores" value={String(failed)} note="Última ejecución" danger /><Big label="Pasos completados" value={`${passed}/${tests.length}`} note="Última ejecución" /></div><Card title="Registro de ejecución" className="exec"><Table columns={["Hora", "Paso", "Slave", "Función", "Dirección", "Cantidad/Valor", "Resultado", "Tiempo", "Detalle"]} rows={tests.map((item) => ["—", item.step, item.device, item.label, item.address, item.amount, <Status status={item.result} />, "—", item.result === "Pendiente" ? "Pendiente de ejecución." : "Ejecutado."])} /></Card></div>; }
+function TrafficView({ traffic, protocolLabel }: { traffic: TrafficRow[]; protocolLabel: string }) {
+  const ok = traffic.filter((item) => item.status === "OK").length;
+  const timeout = traffic.filter((item) => item.status === "Timeout").length;
+  const crc = traffic.filter((item) => item.status === "CRC Error").length;
+  const exception = traffic.filter((item) => item.status === "Excepción").length;
+  const selected = traffic[0];
+
+  const times = traffic.map(t => Number(t.ms) || 0).filter(v => v > 0);
+  const fastest = times.length ? `${Math.min(...times)} ms` : "—";
+  const slowest = times.length ? `${Math.max(...times)} ms` : "—";
+  const totalMs = times.reduce((a, b) => a + b, 0);
+  const totalStr = totalMs > 0 ? new Date(totalMs).toISOString().substring(14, 19) : "—";
+
+  return (
+    <>
+      <style>{`
+        #traffic-master {
+          grid-template-rows: 1fr auto !important;
+        }
+        #traffic-master > .card:not(.trafficmain) {
+          min-height: 0 !important;
+          height: max-content !important;
+        }
+        /* Hacer realmente más pequeño el check anulando el width/height fijo del CSS base */
+        #traffic-master .happened h3 svg {
+          width: 18px !important;
+          height: 18px !important;
+        }
+        /* Subir el texto de abajo reduciendo el margen inferior del título verde y superior del párrafo */
+        #traffic-master .happened h3 {
+          margin-bottom: 0px !important;
+        }
+        #traffic-master .happened p {
+          margin-top: 4px !important;
+        }
+        /* Hacer más pequeño el cuadro de consejo y quitar el espacio excesivo arriba */
+        #traffic-master .tip {
+          margin-top: 15px !important;
+          padding: 8px 12px !important;
+        }
+      `}</style>
+      <div id="traffic-master" className="traffic grid" style={{ height: "calc(100vh - 120px)" }}>
+        <Card title="Tráfico Modbus" className="trafficmain" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <p>Visualice el historial de mensajes Modbus en tiempo real.</p>
+        <div className="filters" style={{ display: "flex", flexWrap: "wrap", gap: "15px", alignItems: "center", marginBottom: "15px" }}>
+          <Field label="Protocolo" value={protocolLabel} select />
+          <Field label="Dispositivo" value="Todos" select />
+          <Field label="Slave ID" value="Todos" select />
+          <Field label="Resultado" value="Todos" select />
+          <button className="ghost" style={{ marginLeft: "auto" }}>Limpiar filtros</button>
+        </div>
+        {traffic.length === 0 ? (
+          <Empty text="Sin tráfico capturado todavía." />
+        ) : (
+          <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+            <Table
+              layout="35px 190px 170px 90px 100px 90px 120px 1fr"
+              columns={["", "Hora", "Origen → Destino", "ID esclavo", "Tipo", "Función", "Resultado", "Resumen"]}
+              rows={traffic.slice(0, 10).map((item) => [
+                <div className={`dir-icon ${item.dir === "up" ? "blue" : "green"}`}>
+                  {item.dir === "up" ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
+                </div>,
+                fmt(new Date(item.at)),
+                item.route,
+                item.slave,
+                item.type,
+                item.fn,
+                <Status status={item.status} />,
+                item.summary,
+              ])}
+            />
+          </div>
+        )}
+        <p className="pagination" style={{ marginTop: "10px", flexShrink: 0 }}>
+          Mostrando 1 a {Math.min(10, traffic.length)} de {traffic.length} tramas
+        </p>
+      </Card>
+      
+      <Card title="Detalles del mensaje seleccionado" className="tdetails" style={{ display: "flex", flexDirection: "column" }}>
+        <dl className="t-grid-compact" style={{ margin: "auto 0" }}>
+          <dt>Dirección</dt><dd>{selected?.slave ?? "—"}</dd>
+          <dt>Función</dt><dd>{selected?.fn ?? "—"}</dd>
+          
+          <dt>Tipo</dt><dd className={selected?.type === "Petición" ? "text-green" : ""}>{selected?.type ?? "—"}</dd>
+          <dt>Tiempo</dt><dd>{selected?.ms ? `${selected.ms} ms` : "—"}</dd>
+          
+          <dt>Origen</dt><dd>{selected?.route?.split("→")[0]?.trim() ?? "—"}</dd>
+          <dt>Destino</dt><dd>{selected?.route?.split("→")[1]?.trim() ?? "—"}</dd>
+          
+          <dt style={{gridColumn: "1"}}>Resumen</dt>
+          <dd style={{gridColumn: "2 / -1"}}>{selected?.summary ?? "—"}</dd>
+        </dl>
+      </Card>
+
+      <Card title="¿Qué pasó?" className="happened" style={{ display: "flex", flexDirection: "column" }}>
+        <h3>
+          <CheckCircle2 size={14} />
+          {selected?.status === "OK" ? "La operación fue exitosa." : "Esperando tráfico."}
+        </h3>
+        <p>{selected ? `El ${selected.route?.split("→")[0]?.trim() ?? "equipo"} envió una petición de lectura (${selected.fn}) al ${selected.route?.split("→")[1]?.trim() ?? "dispositivo"} (ID ${selected.slave}).` : "Cuando se ejecute una lectura, aquí aparecerá la explicación."}</p>
+        <p>El dispositivo respondió correctamente en {selected?.ms ?? "—"}. No se detectaron errores en la comunicación.</p>
+        <div className="tip" style={{ marginTop: "15px" }}>
+          <Star size={20} className="tip-icon" />
+          <p>Consejo: Los mensajes se muestran en el orden en que ocurrieron. Usa los filtros para enfocarte en lo que necesitas.</p>
+        </div>
+      </Card>
+
+      <Card title="Actividad de la sesión" className="tactivity" style={{ display: "flex", flexDirection: "column" }}>
+        <div className="metrics-list" style={{ padding: "10px", marginBottom: "10px", gap: "6px" }}>
+          <MetricRow icon={CheckCircle2} label="Mensajes OK" value={String(ok)} percent={`${pct(ok, traffic.length)}%`} ok />
+          <MetricRow icon={Clock3} label="Timeouts" value={String(timeout)} percent={`${pct(timeout, traffic.length)}%`} warn />
+          <MetricRow icon={XCircle} label="Errores CRC" value={String(crc)} percent={`${pct(crc, traffic.length)}%`} danger />
+          <MetricRow icon={AlertCircle} label="Excepciones" value={String(exception)} percent={`${pct(exception, traffic.length)}%`} purple />
+        </div>
+        <div className="time-stats" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px" }}>
+          <div style={{ gridColumn: "1 / -1" }}><Clock3 size={15}/> <span>Tiempo total</span> <strong>{totalStr}</strong></div>
+          <div><Clock3 size={15}/> <span>Trama más rápida</span> <strong>{fastest}</strong></div>
+          <div><Clock3 size={15}/> <span>Trama más lenta</span> <strong>{slowest}</strong></div>
+        </div>
+      </Card>
+    </div>
+    </>
+  );
+}
+
+function Card({ title, children, action, className = "", style }: { title: string; children: ReactNode; action?: ReactNode; className?: string; style?: React.CSSProperties }) { return <section className={`card ${className}`} style={style}><header><h2>{title}</h2>{action}</header>{children}</section>; }
+function Empty({ text }: { text: string }) { return <p className="note"><Info size={16} />{text}</p>; }
+function Table({ columns, rows, layout }: { columns: ReactNode[]; rows: ReactNode[][]; layout?: string }) { return <div className="table"><div className="tr head" style={{ gridTemplateColumns: layout || `repeat(${columns.length},minmax(0,1fr))` }}>{columns.map((column, index) => <span key={index}>{column}</span>)}</div>{rows.map((row, rowIndex) => <div className="tr" key={rowIndex} style={{ gridTemplateColumns: layout || `repeat(${columns.length},minmax(0,1fr))` }}>{row.map((cell, cellIndex) => <span key={cellIndex}>{cell}</span>)}</div>)}</div>; }
+function Field({ label, value, suffix, select }: { label: string; value: string; suffix?: string; select?: boolean }) {
+  return (
+    <label className="field" style={{ gridTemplateColumns: "auto 1fr auto", gap: "10px" }}>
+      <span style={{ whiteSpace: "nowrap" }}>{label}</span>
+      {select ? (
+        <select defaultValue={value} style={{ minWidth: "100px", paddingRight: "35px", textAlign: "left" }}>
+          <option>{value}</option>
+        </select>
+      ) : (
+        <input defaultValue={value} />
+      )}
+      {suffix ? <small>{suffix}</small> : null}
+    </label>
+  );
+}
+function NumberField({ label, value, suffix, onChange }: { label: string; value: number; suffix?: string; onChange: (value: number) => void }) { return <label className="field"><span>{label}</span><input type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />{suffix ? <small>{suffix}</small> : null}</label>; }
+function SelectField({ label, value, onChange, options, labels, empty = "Sin opciones" }: { label: string; value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string>; empty?: string }) { const choices = options.length > 0 ? options : [""]; return <label className="field"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{choices.map((option) => <option key={option || empty} value={option}>{option ? labels?.[option] ?? option : empty}</option>)}</select></label>; }
+function PortSelectRow({ ports, port, setPort, refreshPorts }: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void }) { const options = ports.length > 0 ? ports.map((item) => item.path) : [""]; return <div className="field" style={{ gridTemplateColumns: "1fr 38px 1.15fr", alignItems: "center" }}><span>Puerto</span><button className="ghost" onClick={refreshPorts} title="Recargar puertos" style={{ minWidth: 38, height: 34, padding: 0 }}><RefreshCw size={15} /></button><select value={port} onChange={(event) => setPort(event.target.value)}>{options.map((option) => <option key={option || "empty"} value={option}>{option === INTERNAL_SIMULATOR_PATH ? INTERNAL_PORT_LABEL : option || "Sin puertos"}</option>)}</select></div>; }
+function Tool({ icon: Icon, label, tone, onClick }: { icon: LucideIcon; label: string; tone?: "ok" | "danger"; onClick?: () => void }) { return <button className={tone ?? ""} onClick={onClick}><Icon size={18} />{label}</button>; }
+function Dot() { return <span className="dot" />; }
+function Kpi({ icon, label, value, tone }: { icon: ReactNode; label: string; value: string; tone?: string }) { return <article className={`kpi ${tone ?? ""}`}><b>{icon}</b><span>{label}</span><strong>{value}</strong></article>; }
+function Status({ status }: { status: Status }) { const ok = status === "OK" || status === "Aprobado"; return <strong className={ok ? "okstatus" : status === "Excepción" ? "purpletext" : status === "Pendiente" ? "muted" : "badstatus"}>{ok ? <CheckCircle2 size={14} /> : status === "Pendiente" ? null : <AlertTriangle size={14} />} {status}</strong>; }
+function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
+function Tile({ icon: Icon, label, value, note }: { icon: LucideIcon; label: string; value: string; note: string }) { return <article><Icon size={20} /><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }
+function SelectChip({ text }: { text: string }) { return <span className="selectchip">{text}⌄</span>; }
+function Scenario({ label, text, ok, warn, danger }: { label: string; text: string; ok?: boolean; warn?: boolean; danger?: boolean }) { return <article className={danger ? "danger" : warn ? "warn" : ok ? "ok" : ""}><CheckCircle2 size={20} /><div><strong>{label}</strong><span>{text}</span></div></article>; }
+function MetricRow({ icon: Icon, label, value, percent, ok, warn, danger, purple }: { label: string; value: string; percent: string; ok?: boolean; warn?: boolean; danger?: boolean; purple?: boolean; icon?: any }) { const getTheme = () => { if(ok) return "ok"; if(warn) return "warn"; if(danger) return "danger"; if(purple) return "purple"; return "neutral"; }; return <div className={`ml-row theme-${getTheme()}`}><div className="ml-icon"><Icon size={18} /></div><span className="ml-label">{label}</span><strong className="ml-value">{value}</strong><div className="ml-bar-track"><div className="ml-bar-fill" style={{ width: percent }} /></div><span className="ml-percent">{percent}</span></div>; }
+
+function normalizePorts(rawPorts: Array<Record<string, unknown>>): PortOption[] { const unique = new Map<string, PortOption>(); for (const raw of rawPorts) { const path = typeof raw.path === "string" ? raw.path : ""; if (!path) continue; const hasMetadata = Boolean(raw.vendorId || raw.productId || raw.manufacturer || raw.serialNumber || raw.pnpId); const label = String(raw.displayName || raw.friendlyName || raw.path); unique.set(path, { path, label, hasMetadata }); } return [...unique.values()].sort((left, right) => portNumber(left.path) - portNumber(right.path)); }
+function highestComPort(options: PortOption[]) { return [...options].sort((left, right) => portNumber(right.path) - portNumber(left.path))[0]; }
+function portNumber(path: string) { return Number(path.match(/COM(\d+)/i)?.[1] ?? 0); }
+function createDiscoveredDevice(id: number): Device { return { id, name: `Slave ID ${id}`, named: false, active: true }; }
+/** Old fixed scheme (40000 = register 0), kept only for the legacy test rows. */
+function legacyRawAddress(fn: Fn, address: number) { if ((fn === "fc3" || fn === "fc6") && address >= 40000) return address - 40000; if (fn === "fc4" && address >= 30000) return address - 30000; if (fn === "fc2" && address >= 10000) return address - 10000; return address; }
+function fnTable(fn: Fn) { return fn === "fc1" ? 1 : fn === "fc2" ? 2 : fn === "fc4" ? 4 : 3; }
+function metaFor(fn: Fn, display: number) { if (fn === "fc1") return { name: `Coil ${display}`, type: "bool", access: "R/W" }; if (fn === "fc2") return { name: `Entrada ${display}`, type: "bool", access: "R" }; return { name: `Registro ${display}`, type: "uint16", access: fn === "fc3" ? "R/W" : "R" }; }
+function buildRegisterRows(fn: Fn, rawStart: number, values: Array<number | boolean>, mode: AddressMode): RegisterRow[] { return values.map((value, index) => { const raw = rawStart + index; const display = toDisplayAddress(mode, fnTable(fn), raw); const meta = metaFor(fn, display); return { raw, address: String(display), name: meta.name, value: typeof value === "boolean" ? (value ? "ON" : "OFF") : String(value), type: meta.type, access: meta.access, status: "OK" }; }); }
+function withUnit(row: RegisterRow) { return row.name; }
+function valueCell(row: RegisterRow) { if (row.type === "bool" || row.value === "ON" || row.value === "OFF") return <span className={`bitChip ${row.value === "ON" ? "on" : "off"}`}>{row.value}</span>; return row.value; }
+function valuesPreview(fn: Fn, rawStart: number, values: Array<number | boolean>, mode: AddressMode) { if (values.length === 0) return "—"; return values.slice(0, 6).map((value, index) => `${toDisplayAddress(mode, fnTable(fn), rawStart + index)}=${typeof value === "boolean" ? (value ? "ON" : "OFF") : value}`).join(", ") + (values.length > 6 ? "…" : ""); }
+function addressHelp(fn: Fn) { if (fn === "fc1") return "FC01 lee coils. El rango real depende del mapa del dispositivo o del template aplicado."; if (fn === "fc2") return "FC02 lee entradas discretas. El rango real depende del mapa del dispositivo o del template aplicado."; if (fn === "fc4") return "FC04 lee input registers. El rango real depende del mapa del dispositivo o del template aplicado."; return "FC03 lee holding registers. El rango real depende del mapa del dispositivo o del template aplicado."; }
+function protocolName(transport: MasterTransport, serialFraming: SerialFraming, tcpFraming: TcpFraming) { return transport === "tcp" ? (tcpFraming === "mbap" ? "Modbus TCP" : "RTU sobre TCP") : serialFraming === "ascii" ? "Modbus ASCII" : "Modbus RTU"; }
+function pollStatusLabel(status: PollStatus): Status { return status === "ok" ? "OK" : status === "timeout" ? "Timeout" : status === "crc" ? "CRC Error" : status === "exception" ? "Excepción" : "Error"; }
+function requestName(fc: number) { const names: Record<number, string> = { 1: "Read Coils", 2: "Read Discrete Inputs", 3: "Read Holding Registers", 4: "Read Input Registers", 5: "Write Single Coil", 6: "Write Single Register", 15: "Write Multiple Coils", 16: "Write Multiple Registers" }; return names[fc] ?? `FC${fc}`; }
+function loadStored(key: string) { try { return localStorage.getItem(key) || ""; } catch { return ""; } }
+function storeValue(key: string, value: string) { if (!value) return; try { localStorage.setItem(key, value); } catch { /* storage can be unavailable */ } }
+function hex(value: number) { return `0x${value.toString(16).toUpperCase().padStart(2, "0")}`; }
+function fmt(date: Date) { return new Intl.DateTimeFormat("es-PE", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date); }
+function time(date: Date) { return new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date); }
+function fnLabels() { return Object.fromEntries(Object.entries(fnMap).map(([key, value]) => [key, value.label])); }
+function summarize(fn: Fn, address: number, quantity: number) { return fn === "fc6" ? `Write Single Register (${address})` : `${fnMap[fn].label} (${address}–${address + quantity - 1})`; }
+function responseSummary(action: TrafficAction) { if (action.exception) return exceptionName(action.exception); if (action.registerValues) return `${action.registerValues.length} registros`; if (action.values) return `${action.values.length} bits`; return "Escritura OK"; }
+function exceptionName(exception: unknown) { return exception && typeof exception === "object" && "exceptionName" in exception && typeof exception.exceptionName === "string" ? exception.exceptionName : "Excepción Modbus"; }
+function pct(value: number, total: number) { return total > 0 ? Math.round((value / total) * 100) : 0; }
+function createCleanTests(): TestRow[] { return [[1, 2, "Slave ID 2", "fc3", 40000, 6, "6 regs", 1000], [2, 2, "Slave ID 2", "fc4", 30000, 4, "4 regs", 1000], [3, 2, "Slave ID 2", "fc1", 0, 8, "8 coils", 1000], [4, 2, "Slave ID 2", "fc2", 0, 8, "8 inputs", 1000]].map((item) => ({ enabled: true, step: item[0] as number, slave: item[1] as number, device: item[2] as string, fn: item[3] as Fn, label: fnMap[item[3] as Fn].label, address: item[4] as number, amount: item[5] as number, expected: item[6] as string, timeout: item[7] as number, result: "Pendiente" })); }
+function sessionTestSummary(testsRuntime: TestsRuntimeState | null | undefined, tests: TestRow[]): TestsRunSummary { if (testsRuntime?.lastRun) return testsRuntime.lastRun; const total = testsRuntime?.steps.length ?? tests.length; const finalTests = tests.filter((item) => item.result !== "Pendiente"); const passed = finalTests.filter((item) => item.result === "Aprobado").length; const failed = finalTests.filter((item) => item.result !== "Aprobado").length; const timeouts = finalTests.filter((item) => item.result === "Timeout").length; return { total, executed: finalTests.length, passed, failed, timeouts, otherFailed: Math.max(0, failed - timeouts), responsive: Math.max(0, finalTests.length - timeouts), avgMs: null, lastRunAt: null }; }
+function storedRegisterReads(activity: StoredActivityRow[]) { return activity.reduce((total, item) => total + item.rows.length, 0); }
+function signatureFromState(input: {
+  sessionName: string;
+  connection: ConnectionSettings;
+  addressMode: AddressMode;
+  pollWindows: PollDefinition[];
+  devices: Device[];
+  activeId: number | null;
+  stats: Stats;
+  quick: RegisterRow[];
+  regs: RegisterRow[];
+  activity: ActivityRow[];
+  traffic: TrafficRow[];
+  tests: TestRow[];
+  testsRuntime: TestsRuntimeState | null;
+  testsExecutionHistory: TestExecutionHistoryEntry[];
+  notes: string;
+  simulatorDevices: VirtualDeviceSummary[];
+}) {
+  return JSON.stringify({
+    name: input.sessionName.trim() || "Nueva_sesion_Modbus",
+    connection: connectionSignature(input.connection),
+    addressMode: input.addressMode,
+    pollWindows: input.pollWindows,
+    devices: input.devices,
+    activeId: input.activeId,
+    stats: input.stats,
+    quick: input.quick,
+    regs: input.regs,
+    activity: input.activity.map((item) => ({ ...item, at: item.at.toISOString() })),
+    traffic: input.traffic.map((item) => ({ ...item, at: item.at.toISOString() })),
+    tests: input.tests,
+    testsRuntime: input.testsRuntime,
+    testsExecutionHistory: input.testsExecutionHistory,
+    notes: input.notes,
+    simulator: simulatorSignature(input.simulatorDevices)
+  });
+}
+function signatureFromDocument(document: SessionDocument) {
+  return JSON.stringify({
+    name: document.session.name,
+    connection: connectionSignature(document.connection),
+    addressMode: document.addressMode ?? "jw",
+    pollWindows: document.pollWindows ?? [],
+    devices: document.devices,
+    activeId: document.activeSlaveId,
+    stats: document.stats,
+    quick: document.quickReads,
+    regs: document.registerSnapshot,
+    activity: document.activity,
+    traffic: document.traffic,
+    tests: document.tests,
+    testsRuntime: document.testsRuntime ?? null,
+    testsExecutionHistory: document.testsExecutionHistory ?? [],
+    notes: document.session.notes,
+    simulator: simulatorSignature(document.simulator?.devices ?? [])
+  });
+}
+function connectionSignature(connection: ConnectionSettings) {
+  return {
+    transport: connection.transport ?? "serial",
+    serialFraming: connection.serialFraming ?? "rtu",
+    host: connection.host ?? "",
+    tcpPort: connection.tcpPort ?? 502,
+    tcpFraming: connection.tcpFraming ?? "mbap",
+    port: connection.port,
+    baud: connection.baudRate,
+    dataBits: connection.dataBits,
+    parity: connection.parity,
+    stopBits: connection.stopBits,
+    echo: connection.echo ?? defaultEchoMode,
+    timeout: connection.timeoutMs
+  };
+}
+function normalizeSessionDocument(data: unknown): SessionDocument | null {
+  if (!data || typeof data !== "object") return null;
+
+  const doc = data as Partial<SessionDocument>;
+  if (doc.format !== "jwmodbus-session" || doc.version !== 1 || !doc.session || !doc.connection) return null;
+
+  const history = normalizeTestsExecutionHistory(doc.testsExecutionHistory);
+
+  return {
+    format: "jwmodbus-session",
+    version: 1,
+    session: {
+      id: doc.session.id ?? `session-${Date.now()}`,
+      name: doc.session.name ?? "Nueva_sesion_Modbus",
+      createdAt: doc.session.createdAt ?? new Date().toISOString(),
+      updatedAt: doc.session.updatedAt ?? new Date().toISOString(),
+      status: doc.session.status ?? "Guardada",
+      notes: doc.session.notes ?? ""
+    },
+    connection: {
+      protocol: typeof doc.connection.protocol === "string" ? doc.connection.protocol : "Modbus RTU",
+      transport: doc.connection.transport === "tcp" ? "tcp" : "serial",
+      serialFraming: doc.connection.serialFraming === "ascii" ? "ascii" : "rtu",
+      host: typeof doc.connection.host === "string" ? doc.connection.host : "",
+      tcpPort: Number.isInteger(doc.connection.tcpPort) ? doc.connection.tcpPort : 502,
+      tcpFraming: doc.connection.tcpFraming === "rtu" ? "rtu" : "mbap",
+      port: doc.connection.port ?? "",
+      baudRate: doc.connection.baudRate ?? 115200,
+      dataBits: doc.connection.dataBits ?? 8,
+      parity: doc.connection.parity ?? "none",
+      stopBits: doc.connection.stopBits ?? 1,
+      timeoutMs: doc.connection.timeoutMs ?? 1000,
+      echo: isEchoMode(doc.connection.echo) ? doc.connection.echo : defaultEchoMode
+    },
+    devices: doc.devices ?? [],
+    activeSlaveId: doc.activeSlaveId ?? null,
+    stats: doc.stats ?? { requests: 0, responses: 0, errors: 0, timeouts: 0 },
+    quickReads: doc.quickReads ?? [],
+    registerSnapshot: doc.registerSnapshot ?? [],
+    activity: doc.activity ?? [],
+    traffic: doc.traffic ?? [],
+    tests: doc.tests ?? createCleanTests(),
+    testsRuntime: normalizeTestsRuntimeState(doc.testsRuntime, doc.activeSlaveId ?? 2),
+    testsExecutionHistory: history,
+    testsExecutionHistoryUpdatedAt: doc.testsExecutionHistoryUpdatedAt ?? null,
+    registerMaps: doc.registerMaps ?? [],
+    templates: doc.templates ?? [],
+    simulator: normalizeSimulatorSessionConfig(doc.simulator),
+    addressMode: isAddressMode(doc.addressMode) ? doc.addressMode : "jw",
+    pollWindows: Array.isArray(doc.pollWindows) ? doc.pollWindows.filter((item): item is PollDefinition => Boolean(item && typeof item === "object" && typeof (item as PollDefinition).id === "string")) : []
+  };
+}
+// Only what the session file keeps; request counters change constantly and are not saved.
+function simulatorSignature(devices: Array<Pick<VirtualDeviceSummary, "unitId" | "name" | "template" | "faults">>) {
+  return devices.map(({ unitId, name, template, faults }) => ({ unitId, name, template, faults }));
+}
+function sameSimulatorDevices(left: VirtualDeviceSummary[], right: VirtualDeviceSummary[]) {
+  return JSON.stringify(simulatorSignature(left)) === JSON.stringify(simulatorSignature(right));
+}
+function normalizeSimulatorSessionConfig(data: unknown): SlaveSimulatorSessionConfig | null {
+  if (!data || typeof data !== "object") return null;
+  const config = data as Partial<SlaveSimulatorSessionConfig>;
+  if (!Array.isArray(config.devices) || config.devices.length === 0) return null;
+  return { settings: config.settings ? normalizeSimulatorSettings(config.settings) : null, devices: config.devices };
+}
+function createRecentSession(document: SessionDocument, filePath: string, status: SessionState): RecentSession { const testSummary = sessionTestSummary(document.testsRuntime ?? null, document.tests); return { id: document.session.id, name: document.session.name, savedAt: document.session.updatedAt, filePath, devices: document.devices.length, registers: storedRegisterReads(document.activity), tests: `${testSummary.passed}/${testSummary.total}`, errors: document.stats.errors + testSummary.failed, status }; }
+function normalizeTestsExecutionHistory(data: unknown): TestExecutionHistoryEntry[] {
+  if (!Array.isArray(data)) return [];
+  return data
+    .filter((item): item is TestExecutionHistoryEntry => Boolean(item) && typeof item === "object")
+    .slice(0, 200);
+}
+
+function loadStoredTestsExecutionHistory(): TestExecutionHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(TESTS_EXECUTION_HISTORY_STORAGE_KEY);
+    return normalizeTestsExecutionHistory(raw ? JSON.parse(raw) : []);
+  } catch {
+    return [];
+  }
+}
+
+function replaceStoredTestsExecutionHistory(data: unknown): TestExecutionHistoryEntry[] {
+  const history = normalizeTestsExecutionHistory(data);
+
+  try {
+    localStorage.setItem(TESTS_EXECUTION_HISTORY_STORAGE_KEY, JSON.stringify(history));
+  } catch {
+    // localStorage puede no estar disponible en pruebas o previsualizaciones.
+  }
+
+  window.dispatchEvent(new CustomEvent("jw-simple-tests-history-updated", { detail: history }));
+  return history;
+}
+
+function loadStoredRecentSessions(): RecentSession[] { try { const raw = localStorage.getItem(RECENT_SESSION_STORAGE_KEY); if (!raw) return []; const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : []; } catch { return []; } }
+function storeRecentSessions(sessions: RecentSession[]) { localStorage.setItem(RECENT_SESSION_STORAGE_KEY, JSON.stringify(sessions)); }
+function loadStoredSerialPort() { try { return localStorage.getItem(LAST_SERIAL_PORT_STORAGE_KEY) || ""; } catch { return ""; } }
+function storeLastSerialPort(value: string) { if (!value) return; try { localStorage.setItem(LAST_SERIAL_PORT_STORAGE_KEY, value); } catch { /* local storage can be unavailable in tests/previews */ } }
+function displayDeviceName(devices: Device[], id: number) { return devices.find((device) => device.id === id)?.name ?? `Slave ID ${id}`; }
+function shortPath(filePath: string) { const normalized = filePath.replace(/\\/g, "/"); const parts = normalized.split("/"); return parts.slice(-2).join("/"); }
+
+function Big({ label, value, note, danger }: { label: string; value: string; note: string; danger?: boolean }) { return <article className={danger ? "big danger" : "big"}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }

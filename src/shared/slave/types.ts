@@ -1,0 +1,166 @@
+import type { EchoMode } from "../serial/echoFilter.js";
+import type { NormalizedSerialPortConfig, SerialDataBits, SerialParity, SerialStopBits } from "../serial/types.js";
+
+export type SlaveTable = "coils" | "discreteInputs" | "holdingRegisters" | "inputRegisters";
+
+export interface VirtualDeviceSizes {
+  coils: number;
+  discreteInputs: number;
+  holdingRegisters: number;
+  inputRegisters: number;
+}
+
+export type VirtualDeviceLabels = Partial<Record<SlaveTable, string[]>>;
+
+/** How a virtual device misbehaves, to exercise the master's error handling. */
+export type VirtualFaultMode = "none" | "no-response" | "bad-crc" | "exception";
+
+export type VirtualExceptionCode = 1 | 2 | 3 | 4;
+
+export interface VirtualDeviceFaults {
+  mode: VirtualFaultMode;
+  /** Applied before every response, on top of the mode. */
+  delayMs: number;
+  /** Used when `mode` is "exception". */
+  exceptionCode: VirtualExceptionCode;
+}
+
+export interface VirtualDeviceSummary {
+  unitId: number;
+  name: string;
+  template: string | null;
+  sizes: VirtualDeviceSizes;
+  labels: VirtualDeviceLabels;
+  faults: VirtualDeviceFaults;
+  requests: number;
+}
+
+export interface VirtualDeviceValues {
+  coils: boolean[];
+  discreteInputs: boolean[];
+  holdingRegisters: number[];
+  inputRegisters: number[];
+}
+
+export interface VirtualDeviceSnapshot extends VirtualDeviceSummary, VirtualDeviceValues {}
+
+/** A device as stored in a session file. */
+export interface VirtualDeviceConfig {
+  unitId: number;
+  name: string;
+  template: string | null;
+  labels: VirtualDeviceLabels;
+  faults: VirtualDeviceFaults;
+  values: VirtualDeviceValues;
+}
+
+export interface SlaveSimulatorSettings {
+  port: string;
+  baudRate: number;
+  dataBits: SerialDataBits;
+  parity: SerialParity;
+  stopBits: SerialStopBits;
+  echo: EchoMode;
+  /** Framing on the COM port. Missing in sessions saved before 0.2 (= RTU). */
+  framing?: "rtu" | "ascii";
+  /** Modbus TCP server: interface, port and framing. */
+  tcpHost?: string;
+  tcpPort?: number;
+  tcpFraming?: "tcp" | "rtu";
+}
+
+export interface SlaveSimulatorSessionConfig {
+  settings: SlaveSimulatorSettings | null;
+  devices: VirtualDeviceConfig[];
+}
+
+export interface SlaveSimulatorCounters {
+  requests: number;
+  responses: number;
+  exceptions: number;
+  ignored: number;
+  crcErrors: number;
+  faults: number;
+  /** Echoes of our own responses dropped (USB-RS485 converter with echo). */
+  echoesDiscarded: number;
+}
+
+/** How to serve the virtual devices over TCP. */
+export interface SlaveTcpConfig {
+  /** Interface to listen on. Default 0.0.0.0 (all). */
+  host?: string;
+  /** Default 502. */
+  port?: number;
+  /** "tcp" = Modbus TCP (MBAP), "rtu" = RTU frames over TCP. Default "tcp". */
+  framing?: "tcp" | "rtu";
+}
+
+export interface SlaveTcpState {
+  host: string;
+  port: number;
+  framing: "tcp" | "rtu";
+  /** Masters connected right now. */
+  clients: number;
+  startedAt: string;
+}
+
+export interface SlaveSimulatorState {
+  running: boolean;
+  config?: NormalizedSerialPortConfig;
+  startedAt?: string;
+  devices: VirtualDeviceSummary[];
+  counters: SlaveSimulatorCounters;
+  lastError?: string;
+  /** What `auto` echo mode learned about the converter; undefined = not yet known. */
+  echoDetected?: boolean;
+  /** Present while the TCP server runs. */
+  tcp?: SlaveTcpState;
+}
+
+export type SlaveTrafficResult =
+  | "response"
+  | "exception"
+  | "broadcast"
+  | "ignored"
+  | "silenced"
+  | "crc-error"
+  | "frame-error";
+
+export interface SlaveTrafficEntry {
+  id: number;
+  at: string;
+  /** COM port the frame arrived on, or the internal channel. */
+  channel: string;
+  unitId: number | null;
+  functionCode: number | null;
+  request: string;
+  response: string | null;
+  result: SlaveTrafficResult;
+  summary: string;
+  /** Fault applied to this exchange, in words; null when the device behaved normally. */
+  fault: string | null;
+}
+
+export interface AddVirtualDeviceRequest {
+  unitId: number;
+  name?: string;
+  template?: string;
+  sizes?: Partial<VirtualDeviceSizes>;
+}
+
+export interface SetVirtualValueRequest {
+  unitId: number;
+  table: SlaveTable;
+  address: number;
+  value: number | boolean;
+}
+
+export interface SetVirtualFaultsRequest {
+  unitId: number;
+  faults: Partial<VirtualDeviceFaults>;
+}
+
+export type SlaveSimulatorEvent =
+  | { type: "traffic"; entry: SlaveTrafficEntry }
+  | { type: "device"; unitId: number }
+  | { type: "state"; state: SlaveSimulatorState };

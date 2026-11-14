@@ -1,6 +1,6 @@
 {
   "name": "jw-modbus-tool",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Modern Modbus RTU diagnostic tool for JW Control.",
   "author": "JW Control",
   "license": "MIT",
