@@ -9,3 +9,8 @@ release-*/
 *.log
 *.tmp
 .DS_Store
+
+# Salidas locales y scripts de un solo uso
+out/
+patch*.cjs
+*.zip
