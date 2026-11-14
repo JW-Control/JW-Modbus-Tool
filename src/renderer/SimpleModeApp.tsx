@@ -42,6 +42,7 @@ import { loadSimulatorSettings, normalizeSimulatorSettings, storeSimulatorSettin
 import type { SlaveSimulatorSessionConfig, VirtualDeviceSummary } from "../shared/slave/types.js";
 import { INTERNAL_SIMULATOR_PATH } from "../shared/serial/types.js";
 import { defaultEchoMode, echoModeLabels, isEchoMode, type EchoMode } from "../shared/serial/echoFilter.js";
+import { appendTrend, trendKey, trendPolyline, trendStats, type TrendPoint } from "./registerTrend.js";
 
 const INTERNAL_PORT_LABEL = "Simulador interno (sin COM)";
 
@@ -188,6 +189,7 @@ export function SimpleModeApp() {
   const [rAutoRead, setRAutoRead] = useState(false);
   const [rInterval, setRInterval] = useState(1000);
   const [regs, setRegs] = useState<RegisterRow[]>([]);
+  const trendHistory = useRef(new Map<string, TrendPoint[]>());
   const [selectedRegister, setSelectedRegister] = useState<RegisterRow | null>(null);
   const registerReadInFlight = useRef(false);
   const [activity, setActivity] = useState<ActivityRow[]>([]);
@@ -559,8 +561,9 @@ export function SimpleModeApp() {
     const result = await readRegisters(rFn, activeId, rAddr, rQty);
     if (showBusy) setBusy(false);
     if (!result) return;
+    appendTrend(trendHistory.current, result.rows, String(activeId), Date.now());
     setRegs(result.rows);
-    setSelectedRegister(result.rows[0] ?? null);
+    setSelectedRegister((current) => result.rows.find((row) => row.address === current?.address) ?? result.rows[0] ?? null);
     setMessage("Mapa de registros actualizado.");
   }
 
@@ -640,7 +643,7 @@ export function SimpleModeApp() {
   function handleMaximize() { bridge?.window?.maximize?.(); }
   function handleClose() { bridge?.window?.close?.(); }
 
-  return <main className="shell"><header className="toolbar" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>{busy && <span>Procesando…</span>}<button onClick={handleMinimize}><Minus size={18} strokeWidth={2} /></button><button onClick={handleMaximize}><Square size={14} strokeWidth={2.5} /></button><button className="close-btn" onClick={handleClose}><X size={18} strokeWidth={2} /></button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia MIT<br /><small>Versión {__APP_VERSION__}</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, echo, setEcho, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} onSaveSession={saveSession} isSessionSaved={!!sessionFilePath} />}{view === "registers" && <RegistersView {...{ activeDevice, rFn, setRFn, rAddr, setRAddr, rQty, setRQty, rAutoRead, setRAutoRead, rInterval, setRInterval, regs, selectedRegister, setSelectedRegister, registerRead, activity }} />}{view === "traffic" && <TrafficView traffic={traffic} />}{view === "simulator" && <SimulatorView masterPort={port} masterConnected={connected} onMessage={setMessage} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{port || "Sin puerto"}</span><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
+  return <main className="shell"><header className="toolbar" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}><div className="brand"><span>JW</span><div><strong>JW Modbus Tool</strong><em>Modo sencillo</em></div></div><div className="toolbar-actions" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><Tool icon={FileText} label="Nuevo" onClick={newSession} /><Tool icon={FolderOpen} label="Abrir" onClick={() => void openSessionFile()} /><Tool icon={Save} label="Guardar" onClick={saveSession} /><i /><Tool icon={Plug} label="Conectar" tone="ok" onClick={connect} /><Tool icon={Unplug} label="Desconectar" tone="danger" onClick={disconnect} /><i /><Tool icon={Search} label="Escanear" onClick={scanDevices} /></div><div className="window-buttons" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>{busy && <span>Procesando…</span>}<button onClick={handleMinimize}><Minus size={18} strokeWidth={2} /></button><button onClick={handleMaximize}><Square size={14} strokeWidth={2.5} /></button><button className="close-btn" onClick={handleClose}><X size={18} strokeWidth={2} /></button></div></header><div className="body"><aside className="sidebar"><nav>{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><item.icon size={21} />{item.label}</button>)}</nav><div className="helper"><Info size={18} /><strong>¿Cómo funciona?</strong><p>{message}</p></div><div className="license"><Dot />Licencia MIT<br /><small>Versión {__APP_VERSION__}</small></div></aside><section className="workspace">{view === "devices" && <DevicesView {...{ ports, port, setPort, refreshPorts, baud, setBaud, dataBits, setDataBits, parity, setParity, stopBits, setStopBits, echo, setEcho, timeout, setTimeoutMs, connected, devices, activeId, activeDevice, selectDevice, scanDevices, lastScan, stats, qFn, setQFn, qAddr, setQAddr, qQty, setQQty, quick, quickRead, activity, connect, disconnect, clearActivity: () => setActivity([]) }} />}{view === "sessions" && <SessionsView {...{ sessionName, setSessionName, recentSessions, onNew: newSession, onSave: saveSession, onSaveAs: saveSessionAs, onOpen: openSessionFile, activity, devices, stats, traffic, tests, testsRuntime, connected, port, baud, dataBits, parity, stopBits, activeId, sessionId, sessionFilePath, sessionState, notes, setNotes, renameDevice }} />}{view === "tests" && <NativeTestsView activeSlaveId={activeId} port={port} baud={baud} runtimeState={testsRuntime} resetKey={testsResetKey} onRuntimeStateChange={setTestsRuntime} onMessage={setMessage} onSaveSession={saveSession} isSessionSaved={!!sessionFilePath} />}{view === "registers" && <RegistersView {...{ activeDevice, rFn, setRFn, rAddr, setRAddr, rQty, setRQty, rAutoRead, setRAutoRead, rInterval, setRInterval, regs, selectedRegister, setSelectedRegister, registerRead, activity, trendHistory: trendHistory.current }} />}{view === "traffic" && <TrafficView traffic={traffic} />}{view === "simulator" && <SimulatorView masterPort={port} masterConnected={connected} onMessage={setMessage} />}</section></div><footer className="status"><Dot /><strong>{connected ? "Conectado" : "Inactivo"}</strong><span>{port || "Sin puerto"}</span><span>{baud}</span><span>{dataBits}{parity === "none" ? "N" : parity[0].toUpperCase()}{stopBits}</span><span>Slave activo ID {activeId ?? "—"}</span><span>{sessionState}</span></footer></main>;
 }
 
 function DevicesView(props: { ports: PortOption[]; port: string; setPort: (value: string) => void; refreshPorts: () => void; baud: number; setBaud: (value: number) => void; dataBits: number; setDataBits: (value: number) => void; parity: string; setParity: (value: string) => void; stopBits: number; setStopBits: (value: number) => void; echo: EchoMode; setEcho: (value: EchoMode) => void; timeout: number; setTimeoutMs: (value: number) => void; connected: boolean; devices: Device[]; activeId: number | null; activeDevice: Device | null; selectDevice: (id: number) => void; scanDevices: () => void; lastScan: Date | null; stats: Stats; qFn: Fn; setQFn: (value: Fn) => void; qAddr: number; setQAddr: (value: number) => void; qQty: number; setQQty: (value: number) => void; quick: RegisterRow[]; quickRead: () => void; activity: ActivityRow[]; connect: () => void; disconnect: () => void; clearActivity: () => void }) {
@@ -909,9 +912,12 @@ function RegistersView(props: {
   setSelectedRegister: (value: RegisterRow) => void;
   registerRead: (showBusy?: boolean) => void | Promise<void>;
   activity: ActivityRow[];
+  trendHistory: Map<string, TrendPoint[]>;
 }) {
   const selected = props.selectedRegister;
-  const selectedStats = registerValueStats(props.regs, selected);
+  const trendScope = String(props.activeDevice?.id ?? "—");
+  const selectedTrend = selected ? props.trendHistory.get(trendKey(trendScope, selected.address)) ?? [] : [];
+  const selectedStats = trendStats(selectedTrend);
   return (
     <div className="registers grid">
       <header>
@@ -964,12 +970,12 @@ function RegistersView(props: {
       <Card title="Registro seleccionado" className="selected">
         <h1>{selected ? <><span className="selectedAddress">{selected.address} <small>({hex(Number(selected.address))})</small></span>{selected.name}</> : "Sin selección"}</h1>
         <div className="vals">
-          <span>Valor actual<strong>{selected?.value ?? "—"}</strong></span>
+          <span>Valor actual<strong>{(selected && props.regs.find((row) => row.address === selected.address)?.value) ?? selected?.value ?? "—"}</strong></span>
           <span>Tipo<strong>{selected?.type ?? "—"}</strong></span>
           <span>Acceso<strong>{selected?.access ?? "—"}</strong></span>
         </div>
         <p>Tendencia (últimos 60 s)</p>
-        <div className="chart"><svg viewBox="0 0 400 120"><polyline points="0,72 25,62 50,74 75,58 100,82 125,70 150,77 175,65 200,80 225,72 250,61 275,70 300,66 325,75 350,69 375,73 400,67" /></svg></div>
+        <div className="chart"><svg viewBox="0 0 400 120" preserveAspectRatio="none">{selectedTrend.length > 0 && <polyline points={trendPolyline(selectedTrend)} />}</svg></div>
         <div className="stats"><span>Min: {selectedStats.min}</span><span>Máx: {selectedStats.max}</span><span>Prom: {selectedStats.avg}</span></div>
       </Card>
       <Card title="Actividad reciente" className="regactivity">
@@ -1150,8 +1156,6 @@ function metaFor(fn: Fn, raw: number) { if (fn === "fc1") return { name: `Q0_${r
 function buildRegisterRows(fn: Fn, start: number, values: Array<number | boolean>): RegisterRow[] { const rawStart = rawAddress(fn, start); return values.map((value, index) => { const raw = rawStart + index; const meta = metaFor(fn, raw); return { raw, address: String(displayAddress(fn, raw)), name: meta.name, value: typeof value === "boolean" ? (value ? "ON" : "OFF") : String(value), type: meta.type, access: meta.access, status: "OK" }; }); }
 function withUnit(row: RegisterRow) { const meta = registerMeta[row.raw]; return meta?.unit ? `${row.name} (${meta.unit})` : row.name; }
 function AddressCell({ row }: { row: RegisterRow }) { const address = Number(row.address); return <span className="addrHex"><strong>{row.address}</strong><small>({Number.isFinite(address) ? hex(address) : "—"})</small></span>; }
-function registerValueStats(rows: RegisterRow[], selected: RegisterRow | null) { const numeric = rows.map((row) => Number(row.value)).filter((value) => Number.isFinite(value)); if (!selected || numeric.length === 0) return { min: "—", max: "—", avg: "—" }; const min = Math.min(...numeric); const max = Math.max(...numeric); const avg = numeric.reduce((total, value) => total + value, 0) / numeric.length; return { min: statValue(min), max: statValue(max), avg: statValue(avg) }; }
-function statValue(value: number) { return Number.isInteger(value) ? String(value) : value.toFixed(2); }
 function valueCell(row: RegisterRow) { if (row.type === "bool" || row.value === "ON" || row.value === "OFF") return <span className={`bitChip ${row.value === "ON" ? "on" : "off"}`}>{row.value}</span>; return row.value; }
 function valuesPreview(fn: Fn, start: number, values: Array<number | boolean>) { if (values.length === 0) return "—"; const rawStart = rawAddress(fn, start); return values.slice(0, 6).map((value, index) => `${displayAddress(fn, rawStart + index)}=${typeof value === "boolean" ? (value ? "ON" : "OFF") : value}`).join(", ") + (values.length > 6 ? "…" : ""); }
 function addressHelp(fn: Fn) { if (fn === "fc1") return "FC01 lee coils. El rango real depende del mapa del dispositivo o del template aplicado."; if (fn === "fc2") return "FC02 lee entradas discretas. El rango real depende del mapa del dispositivo o del template aplicado."; if (fn === "fc4") return "FC04 lee input registers. El rango real depende del mapa del dispositivo o del template aplicado."; return "FC03 lee holding registers. El rango real depende del mapa del dispositivo o del template aplicado."; }

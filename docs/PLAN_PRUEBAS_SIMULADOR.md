@@ -20,10 +20,10 @@ Es la prueba más rápida y no necesita par COM virtual.
 3. Vista **Pruebas**: con el ID 1 como slave activo, ejecuta "Operación normal",
    "Error CRC detectado", "Excepción Modbus" y "Timeout detectado".
 
-- [ ] La barra de estado muestra "Conectado INTERNO" y la vista Simulador, "Canal interno activo".
-- [ ] El escaneo detecta el ID 1 y Registros lee `1234` en 40001.
-- [ ] Los escenarios dan: 8 pasos aprobados, 8 "CRC Error", 6 "Excepcion" y 8 "Timeout".
-- [ ] Al volver a la vista Simulador, el tráfico muestra las peticiones.
+- [x] La barra de estado muestra "Conectado INTERNO" y la vista Simulador, "Canal interno activo".
+- [x] El escaneo detecta el ID 1 y Registros lee `1234` en 40001.
+- [x] Los escenarios dan: 8 pasos aprobados, 8 "CRC Error", 6 "Excepcion" y 8 "Timeout".
+- [x] Al volver a la vista Simulador, el tráfico muestra las peticiones.
 
 **Criterio de cierre de la Fase 3:** esta demo funciona en un PC sin
 adaptadores ni drivers, y los tests de extremo a extremo
@@ -85,16 +85,16 @@ del lado de la app.
 
 **Resultados esperados**
 
-- [ ] El escaneo detecta 2 dispositivos (ID 1 e ID 2).
-- [ ] Registros muestra `1234` en 40001.
-- [ ] Al cambiar un valor en el Simulador, Registros lo muestra en la siguiente lectura.
-- [ ] El plan de Pruebas termina con los 8 pasos aprobados.
-- [ ] Las escrituras del plan (por ejemplo 40000 = 1234 y las coils 0 a 3) aparecen en la memoria del ID 2 del Simulador.
-- [ ] En el Simulador, "Err. CRC" queda en 0. "Ignoradas" solo sube durante el escaneo, por los IDs 3 a 10, que no existen.
-- [ ] Al intentar conectar el master a `COM10` mientras el simulador lo usa, la app avisa que el puerto está ocupado.
+- [x] El escaneo detecta 2 dispositivos (ID 1 e ID 2).
+- [x] Registros muestra `1234` en 40001.
+- [x] Al cambiar un valor en el Simulador, Registros lo muestra en la siguiente lectura.
+- [x] El plan de Pruebas termina con los 8 pasos aprobados.
+- [x] Las escrituras del plan (por ejemplo 40000 = 1234 y las coils 0 a 3) aparecen en la memoria del ID 2 del Simulador.
+- [x] En el Simulador, "Err. CRC" queda en 0. "Ignoradas" solo sube durante el escaneo, por los IDs 3 a 10, que no existen.
+- [x] Al intentar conectar el master a `COM10` mientras el simulador lo usa, la app avisa que el puerto está ocupado.
 
 **Criterio de cierre de la Fase 1:** con la lectura automática de Registros a
-250 ms, deja correr unos 5 minutos hasta superar 1.000 peticiones. En el
+0,5 s (el intervalo más corto que ofrece la vista), deja correr unos 5 minutos hasta superar 1.000 peticiones. En el
 Simulador, "Respondidas" debe ser igual a las peticiones del ID 2, con 0 errores
 de CRC. En Dispositivos, ninguna lectura debe terminar en timeout.
 
@@ -111,22 +111,22 @@ simulador en `COM10`).
 2. Con el simulador detenido, ajusta también el master (vista Dispositivos) a
    115200 8N1. Inicia el simulador, conecta el master y escanea.
 
-- [ ] El escaneo detecta el ID 2 (responde con excepción 02, porque no tiene registros, igual que el equipo real).
-- [ ] La tabla de coils muestra los nombres Q0_0 a Q0_7, y la de entradas, I0_0 a I0_7.
-- [ ] En Registros, FC01 desde 0 con cantidad 8 lee las coils; al encender Q0_3 en el Simulador se ve en la siguiente lectura.
-- [ ] Las pestañas Holding e Input registers avisan que el dispositivo no tiene registros.
+- [x] El escaneo detecta el ID 2 (responde con excepción 02, porque no tiene registros, igual que el equipo real).
+- [x] La tabla de coils muestra los nombres Q0_0 a Q0_7, y la de entradas, I0_0 a I0_7.
+- [x] En Registros, FC01 desde 0 con cantidad 8 lee las coils; al encender Q0_3 en el Simulador se ve en la siguiente lectura.
+- [x] Las pestañas Holding e Input registers avisan que el dispositivo no tiene registros.
 
 ### Fallas (vista Simulador)
 
 Agrega un dispositivo Genérico con ID 1 y, desde Registros, lee FC03 en 40000
 del ID 1 tras cada cambio:
 
-- [ ] Modo "Sin respuesta": la lectura termina en timeout y el tráfico del simulador muestra "Sin respuesta".
-- [ ] Modo "CRC corrupto": la lectura termina en "CRC Error".
-- [ ] Modo "Excepción forzada" con código 04: la lectura muestra la excepción "Slave Device Failure".
-- [ ] Retardo de 500 ms con modo "Ninguna": la lectura responde con unos 500 ms más de tiempo.
-- [ ] Retardo de 1500 ms con timeout del master de 1000 ms: la lectura termina en timeout.
-- [ ] El contador "Fallas" sube con cada respuesta alterada.
+- [x] Modo "Sin respuesta": la lectura termina en timeout y el tráfico del simulador muestra "Sin respuesta".
+- [x] Modo "CRC corrupto": la lectura termina en "CRC Error".
+- [x] Modo "Excepción forzada" con código 04: la lectura muestra la excepción "Slave Device Failure".
+- [x] Retardo de 500 ms con modo "Ninguna": la lectura responde con unos 500 ms más de tiempo.
+- [x] Retardo de 1500 ms con timeout del master de 1000 ms: la lectura termina en timeout.
+- [x] El contador "Fallas" sube con cada respuesta alterada.
 
 ### Escenarios (vista Pruebas)
 
@@ -134,11 +134,11 @@ Usa el ID 1 Genérico como slave activo, para que el plan por defecto tenga
 registros disponibles. Con la casilla "Aplicar el escenario a los slaves
 virtuales" activada:
 
-- [ ] "Operación normal": los 8 pasos quedan aprobados.
-- [ ] "Error CRC detectado": la tarjeta indica "CRC corrupto" y los pasos terminan en "CRC Error".
-- [ ] "Excepción Modbus": la tarjeta indica "Excepción 02 forzada" y los pasos terminan en "Excepcion".
-- [ ] "Timeout detectado": el plan apunta a otro ID; si no existe en el simulador, o si existe y queda "Sin respuesta", los pasos terminan en "Timeout".
-- [ ] Al volver a "Operación normal" o desactivar la casilla, los dispositivos quedan sin falla.
+- [x] "Operación normal": los 8 pasos quedan aprobados.
+- [x] "Error CRC detectado": la tarjeta indica "CRC corrupto" y los pasos terminan en "CRC Error".
+- [x] "Excepción Modbus": la tarjeta indica "Excepción 02 forzada" y los pasos terminan en "Excepcion".
+- [x] "Timeout detectado": el plan apunta a otro ID; si no existe en el simulador, o si existe y queda "Sin respuesta", los pasos terminan en "Timeout".
+- [x] Al volver a "Operación normal" o desactivar la casilla, los dispositivos quedan sin falla.
 
 ### Sesión
 
@@ -147,8 +147,8 @@ virtuales" activada:
    pasar a "Modificada".
 3. Abre otra vez la sesión guardada.
 
-- [ ] Vuelven los mismos dispositivos, con sus nombres, plantilla, valores y fallas.
-- [ ] El formato serial del simulador vuelve al que tenía al guardar.
+- [x] Vuelven los mismos dispositivos, con sus nombres, plantilla, valores y fallas.
+- [x] El formato serial del simulador vuelve al que tenía al guardar.
 
 **Criterio de cierre de la Fase 2:** la secuencia de validación JWPLC de la app
 da PASS contra el JWPLC virtual (verificado por test automático:
@@ -205,36 +205,42 @@ cableado funciona antes de probar el simulador.
 2. Vista **Dispositivos**: puerto del conversor, 9600 8N1, **Conectar** y
    **Escanear**.
 
-- [ ] El escaneo detecta el ID 2.
-- [ ] FC03 en 40000 muestra las entradas I0_X; escribir 40001 con FC06 enciende las salidas Q0_X.
+- [x] El escaneo detecta el ID 2.
+- [x] FC03 en 40000 muestra las entradas I0_X; escribir 40001 con FC06 enciende las salidas Q0_X.
 
 ### C2: el JWPLC (master por RS-485) lee al simulador
 
 Es el montaje que reemplaza a la Prueba B con cableado real.
 
-1. Carga un sketch master que use el RS-485 del JWPLC. Pendiente: preparar
-   `Simulador_Master_RS485.ino`, que hace lo mismo que el sketch USB pero con la
-   librería `JWPLC_ModbusRTU`.
+1. Carga `Codigos de Pruebas/Simulador_Master_RS485/Simulador_Master_RS485.ino`:
+   hace lo mismo que el sketch USB pero por el RS-485 del JWPLC, con la
+   librería `JWPLC_ModbusRTU`, a 9600 8N1. Cada 5 s imprime por USB un
+   `RESUMEN` con ciclos, peticiones correctas, errores y el estado de las
+   salidas.
 2. Vista **Simulador**: puerto del conversor, mismo formato serial que el
    sketch, con ID 1 e ID 2.
 
-- [ ] Se cumplen los mismos resultados que en la Prueba B.
-- [ ] 1.000 peticiones seguidas con 0 errores de CRC y 0 timeouts del lado del JWPLC (registro 40012 del ID 1 en 0).
+- [x] Se cumplen los mismos resultados que en la Prueba B.
+- [x] 1.000 peticiones seguidas con 0 errores de CRC y 0 timeouts del lado del JWPLC (registro 40012 del ID 1 en 0).
 
 ## Registro de resultados
 
 | Prueba | Fecha | Peticiones | Errores CRC | Timeouts | Resultado | Notas |
 | --- | --- | --- | --- | --- | --- | --- |
-| 0. Canal interno | | | | | Pendiente | |
-| A. Solo software | | | | | Pendiente | |
-| A2. Fase 2 | | | | | Pendiente | |
+| 0. Canal interno | 2026-11-12 | 41 en el simulador | 0 | 8 (esperados, escenario Timeout) | Aprobado | App de Electron en la nube, sin COM. Escenarios: 8 aprobados, 8 "CRC Error", 6 "Excepcion", 8 "Timeout" |
+| A. Solo software | 2026-11-12 | 1.091 (soak de 9 min) | 0 | 0 | Aprobado | Par de puertos virtuales en Linux en lugar de com0com. Autolectura a 0,5 s: 1.083 respondidas, 1.082 del ID 2 y 8 ignoradas del escaneo. Plan 8/8 |
+| A2. Fase 2 | 2026-11-12 | — | según la falla | según la falla | Aprobado | Plantilla JWPLC a 115200, las 5 fallas, 4 escenarios y vuelta a normal, sesión guardada y reabierta con fallas y formato serial |
 | B. JWPLC por USB | 2026-10-07 | 106 en ~10 s por COM3 | 0 | 0 | Aprobado | JWPLC por COM3 y master de la app por INTERNO a la vez, con 5 slaves virtuales |
-| C1. App lee al JWPLC | | | | | Pendiente | |
-| C2. JWPLC lee al simulador | | | | | Pendiente | |
+| C1. App lee al JWPLC | 2026-11-12 | 200 lecturas FC03 + escaneo + FC06 | 0 | 0 | Aprobado en JWPLC Sim | Master de la app contra `Pruebas_MODBUS.ino` en JWPLC Sim (`jwsim-bus`). Falta repetir con el conversor real |
+| C2. JWPLC lee al simulador | 2026-11-12 | 1.254 | 0 | 0 | Aprobado en JWPLC Sim | `Simulador_Master_RS485.ino` en JWPLC Sim contra el simulador de la app. Salidas = coils del ID 2 (0xA5) y contador binario en coils 16 a 23. Falta repetir con el conversor real |
 
 ## Pendientes
 
-- Preparar `Simulador_Master_RS485.ino` para la Prueba C2.
+- Repetir C1 y C2 con el conversor USB-RS485 real (ZK-U485) en Windows: eco,
+  tiempos del USB y cableado no se pueden validar en JWPLC Sim. Las pruebas con
+  y sin eco en el Sim están en `docs/PRUEBAS_JWPLC_SIM.md`.
+- La Prueba B no se repitió en JWPLC Sim, porque `jwsim-bus` solo une el bus
+  RS-485; su resultado de 2026-10-07 sigue valiendo.
 - Si en la Prueba A `COM11` no aparece en la lista de Dispositivos, anotarlo:
   la lista del master oculta puertos sin datos de fabricante, y habría que
   ajustarla.

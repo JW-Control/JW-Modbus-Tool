@@ -27,6 +27,44 @@ Rama: `nombre-de-rama`
 
 ---
 
+## 2026-11-12 · Plan de pruebas del simulador completo y tendencia real en Registros
+
+Rama: `feature/plan-pruebas-0.1.0`, sobre `chore/limpieza-repo`.
+
+### Qué se hizo
+
+- Se corrieron las pruebas 0, A y A2 del plan en la app de Electron (en la
+  nube, con un par de puertos virtuales en lugar de com0com) y C1 y C2 contra
+  JWPLC Sim. Los resultados quedaron en `docs/PLAN_PRUEBAS_SIMULADOR.md`.
+- Nuevo sketch `Codigos de Pruebas/Simulador_Master_RS485/Simulador_Master_RS485.ino`
+  para la Prueba C2: el JWPLC como master por RS-485 con `JWPLC_ModbusRTU`.
+- Nuevo `scripts/sim/pty-pair.py`: par de puertos virtuales unidos (como un
+  par com0com) para probar la app en Linux, con eco opcional en cada lado.
+- Registros: la gráfica "Tendencia (últimos 60 s)" era un dibujo fijo y Mín,
+  Máx y Prom se calculaban sobre todos los registros de la tabla, no sobre el
+  seleccionado. Ahora cada lectura guarda el valor de cada registro por slave
+  (`src/renderer/registerTrend.ts`) y la tarjeta dibuja y resume solo el
+  registro seleccionado.
+- Registros: cada lectura volvía a seleccionar el primer registro; con la
+  autolectura no se podía seguir otro. Ahora se mantiene la selección.
+
+### Por qué
+
+- Eran los pendientes del plan antes de la 0.1.0. Los dos fallos de Registros
+  aparecieron al revisar las capturas de la Prueba 0.
+
+### Verificación
+
+- `npm test`: 104 pruebas pasan (4 nuevas de la tendencia). `npm run typecheck` sin errores.
+- En la app: cinco lecturas de 40001 con valores 100, 400, 250, 900 y 600
+  dan Mín 100, Máx 900 y Prom 450, y la selección se queda en 40001.
+
+### Pendiente
+
+- Repetir C1 y C2 con el conversor ZK-U485 real en Windows.
+
+---
+
 ## 2026-11-12 · Limpieza del repositorio antes de la 0.1.0
 
 Rama: `chore/limpieza-repo`, sobre `feature/eco-conversor-jwplc-sim`.
